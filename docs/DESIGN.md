@@ -1,10 +1,10 @@
 # DESIGN.md — Asynchronous Conversational Agent
 
-**Status:** Draft v0.4 — architecture frozen for v0 implementation  
-**Scope:** Software-only prototype  
-**Primary goal:** Build a persistent conversational agent that emulates human-like introspection through stochastic attention, memory activation, self-monitoring, inhibition, delayed response, silence, and autonomous initiative.
+**Status:** v0.6 — design frozen for implementation  
+**Scope:** Software-first prototype, designed so the same cognitive architecture can later be embodied  
+**Primary goal:** Build a persistent conversational agent that emulates human-like introspection and temporal continuity through stochastic attention, memory activation, self-monitoring, inhibition, delayed response, silence, autonomous initiative, and durable identity across runtime interruptions.
 
-> **Architecture status:** Frozen for v0 implementation. New structural design changes should be driven by observed prototype behavior rather than speculative extensions.
+> **Architecture status:** Implementation-frozen. Further structural changes require evidence from the running prototype or a concrete embodiment requirement; speculative architecture review is complete.
 
 ---
 
@@ -18,7 +18,7 @@ human input -> model -> response
 
 This project deliberately breaks that contract.
 
-The agent should behave more like an introspective human conversational partner:
+The agent should behave more like an introspective human conversational partner while preserving a coherent sense of continuity across time:
 
 - it can receive a message and decide not to answer;
 - it can receive a message, think about it, and answer later;
@@ -48,12 +48,15 @@ The system should:
 2. **Support autonomous initiative** without fixed cron-like message intervals.
 3. **Support meaningful silence** as a first-class action.
 4. **Support delayed responses** when a topic remains salient and resurfaces later.
-5. **Maintain persistent conversational state** across long periods.
+5. **Maintain persistent conversational state and identity** across long periods and process restarts.
 6. **Model its own recent behavior** well enough to regulate repetition, interruption, and conversational pressure.
 7. **Use stochastic processes** so the same state does not always produce the same conversational behavior.
-8. **Keep most autonomous cognition cheap** by running activation, decay, inhibition, and gating outside the LLM.
+8. **Keep most autonomous cognition cheap** by running activation, decay, retrieval, and gating outside the generative LLM.
 9. **Bound all cognition cycles** so internal reflection cannot recursively trigger uncontrolled reflection.
 10. **Remain inspectable**: internal state should be structured and debuggable rather than hidden in a permanent free-form inner monologue.
+11. **Preserve temporal continuity** across clean shutdown, host sleep, power loss, and process crash without pretending cognition occurred while the agent was unavailable.
+12. **Separate logical agent identity from process/UI lifetime** so closing a client does not terminate the agent and restarting the service does not create a new agent.
+13. **Remain portable to embodiment**: the same event/reducer/memory architecture should be able to run later on a Raspberry Pi or similar host while delegating hard real-time control to an MCU.
 
 ### 2.2 Secondary goals
 
@@ -61,12 +64,10 @@ The architecture should make it possible later to add:
 
 - external event sources such as GitHub, files, calendar, system state, or sensors;
 - multimodal perception;
-- local models for low-cost classification;
+- local models for low-cost classification and perception;
 - multiple personalities or temperament profiles;
-- physical embodiment in a robot;
+- speech input/output and physical embodiment;
 - multiple cooperating agents.
-
----
 
 ## 3. Non-goals
 
@@ -74,43 +75,33 @@ The first version will **not** attempt to:
 
 - claim or test machine consciousness;
 - maintain a literal continuous linguistic stream of consciousness;
-- continuously invoke an LLM while idle;
+- continuously invoke a generative LLM while idle;
 - simulate biological cognition faithfully;
 - model emotions as if they were genuine subjective states;
-- build a robot or embodied agent;
+- build the physical robot itself;
+- perform hard real-time motor control;
 - provide a general autonomous-agent framework;
 - use distributed infrastructure unless the prototype requires it;
-- guarantee a response to every user message.
+- guarantee a response to every low-obligation social message;
+- simulate missed thoughts during periods when the agent service was not running.
 
-This project is a behavioral architecture experiment, not a theory of mind.
-
----
+This project is a behavioral architecture experiment, not a theory of mind. Temporal continuity means persistent identity, memory, and awareness that real time elapsed; it does not imply continuous subjective experience.
 
 ## 4. Terminology
 
 ### 4.1 Event
 
-Anything that may alter the agent's state.
+Anything that may alter committed agent state.
 
-Examples:
-
-- human message;
-- stochastic wakeup;
-- external system event;
-- scheduled constraint;
-- memory reactivation;
-- explicit user command;
-- feedback about a previous agent action.
+Examples include a human message, stochastic wake, external event, lifecycle event, scheduled constraint, feedback event, or asynchronous worker result.
 
 ### 4.2 Activation
 
-A scalar representing how likely a topic, memory, or unresolved thread is to enter attention.
-
-Activation is not language. It is structured state.
+A scalar representing how likely a topic, provisional memory, or unresolved thread is to enter attention. Activation is structured state, not language.
 
 ### 4.3 Reflection
 
-Reasoning about an event, topic, memory, or unresolved issue.
+Semantic reasoning about an event, topic, memory, or unresolved issue.
 
 Example:
 
@@ -118,34 +109,58 @@ Example:
 
 ### 4.4 Introspection / metacognition
 
-Reasoning about the agent's own state or recent behavior.
+Reasoning about the agent's own structured state or recent behavior.
 
 Example:
 
-> I have initiated three conversations today and the user ignored the last two; inhibition should increase.
+> I have initiated several conversations recently; another interruption is probably unnecessary.
 
-The term **introspection** is used here operationally: the system emulates the behavioral pattern of introspective humans.
+The term **introspection** is operational: the system emulates behavioral patterns associated with introspective humans.
 
 ### 4.5 Initiative
 
-The tendency to initiate outward communication without direct human prompting.
+The tendency for a valid internal thought to become unsolicited outward communication.
 
 ### 4.6 Inhibition
 
-The tendency to suppress or delay an otherwise plausible outward response.
+The tendency to suppress or delay an otherwise plausible optional/proactive outward response.
 
 ### 4.7 Cognition cycle
 
-One bounded processing pass triggered by an event or stochastic activation.
+One bounded processing pass triggered by a source event or stochastic activation. A cycle may end with speech, deferred speech, state update only, or silence.
 
-A cognition cycle may end with:
+### 4.8 Logical agent
 
-- speech;
-- deferred speech;
-- state update only;
-- silence.
+The persistent identity represented by durable state: memories, history, temperament, lifecycle history, and an `agent_id`.
 
----
+The logical agent is **not** identical to one operating-system process.
+
+### 4.9 Agent service / daemon
+
+The long-running local process that hosts the reducer, scheduler, persistence layer, workers, and delivery adapters. On systems where the term is appropriate it may run as a daemon/service.
+
+Stopping this process suspends cognition; it does not create a new logical agent on the next launch.
+
+### 4.10 Client
+
+A human-facing interface such as a CLI, TUI, web UI, desktop UI, or later a speech interface. Clients communicate with the agent service over local IPC/API boundaries.
+
+Closing a client does **not** stop the logical agent.
+
+### 4.11 Runtime session
+
+One contiguous execution of the agent service, identified by a `runtime_session_id`. A single logical agent may have many runtime sessions over its lifetime.
+
+### 4.12 Suspension and resume
+
+A period during which the logical agent remains durably identifiable but the service performs no cognition. Clean shutdown, host power-off, and host sleep are modeled as suspension from the emulation perspective. A crash or power loss is an **unclean interruption** operationally, but on recovery the missing interval is still treated as a period without cognition rather than as a new identity.
+
+### 4.13 Wall time and active time
+
+- **Wall time:** real-world elapsed time whether the service is running or not.
+- **Active time:** time during which the agent service is running and capable of processing cognition cycles.
+
+Time-sensitive state explicitly declares which clock semantics it uses.
 
 ## 5. Core behavioral contract
 
@@ -171,47 +186,46 @@ The fourth case is important. The system may have a cognition cycle that produce
 
 ## 6. High-level architecture
 
-The architecture is asynchronous end to end. The serialized reducer never waits for an LLM call or local embedding computation to complete.
+The system has two distinct lifetimes:
+
+1. the **logical agent**, whose identity and durable state persist across restarts;
+2. the **agent service**, which is one running process/session of that agent.
+
+The human interface is a client, not the agent itself.
 
 ```text
-                       +----------------------+
-                       |      Environment     |
-                       +----------+-----------+
-                                  |
-                 +----------------+----------------+
-                 |                                 |
-          human messages                    external events
-                 |                                 |
-                 +----------------+----------------+
-                                  |
-                                  v
-                       +----------------------+
-                       |      Event Queue     |
-                       +----------+-----------+
-                                  |
-                                  v
-                       +----------------------+
-                       | Serialized Reducer   |
-                       | only state writer    |
-                       +----+------------+----+
-                            |            |
-                    local commit         | async work request
-                            |            v
-                            |     +------------------+
-                            |     | LLM / Embedding  |
-                            |     |     Worker       |
-                            |     +--------+---------+
-                            |              |
-                            |         result event
-                            |              |
-                            +--------------+
-                                  |
-                                  v
-                       +----------------------+
-                       | Persisted state +    |
-                       | timers / actions     |
-                       +----------------------+
+                         +----------------------+
+                         |       Clients        |
+                         | CLI / TUI / web /    |
+                         | future speech UI     |
+                         +----------+-----------+
+                                    |
+                              local IPC/API
+                                    |
+                                    v
++----------------+       +----------------------+       +----------------+
+| Environment /  | ----> |     Agent Service    | ----> | Delivery       |
+| sensors/events |       |                      |       | adapters/outbox |
++----------------+       |  Event Queue         |       +----------------+
+                         |       |              |
+                         |       v              |
+                         | Serialized Reducer   |
+                         | only state writer    |
+                         |    /        \        |
+                         | commit    work item  |
+                         +---|----------|-------+
+                             |          |
+                             v          v
+                     +-----------+  +----------------+
+                     |  SQLite   |  | Async workers  |
+                     | durable   |  | LLM / embedder |
+                     | agent     |  +-------+--------+
+                     +-----------+          |
+                                            | result event
+                                            +----> Event Queue
 ```
+
+The architecture is asynchronous end to end. The reducer never waits synchronously for an LLM call or local embedding computation.
 
 The key concurrency invariant is:
 
@@ -222,20 +236,68 @@ The LLM is deliberately late in the pipeline. Cheap persistence, local indexing,
 The asynchronous architecture applies to cognition as well as conversation:
 
 ```text
-event -> state evolves
+event -> committed state evolves
            |
            +-> semantic work may be requested asynchronously
                         |
                         +-> result becomes a later event
 ```
 
-A worker result is never allowed to mutate state directly or emit a message outside the reducer.
+Semantic worker results are never allowed to mutate state or contact the user directly. The reducer alone may create durable outbound intent. A delivery adapter may perform only that explicitly authorized transport side effect and must report the outcome back as a `DeliveryResult` event; it cannot mutate agent state.
 
----
+### 6.1 Outbound delivery
+
+A decision to speak and successful delivery are distinct states. The reducer persists the **decision/action** and an outbound item before any adapter contacts the user, but an undelivered item is not yet a user-visible conversational utterance.
+
+```text
+LLM/reducer decides SPEAK
+        -> persist action
+        -> persist outbound item: PENDING_DELIVERY
+        -> delivery adapter attempts side effect
+        -> DeliveryResult event
+        -> DELIVERED / EXPIRED / FAILED / SUPERSEDED
+```
+
+Each outbound item has a stable `message_id` and unique `delivery_key`. Delivery adapters must carry the `delivery_key`; clients that can do so deduplicate by that key. Adapter execution may be at least once, while committed delivery state is effectively once.
+
+Outbound items have two semantic classes:
+
+- **MANDATORY** — generated to satisfy a response obligation; remains durable until delivered, superseded, or surfaced as an explicit failure.
+- **PROACTIVE** — unsolicited conversational initiative; has a bounded delivery TTL and must be revalidated before delayed delivery. Stale proactive items expire rather than being dumped on the user later.
+
+At most one undelivered proactive item should normally remain eligible per conversational channel. A newer proactive item may supersede or coalesce an older one. On client reconnect, mandatory items are considered first; after revalidation, at most one still-useful proactive item is delivered in a burst window.
+
+Cooldown/refractory accounting for **human interruption** is anchored primarily to `delivered_at`, not merely to the earlier decision to speak. The self-model must not behave as if the human heard an item that expired or failed before delivery.
+
+This keeps conversational intent independent of terminal lifetime while preserving timing semantics:
+
+```text
+close `aca chat`   != stop agent
+stop agent service = suspend cognition
+restart service    = resume same logical agent
+```
+
+Future embodiment replaces or augments delivery adapters (for example, TTS/speaker output) without changing cognition semantics.
+
+### 6.2 Durable inbound delivery
+
+Human input must survive connection uncertainty and process crashes. The client generates a stable `event_id` before sending a `HumanMessage`. The service acknowledges acceptance **only after the event is durably committed**.
+
+```text
+client creates event_id
+      -> send HumanMessage
+      -> service durably inserts event/inbox row
+      -> ACK(event_id)
+      -> reducer processes accepted event
+```
+
+If the connection fails before the ACK is observed, the client retries the **same** `event_id`. The durable event/inbox table enforces uniqueness, so ingress is at least once while logical event acceptance and reduction are effectively once.
+
+Accepted-but-not-yet-reduced events survive restart and are replayed into the reducer before normal interactive processing. A daemon crash must not silently eat a human message that was already acknowledged.
 
 ## 7. State model
 
-The agent maintains three broad categories of persistent state.
+The logical agent maintains four broad categories of persistent state.
 
 ### 7.1 World state
 
@@ -251,7 +313,7 @@ Examples:
 
 ### 7.2 User model
 
-A lightweight model of what appears relevant to the human.
+A lightweight evidence-based model of what appears relevant to the human.
 
 Possible fields:
 
@@ -262,7 +324,7 @@ Possible fields:
 - typical conversation times;
 - recent interaction intensity.
 
-The user model should remain evidence-based and should avoid unnecessary psychological inference.
+The user model should avoid unnecessary psychological inference.
 
 ### 7.3 Self model
 
@@ -272,28 +334,24 @@ Example:
 
 ```json
 {
-  "conversation_state": "idle",
   "initiative": 0.43,
   "inhibition": 0.68,
   "recent_proactive_messages": 2,
-  "recent_unanswered_proactive_messages": 1,
-  "last_outward_action_at": "2026-09-16T03:10:00-03:00",
+  "last_outward_action_at": "2026-09-16T03:10:00Z",
   "dominant_topic": "asynchronous-conversational-agent-design",
-  "cognitive_budget_remaining": 0.72
+  "proactive_cognitive_budget_remaining": 0.72
 }
 ```
 
-The self model is the basis for metacognitive behavior such as:
+The self model supports metacognitive behavior such as:
 
 - "I have spoken too much recently.";
 - "I have already asked about this topic.";
-- "The user tends not to engage with this kind of proactive question.";
 - "This topic is interesting, but there is no reason to interrupt now.".
-
 
 ### 7.4 Conversation mode
 
-The agent must distinguish whether it is currently in a live exchange or operating asynchronously.
+Conversation mode is distinct from lifecycle state.
 
 ```text
 ACTIVE
@@ -301,23 +359,82 @@ IDLE
 DORMANT
 ```
 
-These modes change timing expectations and permissible silence:
-
 | Mode | Meaning | Response expectation | Proactive behavior |
 |---|---|---|---|
 | `ACTIVE` | live back-and-forth conversation | short latency; silence only for naturally terminal/low-obligation turns | unrelated initiative strongly suppressed |
 | `IDLE` | recent conversation, but no immediate turn expectation | moderate latency; delayed response may be natural | limited follow-up/reflection allowed |
 | `DORMANT` | no active conversation | no reactive response expectation | stochastic autonomous initiative allowed |
 
-Mode should be inferred from recent cadence and turn structure, not only one timeout. A simple v0 implementation may use time thresholds plus whether the latest human message creates an explicit response obligation.
+Mode is inferred from recent cadence and turn structure, not only one timeout. A proactive message must not switch an unrelated `ACTIVE` conversation to another topic merely because an old memory became salient.
 
-A proactive message must not switch an unrelated `ACTIVE` conversation to another topic merely because an old memory became salient.
+### 7.5 Identity and lifecycle state
 
----
+Persist at least:
+
+```text
+agent_id
+created_at
+lifecycle_state
+current_runtime_session_id
+last_started_at
+last_active_at
+last_clean_suspend_at
+last_resume_at
+last_heartbeat_at
+total_active_seconds
+last_runtime_exit_kind
+```
+
+Logical lifecycle states for v0:
+
+```text
+RUNNING
+SUSPENDED
+RECOVERING
+```
+
+`INTERRUPTED` is recorded as an operational exit/recovery cause rather than as a durable identity break. If the process disappears without a clean suspension marker, the next runtime session records an unclean interruption and reconstructs the unavailable interval from the last durable heartbeat/commit.
+
+### 7.6 Temporal state
+
+The agent should have enough temporal context to reason about continuity without inventing experiences during downtime. Wall-clock chronology and **agent-observed availability** are distinct.
+
+A semantic snapshot may include:
+
+```text
+current UTC time
+current configured local time/timezone
+wall_time_since_last_human_message
+active_observed_silence_since_last_human_message
+time since last DELIVERED agent message
+time since last active cognition
+current runtime-session age
+most recent suspension/resume interval
+wall time elapsed during that interval
+```
+
+`active_observed_silence_since_last_human_message` accumulates only while the lifecycle state is `RUNNING`. Time spent suspended, powered off, crashed, or recovering does not count as observed user absence.
+
+Example:
+
+```text
+user speaks          Monday 10:00
+agent runs until     Monday 12:00
+host is off until    Friday 10:00
+
+wall time since message      = 96h
+agent-observed silence       = 2h
+```
+
+The semantic layer may know both facts: "we last spoke four days ago" and "I was unavailable for almost all of that interval." It must not infer prolonged user silence from the agent's own downtime.
+
+Do not present downtime as remembered thought. The correct semantics are:
+
+> **Real time passed; cognition was suspended.**
 
 ## 8. Event model and serialization
 
-All inputs and asynchronous work completions enter through one event stream.
+All inputs, lifecycle transitions, and asynchronous work completions enter through one event stream.
 
 Core event types:
 
@@ -327,8 +444,13 @@ ExternalEvent
 StochasticWake
 ScheduledConstraint
 AgentActionFeedback
+AgentStarted
+AgentSuspending
+AgentResumed
+RuntimeInterruptionDetected
 EmbeddingResult
 LLMResult
+DeliveryResult
 ```
 
 `MemoryReactivation` is normally represented as state selected during a cognition cycle rather than as a recursively emitted event.
@@ -339,28 +461,29 @@ Example human event:
 {
   "id": "evt_123",
   "type": "HumanMessage",
-  "timestamp": "2026-09-16T04:20:00-03:00",
-  "payload": {
-    "text": "lol"
-  },
-  "source": "chat"
+  "timestamp": "2026-09-16T07:20:00Z",
+  "payload": {"text": "lol"},
+  "source": "cli"
 }
 ```
 
 Events may update state even when no LLM call is made.
+
+For client-originated `HumanMessage` events, `id` is an ingress idempotency key. A duplicate send with the same `event_id` is not a second conversational turn. The service ACKs the event only after durable acceptance; accepted events that were not yet reduced are recovered after restart.
 
 ### 8.1 Single logical writer
 
 State transitions are serialized:
 
 ```text
-human messages ----+
-external events ----+--> event queue --> reducer --> commit --> next event
-wake events --------+
-worker results -----+
+human messages ------+
+external events -----+--> event queue --> reducer --> commit --> next event
+wake events ---------+
+lifecycle events ----+
+worker results ------+
 ```
 
-The implementation may use concurrent goroutines for network I/O, timers, local embedding inference, and LLM calls. Those goroutines never commit agent state.
+The implementation may use concurrent async tasks, threads, or worker processes for network I/O, timers, local embedding inference, and LLM calls. Those workers never commit agent state.
 
 The reducer owns a monotonically increasing `state_revision` and is the only component allowed to advance it.
 
@@ -372,7 +495,7 @@ $$
 
 where:
 
-- $S_n$ is the committed state before the event;
+- $S_n$ is committed state before the event;
 - $E_n$ is the current event;
 - $A_n$ is an optional already-validated typed proposal carried by a result event;
 - $R$ is the deterministic reducer.
@@ -381,7 +504,7 @@ where:
 
 A cognition cycle may request semantic work without blocking the reducer.
 
-The reducer commits the local transition first and creates a work item using an immutable snapshot:
+The reducer commits the local transition first and persists a work item using an immutable snapshot:
 
 ```json
 {
@@ -394,37 +517,21 @@ The reducer commits the local transition first and creates a work item using an 
 }
 ```
 
-The worker eventually returns a result event:
+The worker eventually returns an `LLMResult` event. By then committed state may have advanced, so the reducer revalidates the result against current state before any semantic commit or creation of outbound intent.
 
-```json
-{
-  "type": "LLMResult",
-  "work_id": "work_81",
-  "cycle_id": "cog_1001",
-  "basis_revision": 418,
-  "proposals": []
-}
-```
-
-By the time that result reaches the reducer, committed state may be at revision 423. The reducer therefore revalidates the result against current state before any commit or outward emission.
-
-This allows inbound human messages to keep flowing while an LLM call is in flight without abandoning serialized mutation semantics.
+This allows inbound human messages and lifecycle events to keep flowing while semantic work is in flight without abandoning serialized mutation semantics.
 
 ### 8.3 Supersession rule
 
-If newer state invalidates a proactive result, the reducer may:
+If newer state invalidates a proactive result, the reducer may `DROP` or `DEFER` it. It must **not regenerate inline**.
 
-```text
-DROP
-or
-DEFER
-```
+Each logical cognition cycle may request at most one generative LLM call. A later independent event or stochastic wake may start a new cycle if the thought remains relevant.
 
-It must **not regenerate inline**. Inline regeneration would turn staleness into an autonomous retry loop.
+### 8.4 Lifecycle events are state events
 
-Each logical cognition cycle may request at most one generative LLM call. A later external event or stochastic wake may start a new cycle if the thought remains relevant.
+Startup, resume, suspension, and interruption detection use the same reducer/event semantics as conversation.
 
----
+A lifecycle event may update temporal state and invalidate pending proactive work, but it must not directly synthesize missed cognition. In particular, `AgentResumed` is not permission to replay stochastic wakeups that would have happened while the service was unavailable.
 
 ## 9. Fast loop vs slow loop
 
@@ -434,17 +541,17 @@ The architecture uses a cheap structured loop and a rare semantic loop.
 
 The fast loop is ordinary software plus optional **local embedding inference**. It is not a continuously running generative LLM.
 
-A lightweight daemon remains resident so it can receive events and maintain timers.
+A lightweight agent service remains resident while the agent is RUNNING so it can receive events and maintain timers.
 
 Responsibilities:
 
 - event intake and serialized reduction;
 - eager raw-event persistence;
 - cheap message classification;
-- local embedding/index creation for selected substantive events;
+- local embedding/index creation for eligible nontrivial human events;
 - topic/provisional-memory activation and lazy decay;
 - weighted candidate selection, including a null candidate;
-- recency and conversation-mode tracking;
+- wall chronology, active-observed-silence, and conversation-mode tracking;
 - hard budget/cooldown/capability gates;
 - cheap staleness/TTL checks;
 - stochastic wake scheduling;
@@ -492,7 +599,7 @@ At committed state $S_n$, compute:
 
 $$
 \lambda_{\text{think},n} = \lambda_0
-f_{\text{recency}}(S_n)
+f_{\text{observed-silence}}(S_n)
 f_{\text{salience}}(S_n)
 f_{\text{unfinished}}(S_n)
 $$
@@ -513,6 +620,10 @@ $$
 
 Time-of-day may later be used as a resource-scheduling optimization for background compute, but that is an operational policy rather than simulated psychology. A configured quiet-hours promise must not reduce thought probability probabilistically; it must block unsolicited expression deterministically.
 
+`f_{\text{observed-silence}}` must use agent-observed active time, not raw wall time since the last conversation. Downtime cannot masquerade as relational absence. The exact shape is an empirical v0 parameter: long observed silence may raise, lower, or saturate thought opportunity, but only time during which the agent was actually `RUNNING` may contribute to that signal.
+
+Wall-clock time since the last conversation remains available as semantic context, but it is not itself evidence that the user ignored or drifted away from the agent.
+
 This preserves the central distinction:
 
 > **An inhibited agent may still have frequent internal activations while expressing very few of them.**
@@ -529,7 +640,7 @@ state commit
    -> sample next wake
 ```
 
-Topic decay is evaluated lazily when an event is processed; the daemon does not need a periodic tick merely to decay values.
+Topic decay is evaluated lazily when an event is processed; the agent service does not need a periodic tick merely to decay values.
 
 ### 10.2 Why not exact non-homogeneous sampling in v0?
 
@@ -558,6 +669,78 @@ refractory_tau_hours
 ```
 
 Persist timestamps as RFC 3339 / UTC. Configuration may use human-readable durations such as `45m` or `2h`, but conversion to model units must be explicit.
+
+### 10.4 Suspension and missed wakes
+
+The stochastic scheduler exists only while lifecycle state is `RUNNING`.
+
+If the service is suspended, powered off, or unavailable for an interval, stochastic wakeups that statistically might have occurred during that interval are **not replayed** later.
+
+On resume:
+
+```text
+load committed state
+  -> compute wall-clock elapsed time
+  -> materialize wall-time decay / TTL / resolve current budget windows
+  -> reconcile durable work
+  -> record AgentResumed
+  -> compute current lambda_think
+  -> sample one fresh future wake
+```
+
+This is a hard semantic rule:
+
+> **Time may pass without cognition.**
+
+### 10.5 Clock sources
+
+Use different clocks for different jobs:
+
+```text
+monotonic clock
+  - in-process stochastic timers
+  - request timeouts
+  - worker timeout/renewal durations while process is alive
+
+UTC wall clock
+  - durable event timestamps
+  - cross-restart elapsed time
+  - deferred-intent TTL
+  - last interaction chronology
+  - fixed budget-window identity
+  - persisted active-runtime/session accounting
+  - persisted lease deadlines and cross-restart recovery
+  - recovery and downtime calculation
+
+configured local timezone
+  - quiet hours
+  - morning/evening interpretation
+  - user-facing temporal language
+```
+
+Do not drive in-process timer durations directly from a mutable wall clock. Clock jumps, NTP corrections, DST, or timezone changes must not create phantom stochastic wakes.
+
+
+### 10.6 Operational heartbeat and wake validation
+
+Lazy decay requires no periodic cognition tick. The service nevertheless maintains one cheap **operational lifecycle heartbeat** so crash/interruption intervals can be reconstructed. The heartbeat is bookkeeping, not thought, and must not activate memories or invoke semantic cognition.
+
+Each scheduled `StochasticWake` carries at least:
+
+```text
+runtime_session_id
+scheduler_generation
+scheduled_at_utc
+```
+
+Every reschedule/resume increments `scheduler_generation`. Before accepting a wake, the reducer verifies that:
+
+- lifecycle state is still `RUNNING`;
+- `runtime_session_id` is current;
+- `scheduler_generation` is current;
+- no host-suspension discrepancy occurred since it was scheduled.
+
+This validation happens even if the timer callback was already queued by the runtime. An overdue callback that fires immediately after host resume therefore becomes a harmless stale event rather than a phantom cognition cycle. Timers submit events; they never have authority to cause cognition directly.
 
 ---
 
@@ -627,7 +810,7 @@ where:
 
 ### 11.4 Refractory recovery
 
-After an unsolicited outward message, proactive expression should temporarily become less likely and then recover smoothly.
+After a **delivered** unsolicited message, proactive expression should temporarily become less likely and then recover smoothly.
 
 One possible suppression term derives from:
 
@@ -635,7 +818,7 @@ $$
 f_{\text{refractory}}(t)=1-e^{-t/\tau}
 $$
 
-where $t$ is hours since the last proactive message and $\tau$ is the configured recovery constant.
+where $t$ is hours since the last successfully **delivered** proactive message and $\tau$ is the configured recovery constant.
 
 Refractory recovery affects **expression**, not the internal wake hazard.
 
@@ -649,7 +832,7 @@ This avoids double-counting the same temperament variable in both thought genera
 
 ### 11.6 User quiet hours
 
-Quiet hours are an optional **hard gate on unsolicited outward speech**. If the user configures a range such as `01:00-08:00`, proactive messages must not be emitted inside that interval.
+Quiet hours are an optional **hard gate on unsolicited outward speech**. If the user configures a range such as `01:00-08:00`, proactive messages must not be emitted inside that interval in the configured local timezone.
 
 Quiet hours do not suppress:
 
@@ -957,7 +1140,7 @@ DORMANT:
   autonomous initiative -> stochastic
 ```
 
-Conversation mode is revalidated again before any proactive message is actually emitted.
+Conversation mode is revalidated before proactive outbound intent is created, and delayed proactive items are revalidated again immediately before delivery.
 
 ---
 
@@ -1091,9 +1274,11 @@ The LLM receives the deferred intent plus current compact context and may propos
 
 The default is to **regenerate language when the thought resurfaces** rather than store a frozen social draft.
 
-### 16.3 Pre-emit revalidation
+### 16.3 Pre-outbox and delivery-time revalidation
 
-Even after the LLM proposes `SPEAK`, the reducer re-checks current state immediately before emission. If the conversation became `ACTIVE`, a cooldown appeared, a newer human event superseded the thought, or another hard gate now blocks output, the message is dropped or deferred.
+Even after the LLM proposes `SPEAK`, the reducer re-checks current state before creating a proactive outbound item. If the conversation became `ACTIVE`, a cooldown appeared, a newer human event superseded the thought, or another hard gate now blocks output, the message is dropped or deferred.
+
+If delivery is delayed because no client/channel was available, the proactive item is revalidated again immediately before transport. It may expire, be superseded, or be coalesced rather than reaching the user late.
 
 A stale result is never regenerated inline.
 
@@ -1455,14 +1640,14 @@ worker result
    -> numeric/size clamping
    -> current-state revalidation
    -> deterministic reducer
-   -> optional outward emission
+   -> optional durable outbound intent
 ```
 
 Only whitelisted proposal types are accepted. Numeric deltas have hard caps. No proposal may create an immediate recursive cognition event merely because state changed.
 
-### 22.2 Pre-emit revalidation
+### 22.2 Pre-outbox and delivery-time revalidation
 
-Every unsolicited `SPEAK` is revalidated immediately before emission against **current committed state**, not only the worker snapshot.
+Every unsolicited `SPEAK` is revalidated against **current committed state** before the reducer creates a proactive outbound item, not only against the worker snapshot. A delayed proactive item is revalidated a second time before transport.
 
 Checks include:
 
@@ -1473,7 +1658,7 @@ Checks include:
 - the intent has not already been expressed/resolved;
 - capability/policy still permits output.
 
-If any check fails, the reducer drops or defers the message. It does not regenerate inline.
+If any pre-outbox check fails, the reducer drops or defers the message. If a delivery-time check fails, the pending proactive item expires, is superseded, or is coalesced. Neither path regenerates inline.
 
 ### 22.3 Parse/validation failure
 
@@ -1501,12 +1686,15 @@ Deterministic policy decides what those labels are allowed to change and by how 
 
 ## 23. Persistence and retrieval
 
-SQLite is sufficient for the first prototype.
+SQLite is sufficient for the first prototype. Durable persistence is the continuity boundary of the logical agent.
 
 Suggested tables:
 
 ```text
-events
+agent_identity
+runtime_sessions
+lifecycle_events
+events                 # durable inbox / event log
 provisional_memories
 embeddings
 topics
@@ -1516,12 +1704,14 @@ deferred_intents
 response_obligations
 work_items
 actions
+outbound_messages
+delivery_attempts
 feedback
 budgets
 cognition_traces
 ```
 
-`agent_state` contains the monotonically increasing `state_revision`.
+`agent_state` contains the monotonically increasing `state_revision`. `agent_identity` contains the stable `agent_id`; process restarts must never silently mint a replacement identity.
 
 ### 23.1 Example: provisional memories
 
@@ -1580,18 +1770,16 @@ V0 retrieval uses a hybrid cheap index:
 
 - SQLite FTS/BM25;
 - keywords/tags;
-- local embeddings over selected raw/provisional memories;
+- local embeddings over nearly every nontrivial human message/provisional memory;
 - explicit topic links.
 
-A separate vector database is not required for v0. At prototype scale, cosine similarity can be computed over a bounded in-memory candidate set or through a lightweight SQLite vector extension if convenient.
+A separate vector database is not required for v0. At prototype scale, cosine similarity can be computed over a bounded candidate set or through a lightweight SQLite vector extension if convenient.
 
 Embedding inference is local and asynchronous. Failure to embed must not lose the raw event; lexical retrieval remains a fallback.
 
----
-
 ### 23.5 Durable work items and crash recovery
 
-Semantic workers are ephemeral goroutines; work ownership is durable. Persist every dispatched semantic job before a worker starts it.
+Semantic workers are ephemeral execution tasks; work ownership is durable. Persist every dispatched semantic job before a worker starts it.
 
 Recommended work-item state machine:
 
@@ -1605,7 +1793,7 @@ RUNNING
   -> PENDING when lease expires
 ```
 
-Suggested fields:
+Persist at least:
 
 ```text
 work_id
@@ -1622,18 +1810,91 @@ result_event_id
 last_error
 ```
 
-Worker execution is **at least once**; reducer commits are **effectively once**. Result handling must therefore be idempotent by `work_id` / `result_event_id`. A duplicate result may be observed, but only the first accepted transition can satisfy an obligation or mutate semantic state.
+Worker execution is **at least once**; reducer commits are **effectively once**. Result handling is idempotent by `work_id` / `result_event_id`.
 
-On daemon startup, run reconciliation before normal autonomous dispatch:
+On service startup, reconciliation runs before autonomous dispatch:
 
-1. reclaim `RUNNING` items whose lease expired;
+1. reclaim expired `RUNNING` items;
 2. requeue eligible `PENDING` work;
-3. reconcile pending mandatory response obligations against surviving work/results;
+3. reconcile pending mandatory response obligations;
 4. redispatch recoverable mandatory work;
-5. mark permanently failed mandatory obligations visibly failed rather than silently pending forever;
+5. surface permanently failed mandatory obligations instead of leaving them silently pending;
 6. enqueue recovered results through the ordinary event queue.
 
 A process crash must never be observationally equivalent to intentional conversational silence.
+
+### 23.6 Agent identity and runtime sessions
+
+A minimal durable identity record:
+
+```sql
+CREATE TABLE agent_identity (
+    agent_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    lifecycle_state TEXT NOT NULL,
+    current_runtime_session_id TEXT,
+    last_started_at TEXT,
+    last_active_at TEXT,
+    last_clean_suspend_at TEXT,
+    last_resume_at TEXT,
+    last_heartbeat_at TEXT,
+    total_active_seconds INTEGER NOT NULL DEFAULT 0,
+    last_runtime_exit_kind TEXT
+);
+```
+
+Each process execution receives a distinct runtime-session row. The previous session is closed cleanly when possible. If no clean-close marker exists, recovery records an unclean interruption using the last heartbeat/commit as the lower bound for the unavailable interval.
+
+### 23.7 Conversation history and outbound messages
+
+Human messages remain durable conversation records even when no immediate response is produced. Intentional silence never deletes the human turn.
+
+A reducer decision to speak is stored durably in `actions` and `outbound_messages`, but an agent utterance becomes part of the **delivered user-visible conversation** only after successful delivery. An expired or failed proactive item remains auditable as an attempted/decided action without pretending the human heard it.
+
+Recommended `outbound_messages` fields:
+
+```text
+message_id
+delivery_key UNIQUE
+action_id
+kind                 # MANDATORY | PROACTIVE
+channel
+payload
+status               # PENDING_DELIVERY | DELIVERING | DELIVERED | EXPIRED | FAILED | SUPERSEDED
+created_at
+expires_at           # normally bounded for PROACTIVE; policy-specific for MANDATORY
+delivered_at
+superseded_by_id
+last_delivery_error
+```
+
+Delivery attempts are idempotent in committed state by `message_id` / `delivery_key` / attempt identity. Where the client/adapter supports idempotency, it must also deduplicate display/side effects by `delivery_key`.
+
+Proactive messages have delivery-time semantics:
+
+- they expire after a configured TTL;
+- they are revalidated against current mode, quiet hours, lifecycle state, cooldown/refractory state, relevance, and supersession before delayed dispatch;
+- stale pending proactive items may be coalesced or superseded by newer ones;
+- reconnect must not dump a backlog of unsolicited messages.
+
+Mandatory items are not silently expired merely because the client was absent. They are delivered, explicitly superseded, or surfaced as failures.
+
+### 23.8 Durable inbound events
+
+Client-originated events use a durable inbox/event-log contract. At minimum, the event store tracks:
+
+```text
+event_id UNIQUE
+source
+type
+payload
+accepted_at
+reduced_at
+```
+
+The service sends `ACK(event_id)` only after durable insertion. Re-sending an existing `event_id` returns the same acceptance result and does not create a second turn. Reducer completion marks `reduced_at` in the same logical transaction as the corresponding state transition.
+
+On startup, accepted events with no completed reduction are recovered before ordinary new interactive events. This gives client ingress at-least-once transport semantics with effectively-once logical processing.
 
 ## 24. Bounded cognition and deterministic mutation
 
@@ -1701,6 +1962,8 @@ cooldowns:
 
 A token bucket or equivalent limiter enforces budgets independently of the stochastic scheduler and independently of the LLM's requested action.
 
+Budget windows are anchored to wall-clock window identities (for example UTC/local-calendar day according to configuration) and **never bank unused capacity across downtime**. Resume resolves the current window; it does not replay or accrue quotas from missed windows. A refillable bucket may fill only to its configured capacity, never beyond it because the service was offline.
+
 These limits govern **autonomous/proactive cognition**. A direct user task follows the ordinary reactive-service budget and must not be silently dropped because the proactive token bucket is empty.
 
 The system may expose a derived variable such as:
@@ -1735,7 +1998,7 @@ Recommended trace fields:
   "llm_result_revision_seen": 423,
   "action": "silence",
   "useful_enrichment": true,
-  "pre_emit_invalidated": false,
+  "pre_outbox_invalidated": false,
   "tokens_in": 612,
   "tokens_out": 18,
   "duration_ms": 840,
@@ -1750,11 +2013,15 @@ The system should make it easy to answer:
 - Was silence intentional, stale-result suppression, or runtime failure?
 - Which topic/provisional memory/deferred intent was activated?
 - Was a worker result based on stale state?
-- How many proactive results were invalidated before emit?
+- How many proactive results were invalidated before outbox creation or before delayed delivery?
 - How many LLM calls produced useful enrichment without speech?
 - How many messages were embedded locally?
 - How much autonomous cognition cost in tokens and local compute?
 - Which typed proposals changed state?
+- Was an outbound item merely decided, actually delivered, expired, coalesced, or failed?
+- Did any adapter retry a `delivery_key`, and was duplicate user-visible delivery suppressed?
+- Were any client events retried by `event_id`, and were they reduced exactly once?
+- How much wall-clock silence versus agent-observed active silence preceded a proactive action?
 
 ### 26.1 Replay semantics
 
@@ -1800,13 +2067,20 @@ Track:
 - idle-mode optional-turn silence rate;
 - provisional-memory resurfacing rate;
 - lazy semantic-enrichment rate and token cost;
-- pre-emit invalidation count;
+- pre-outbox and delivery-time invalidation counts;
 - stale-worker-result count;
 - percentage of delayed responses;
 - mean and median interval between proactive messages;
 - duplicate-topic/repeated-question rate;
 - percentage of proactive messages that receive semantically classified engagement;
-- explicit positive/negative feedback rate.
+- explicit positive/negative feedback rate;
+- duplicate outbound delivery rate (**target: 0 user-visible duplicates where the adapter supports idempotency**);
+- proactive outbox expiry/coalescing count;
+- pending proactive backlog depth (target normally 0-1 per channel);
+- inbound event retry/dedup count;
+- acknowledged-but-unreduced event recovery count;
+- wall-time vs active-observed-silence at proactive initiation;
+- stale-wake rejection count after suspend/resume.
 
 The generic metric "% of human messages receiving no response" is not sufficient by itself. Silence must be segmented by message class and conversation mode.
 
@@ -1854,163 +2128,293 @@ A fourth criterion is:
 
 ## 28. Prototype implementation decisions
 
-The first prototype should remain deliberately small.
+The cognitive architecture is language-independent. V0 should remain a single-host application with one durable logical agent and one agent service.
 
 Recommended shape:
 
 ```text
-single Go daemon
-  + serialized reducer/event queue
+aca-agent service
+  + asyncio event queue / serialized reducer
   + SQLite
+  + lifecycle/session manager
   + cancellable stochastic wake timer
   + deterministic state revision counter
-  + rule-based conservative task classifier
+  + conservative rule-based task classifier
   + cheap local embedding model
-  + asynchronous LLM worker
-  + one generative LLM provider/model
-  + CLI, TUI, or minimal web chat
+  + asynchronous generative-LLM worker
+  + durable outbox / delivery adapters
+
+aca client
+  + CLI chat/status/logs initially
+  + local IPC to aca-agent
 ```
 
-### 28.1 Language: Go
+### 28.1 Reference implementation: Python
 
-Go is the default v0 choice because the prototype primarily needs:
+The v0 reference implementation should use **Python 3.12+** with `asyncio`.
 
-- a long-lived single-binary daemon;
-- clean timer cancellation/rescheduling;
-- explicit concurrency boundaries;
-- non-blocking worker dispatch;
-- serialized state mutation;
-- simple HTTP/API integration;
-- low operational overhead.
+Python is preferred for the reference prototype because the likely evolution includes:
 
-### 28.2 Classifier: rules first
+- local embeddings and model experimentation;
+- Raspberry Pi deployment;
+- microphone/speech recognition and TTS;
+- OpenCV/camera perception;
+- ONNX/PyTorch/TensorFlow Lite integration;
+- GPIO, serial, I2C/SPI, and robotics tooling;
+- rapid experimentation with stochastic/semantic policies.
+
+The serialized-writer invariant maps cleanly to one reducer coroutine consuming an `asyncio.Queue`. Async workers may run concurrently but only return events.
+
+The reducer/event loop must never run heavy CPU-bound inference inline. Network-bound LLM calls use ordinary async I/O. Local embeddings or other CPU-bound inference must run in a process pool or a native inference runtime explicitly known to release the GIL and avoid event-loop stalls. `run_in_executor` with threads is sufficient only when the underlying native library releases the GIL.
+
+The architecture does not rely on Python-specific semantics; another implementation language may replace the service later without changing the state/event contracts.
+
+### 28.2 Client/service boundary
+
+The first user interface is a CLI client, but the CLI does not own the agent process.
+
+Suggested commands:
+
+```text
+aca service start
+aca service stop
+aca status
+aca chat
+aca logs
+aca memories
+aca topics
+```
+
+Local IPC may use a Unix-domain socket where available or a loopback transport on platforms that need it. The transport is an adapter, not part of cognition semantics.
+
+### 28.3 Classifier: rules first
 
 Start with conservative heuristics. Add a learned local classifier only after real misclassification logs provide an evaluation set.
 
-### 28.3 Embeddings: local from v0
+### 28.4 Embeddings: local from v0
 
-Unlike the generative model, local embeddings are part of v0 because lazy semantic memory depends on non-lexical retrieval.
+Local embeddings are part of v0 because lazy semantic memory depends on non-lexical retrieval.
 
-Embed nearly every nontrivial human message, independent of `HIGH_INFORMATION`/`LOW_INFORMATION` classification. Only obviously trivial inputs may skip embedding. Cheap mechanisms should bias toward recall; expensive semantic enrichment remains selective.
+Embed nearly every nontrivial human message, independent of `HIGH_INFORMATION` / `LOW_INFORMATION` classification. Only obviously trivial inputs may skip embedding. Cheap mechanisms should bias toward recall; expensive semantic enrichment remains selective.
 
 The embedding model should be small enough to run cheaply on the host and stable/versioned so indexes can be rebuilt reproducibly.
 
-### 28.4 Generative model: one provider/model first
+### 28.5 Generative model: one provider/model first
 
 Use one generative model/provider initially. Introduce cheap/strong model tiers only when cost and quality metrics show a concrete need.
 
-No agent framework, message broker, microservice split, spreading-activation graph, or multiple simultaneous latent-thought engine is required.
+### 28.6 Embodiment boundary
 
----
-
-## 29. Suggested v0.4 execution flow
-
-The reducer never waits synchronously for semantic workers.
-
-### 29.1 Inbound human/external event
+If the architecture is later moved to a Raspberry Pi robot, ACA remains the high-level asynchronous cognition layer.
 
 ```text
-1. Dequeue one event.
-2. Persist raw event.
-3. Materialize lazy decay at the event timestamp.
-4. Infer/update conversation mode.
-5. Classify the event conservatively.
-6. Advance state_revision and commit cheap local state.
+Raspberry Pi / Python ACA
+  perception / memory / dialogue / high-level intent
+                    |
+              serial / CAN / IPC
+                    v
+MCU (e.g. ESP32)
+  IMU / encoders / balance / motor PWM / emergency stop
+```
 
-7. If the message is nontrivial under the embedding-eligibility rule:
+Hard real-time stabilization and safety control must remain outside the LLM/ACA process.
+
+No agent framework, message broker, microservice split, spreading-activation graph, or multiple simultaneous latent-thought engine is required for v0.
+
+## 29. Suggested v0.6 execution and lifecycle flow
+
+The reducer never waits synchronously for semantic workers. Process lifecycle is part of the agent's durable event history.
+
+### 29.1 Startup / resume
+
+```text
+1. Acquire an OS-owned single-instance advisory lock for this agent data directory / agent_id.
+     - if already held: fail fast with a clear "agent already running" error;
+     - process death must release the lock automatically; do not rely on a stale PID file.
+2. Open the database.
+3. Create a new runtime_session_id and scheduler_generation.
+4. Inspect previous runtime-session close marker and last heartbeat.
+5. Classify the previous unavailable interval:
+     CLEAN_SUSPEND / HOST_RESTART / UNCLEAN_INTERRUPTION / UNKNOWN.
+6. Enter RECOVERING.
+7. Compute wall-clock elapsed time since last known active point.
+8. Materialize wall-time-dependent decay, TTL expiry, cooldown expiry, and resolve current budget windows with no accrued credit.
+9. Preserve agent-observed-silence semantics: downtime does not count as observed user absence.
+10. Reclaim expired RUNNING work-item leases.
+11. Requeue eligible PENDING semantic work.
+12. Recover accepted-but-unreduced durable inbound events.
+13. Reconcile every pending mandatory response obligation.
+14. Redispatch recoverable mandatory work; surface terminal failures explicitly.
+15. Expire/coalesce stale proactive outbox items; retain mandatory items according to obligation policy.
+16. Record AgentStarted + AgentResumed/RuntimeInterruptionDetected as appropriate.
+17. Set lifecycle state RUNNING.
+18. Compute current lambda_think and sample exactly one fresh future stochastic wake under the new scheduler_generation.
+19. Begin normal event processing.
+```
+
+**Do not replay stochastic wakeups from the unavailable interval.** The agent resumes with elapsed-time effects applied, not with fabricated missed cognition.
+
+The single-instance lock is an OS/process-lifetime ownership mechanism (for example `flock` on Linux/Raspberry Pi or an equivalent named/file lock on Windows). SQLite transactions provide state durability; they are not held open for the entire process lifetime merely to act as a process mutex.
+
+### 29.2 Inbound human/external event
+
+For client-originated human input, ingress occurs before reducer processing:
+
+```text
+0. Client creates stable event_id and sends HumanMessage.
+1. Service durably INSERTs the event/inbox row (or observes the same event_id already accepted).
+2. Service ACKs event_id only after durable acceptance.
+3. Event becomes eligible for reducer processing.
+```
+
+Reducer flow:
+
+```text
+4. Dequeue one accepted, not-yet-reduced event.
+5. Materialize lazy decay at the event timestamp.
+6. Infer/update conversation mode.
+7. Classify the event conservatively.
+8. Apply cheap local state changes; mark the event reduced in the same logical commit that advances state_revision.
+
+9. If the human message is nontrivial under embedding eligibility:
      a. create/update provisional memory;
-     b. persist an embedding work item;
-     c. dispatch local embedding work if needed;
-     d. do not wait for embedding completion.
+     b. persist embedding work item;
+     c. dispatch local embedding work outside the reducer/event loop;
+     d. do not wait.
 
-8. If re-prompt detector fires:
+10. If re-prompt detector fires:
      a. mark RESPONSE_REQUIRED;
      b. record possible prior classification miss.
 
-9. If DIRECT_TASK / TASK_QUESTION / RESPONSE_REQUIRED:
+11. If DIRECT_TASK / TASK_QUESTION / RESPONSE_REQUIRED:
      a. create auditable response obligation;
      b. build deterministic compact snapshot;
      c. persist at most one generative LLM work item for this cycle;
-     d. dispatch the persisted work item asynchronously;
+     d. dispatch asynchronously;
      e. persist trace;
      f. reschedule wake if wake-relevant state changed;
-     g. STOP processing this source event.
+     g. STOP source-event processing.
 
-10. Otherwise enter optional path:
+12. Otherwise enter optional path:
      a. activate/reinforce topics, provisional memories, deferred intents;
      b. sample one candidate or NOTHING;
      c. if NOTHING -> trace/reschedule/STOP;
      d. apply cheap semantic-worthiness gate;
-     e. apply hard proactive gates as appropriate;
-     f. if rejected and no semantic-enrichment reason -> trace/reschedule/STOP;
+     e. apply hard proactive gates where relevant;
+     f. if rejected and no enrichment reason -> trace/reschedule/STOP;
      g. build deterministic immutable snapshot;
      h. persist at most one generative LLM work item;
-     i. dispatch the persisted work item asynchronously;
+     i. dispatch asynchronously;
      j. trace/reschedule/STOP.
 ```
 
-### 29.2 Embedding result
+A duplicate client send with the same `event_id` never creates another human turn. If the service crashes after ACK but before reduction, startup recovery processes the accepted event later.
+
+### 29.3 Embedding result
 
 ```text
 1. Dequeue EmbeddingResult.
-2. Validate work identity/model version and reject already-committed duplicate results idempotently.
-3. Attach embedding/index reference to current raw/provisional memory if still present.
-4. Mark durable work item completed and record result-event identity.
+2. Validate work identity/model version and reject committed duplicates idempotently.
+3. Attach embedding/index reference if the memory still exists.
+4. Mark durable work completed and record result-event identity.
 5. Advance revision and commit.
 6. Do not recursively launch generative cognition merely because embedding completed.
-7. Reschedule stochastic wake only if wake-relevant state changed.
+7. Reschedule wake only if wake-relevant state changed.
 8. STOP.
 ```
 
-### 29.3 LLM result
+### 29.4 LLM result
 
 ```text
 1. Dequeue LLMResult.
-2. Validate work/cycle identity and schema; reject an already-committed duplicate result idempotently.
+2. Validate work/cycle identity and schema; reject committed duplicates idempotently.
 3. Compare basis_revision with current state_revision.
 4. Validate and clamp typed proposals.
-5. Re-evaluate current semantic/policy conditions as required.
+5. Re-evaluate current semantic/policy conditions.
 
-6. If result belongs to proactive/optional cognition:
+6. For proactive/optional cognition:
      a. if superseded -> DROP or DEFER;
      b. never regenerate inline;
-     c. if SPEAK -> run immediate pre-emit revalidation;
-     d. emit at most one message only if current state permits.
+     c. if SPEAK -> run immediate pre-outbox revalidation;
+     d. persist action + PROACTIVE outbound item with TTL/delivery_key only if current state permits;
+     e. do not mark it as delivered or as a user-visible conversational turn yet.
 
-7. If result belongs to a mandatory response obligation:
-     a. satisfy the obligation if result remains applicable;
-     b. otherwise mark it explicitly superseded/pending rather than intentional silence;
-     c. never hide provider/parser failure as silence.
+7. For a mandatory response obligation:
+     a. satisfy/generate the response item if result remains applicable;
+     b. persist action + MANDATORY outbound item with stable delivery_key;
+     c. otherwise mark obligation explicitly superseded/pending rather than intentional silence;
+     d. never hide provider/parser failure as silence.
 
-8. Apply accepted semantic-enrichment/state proposals through reducer.
-9. Mark durable work item completed and bind `result_event_id`.
+8. Apply accepted semantic/state proposals through reducer.
+9. Mark durable work completed and bind result_event_id.
 10. Advance revision and commit action/trace.
 11. Cancel/resample wake if wake-relevant state changed.
 12. STOP.
 ```
 
-A `StochasticWake` uses the same optional path, but begins with no human response obligation.
+Delivery is a separately authorized side effect. Semantic workers never contact the user. The reducer creates durable outbound intent; delivery adapters perform only the authorized transport and return `DeliveryResult` events.
 
-At no point does a stale worker result synchronously call the LLM again.
+### 29.5 Graceful suspension / shutdown
 
----
-
-### 29.4 Startup reconciliation
-
-Before accepting autonomous wake work after process start:
+On `aca service stop`, OS shutdown notification, or another graceful stop:
 
 ```text
-1. Open database and acquire singleton daemon ownership.
-2. Reclaim expired RUNNING work-item leases.
-3. Requeue eligible PENDING semantic work.
-4. Reconcile every pending mandatory response obligation.
-5. Redispatch recoverable mandatory work.
-6. Surface terminal mandatory failures explicitly.
-7. Restore/cancel/resample the stochastic wake timer from current committed state.
-8. Begin normal event processing.
+1. Stop accepting new autonomous wake dispatch.
+2. Cancel the in-process stochastic timer.
+3. Record AgentSuspending.
+4. Persist final heartbeat / active-time accounting.
+5. Release or safely persist worker leases.
+6. Mark runtime session cleanly closed with exit kind.
+7. Set durable lifecycle state SUSPENDED.
+8. Flush/commit SQLite transaction state.
+9. Exit.
 ```
 
-Recovered worker completions enter through the same `EmbeddingResult` / `LLMResult` event path as live completions. Recovery never mutates agent state from a worker goroutine.
+The logical agent remains the same agent while suspended.
+
+### 29.6 Host sleep, crash, power loss, and kill -9
+
+The process cannot always write a final suspension event. Persist a lightweight **operational heartbeat** and runtime-session metadata so the next startup can distinguish a clean close from an unclean interruption. This heartbeat is the one intentional periodic service tick; it is not cognition and cannot activate thoughts.
+
+On recovery from an unclean stop:
+
+- infer the unavailable interval from the last heartbeat/commit and current wall time;
+- record `RuntimeInterruptionDetected`;
+- treat the interval as cognition-free;
+- do not add the unavailable interval to agent-observed user silence;
+- recover durable mandatory work according to lease semantics;
+- recover acknowledged-but-unreduced inbound events;
+- never describe the interruption as intentional conversational silence;
+- never mint a new `agent_id` solely because the process died.
+
+Host suspend/resume where the same process survives is detected by a large discrepancy between wall-clock elapsed time and expected active/monotonic progress. The handler increments `scheduler_generation`, invalidates the pre-suspend timer, materializes elapsed wall-time effects, records `AgentResumed`, and samples a fresh wake.
+
+A queued old timer callback is still harmless: every `StochasticWake` carries `runtime_session_id` and `scheduler_generation`, and the reducer performs suspension-gap validation before accepting it. If the wake predates a detected suspension/resume boundary, it is discarded.
+
+### 29.7 Outbound delivery
+
+Every outbound action is persisted before transport. Delivery then occurs through an authorized client/notification/TTS adapter.
+
+```text
+PENDING_DELIVERY
+      -> delivery-time reducer revalidation
+      -> DELIVERING / delivery attempt
+      -> DeliveryResult
+      -> DELIVERED | FAILED
+
+PROACTIVE may also -> EXPIRED | SUPERSEDED
+```
+
+Delivery rules:
+
+1. **Idempotency.** Every item has a stable `delivery_key`. Retried attempts reuse it. The adapter/client deduplicates by that key whenever supported. A duplicate `DeliveryResult` is idempotent.
+2. **Mandatory priority.** On reconnect, valid mandatory responses are considered before proactive items. They do not silently expire merely because the UI was closed.
+3. **Proactive TTL.** A proactive item has a bounded delivery TTL. If it is no longer timely, it expires without becoming a delivered conversational turn.
+4. **Delivery-time revalidation.** Before dispatching a delayed proactive item, current mode, quiet hours, lifecycle state, relevance, cooldown/refractory state, and supersession are checked again.
+5. **No dogpile.** Reconnect delivers at most one revalidated proactive item in the configured burst window. Other stale/similar proactive items are expired, coalesced, or superseded.
+6. **Delivered-time semantics.** `delivered_at` is the primary timestamp for user-interruption cooldown/refractory and for claims such as "I already told the user." An item that never reached the user must not create false conversational memory.
+
+Client absence or delivery failure is operational state, not conversational silence.
 
 ## 30. Safety and control invariants
 
@@ -2018,35 +2422,48 @@ These rules remain hard-coded outside the LLM:
 
 1. **No unbounded recursive cognition.** A source cognition cycle requests at most one generative LLM call.
 2. **Serialized mutation.** Only the reducer commits agent-state transitions and advances `state_revision`.
-3. **Workers are side-effect isolated.** LLM/embedding workers consume immutable snapshots and return result events only.
-4. **LLM output is data, never authority.** Typed proposals are validated before they can affect state.
-5. **All model-proposed deltas are whitelisted, bounded, and auditable.**
-6. **No result may immediately re-trigger generative cognition merely because it changed state.**
-7. **Stale/superseded proactive results are dropped or deferred, never regenerated inline.**
-8. **Every proactive `SPEAK` is revalidated against current mode, cooldown, budget, configured quiet hours, supersession, and capability immediately before emission.**
-9. **No bypass of proactive token, call, capability, or cooldown gates.**
-10. **Proactive gates never intentionally silence explicit user tasks.**
-11. **Task-boundary classification is conservative; ambiguous task-like input routes to response-required.**
-12. **Re-prompts after silence force response-required handling and are logged as possible missed-task evidence.**
-13. **No uncontrolled external side effects.** External actions require explicit capability/policy checks.
-14. **No hidden permanent free-form chain-of-thought log.** Persistent introspective state is structured and inspectable.
-15. **Intentional silence is distinguishable from provider failure, parse failure, timeout, stale-result suppression, budget rejection, and crash.**
-16. **Adaptive parameters have baselines, hard bounds, bounded deltas, and decay toward baseline.**
-17. **User non-response has exactly zero negative adaptation weight by itself.**
-18. **Deferred intentions require hard TTL plus cheap pre-gates and semantic current-context validation before resurfacing.**
-19. **Raw events are persisted before optional semantic enrichment.**
-20. **Nontrivial silent human events remain semantically addressable through local provisional indexing/embeddings independent of information-class labels.**
-21. **Autonomous enrichment is bounded.** Concurrent duplicate enrichment is forbidden; failures use bounded backoff and a terminal no-auto-enrich state.
-22. **Semantic work is durable.** Work is persisted before dispatch, leased, recoverable after crash, and result commits are idempotent.
-23. **Mandatory response obligations survive process failure.** They are redispatched or surfaced as visible failures, never left silently pending forever.
-24. **Quiet hours are a hard proactive-expression promise.** They do not probabilistically suppress internal cognition and do not block explicit reactive responses.
-25. **Replay claims are scoped correctly.** RNG seeds replay local stochastic decisions; full replay requires recorded worker results and deterministic prompt construction.
-
----
+3. **Single service ownership.** Exactly one agent service may own a given local agent database/data directory at a time; an OS-owned advisory lock enforces this across process lifetime and is released automatically on process death.
+4. **Workers are side-effect isolated.** LLM/embedding workers consume immutable snapshots and return result events only. Delivery adapters may perform only reducer-authorized transport side effects and cannot mutate agent state.
+5. **LLM output is data, never authority.** Typed proposals are validated before they can affect state.
+6. **All model-proposed deltas are whitelisted, bounded, and auditable.**
+7. **No result may immediately re-trigger generative cognition merely because it changed state.**
+8. **Stale/superseded proactive results are dropped or deferred, never regenerated inline.**
+9. **Every proactive SPEAK decision is revalidated before outbox creation, and every delayed proactive item is revalidated again before delivery.**
+10. **No bypass of proactive token, call, capability, cooldown, quiet-hour, lifecycle, or supersession gates.**
+11. **Proactive gates never intentionally silence explicit user tasks.**
+12. **Task-boundary classification is conservative; ambiguous task-like input routes to response-required.**
+13. **Re-prompts after silence force response-required handling and are logged as possible missed-task evidence.**
+14. **Durable ingress.** A client event is ACKed only after durable acceptance; retries reuse the same `event_id`; acknowledged-but-unreduced events survive restart and are reduced effectively once.
+15. **No uncontrolled external side effects.** External actions require explicit capability/policy checks.
+16. **No hidden permanent free-form chain-of-thought log.** Persistent introspective state is structured and inspectable.
+17. **Intentional silence is distinguishable from provider failure, parse failure, timeout, stale-result suppression, delivery failure, budget rejection, suspension, crash, or expired proactive delivery.**
+18. **Adaptive parameters have baselines, hard bounds, bounded deltas, and decay toward baseline.**
+19. **User non-response has exactly zero negative adaptation weight by itself.**
+20. **Deferred intentions require hard TTL plus cheap pre-gates and semantic current-context validation before resurfacing.**
+21. **Raw events are persisted before optional semantic enrichment.**
+22. **Nontrivial silent human events remain semantically addressable through local provisional indexing/embeddings independent of information-class labels.**
+23. **Autonomous enrichment is bounded.** Concurrent duplicate enrichment is forbidden; failures use bounded backoff and a terminal no-auto-enrich state.
+24. **Semantic work is durable.** Work is persisted before dispatch, leased, recoverable after crash, and result commits are idempotent.
+25. **Mandatory response obligations survive process failure.** They are redispatched or surfaced as visible failures, never left silently pending forever.
+26. **Quiet hours are a hard proactive-expression promise.** They do not probabilistically suppress internal cognition and do not block explicit reactive responses.
+27. **Budgets do not bank across downtime.** Resume resolves the current fixed budget window; unused capacity from past windows never accrues.
+28. **Replay claims are scoped correctly.** RNG seeds replay local stochastic decisions; full replay requires recorded worker results, a deterministic clock, and deterministic prompt/retrieval construction.
+29. **Process uptime is not agent identity.** A restart creates a new runtime session, not a new logical agent.
+30. **Suspension interrupts cognition, not identity.** Wall time may advance while active cognition remains zero.
+31. **Agent downtime is not user absence.** Relationship/recency pressure may use agent-observed active silence, never downtime-dominated wall gaps as evidence of user disengagement.
+32. **Missed stochastic cognition is never replayed after downtime.** Resume samples one fresh wake from current state.
+33. **Clock semantics are explicit.** Monotonic time drives in-process durations; UTC wall time drives durable chronology/windows; active-runtime accounting drives observed availability; configured local time drives conversational time-of-day rules.
+34. **Stale wake events are harmless.** A wake must match current lifecycle state, runtime session, and scheduler generation and survive suspension-gap validation before cognition starts.
+35. **Heartbeat is operational, not cognitive.** The periodic lifecycle heartbeat cannot activate memories, alter conversational policy, or invoke semantic cognition.
+36. **Clients do not own the agent lifecycle.** Closing a CLI/TUI/web client cannot implicitly stop or reset the agent service.
+37. **Deciding to speak is not delivery.** An undelivered outbound item is auditable intent, not a user-visible utterance.
+38. **Outbound delivery is idempotency-aware and time-sensitive.** Delivery keys suppress supported duplicates; proactive items have TTL/coalescing and cannot dogpile on reconnect.
+39. **Heavy local inference is off the reducer/event loop.** CPU-bound embedding/perception work runs in a process pool or a native runtime known not to block the Python event loop.
+40. **Hard real-time robot control is outside ACA.** Future embodiment delegates stabilization/safety loops to deterministic lower-level controllers.
 
 ## 31. Open questions
 
-The architecture is frozen for the v0.4 implementation. Remaining questions are empirical tuning questions or explicitly accepted v0 limitations, not unresolved structural semantics.
+The v0.6 design is frozen for implementation. Remaining questions are empirical tuning questions or accepted prototype limitations. Structural changes after this point require evidence from the running prototype.
 
 ### 31.1 Conversation-mode inference
 
@@ -2058,7 +2475,7 @@ What gate produces a low enough useless-LLM-call rate without filtering out surp
 
 ### 31.3 Local embedding model
 
-Which small embedding model gives adequate semantic recall at acceptable CPU/RAM cost, and how should embedding-version migrations rebuild the provisional index?
+Which small embedding model gives adequate semantic recall at acceptable CPU/RAM cost on desktop and Raspberry Pi-class hardware, and how should embedding-version migrations rebuild the index?
 
 ### 31.4 Deferred-intent TTL
 
@@ -2074,7 +2491,7 @@ How much explicit evidence is needed before temperament deviations from baseline
 
 ### 31.7 Circadian/topic shaping
 
-Quiet hours are already a hard expression gate. Separately, should time-of-day eventually influence topic selection or background-compute scheduling? This is not required for v0 and must not weaken the quiet-hours guarantee.
+Quiet hours are already a hard expression gate. Separately, should time-of-day influence topic selection or background-compute scheduling? It must not weaken the quiet-hours guarantee.
 
 ### 31.8 Exact scheduler refinement
 
@@ -2086,11 +2503,25 @@ Within `ACTIVE` mode, which substantive non-task statements may naturally receiv
 
 ### 31.10 Mandatory-response supersession and ordering
 
-When multiple human messages arrive while a response worker is in flight, which newer turns supersede, merge with, or remain independent of an existing response obligation? V0 should keep this policy conservative and observable rather than silently dropping obligations.
+When multiple human messages arrive while a response worker is in flight, which newer turns supersede, merge with, or remain independent of an existing response obligation?
 
-Accepted v0 limitation: independent mandatory workers may complete and emit **out of dispatch order**. V0 does not introduce response sequencing/head-of-line blocking solely to preserve ordering; traces must make the ordering explicit.
+Accepted v0 limitation: independent mandatory workers may complete and their responses may be **delivered out of dispatch order**. V0 does not add head-of-line blocking solely to preserve ordering; traces must make ordering explicit.
 
----
+### 31.11 Lifecycle heartbeat cadence
+
+What heartbeat/session checkpoint interval best balances accurate interruption reconstruction with unnecessary writes? This is an operational tuning question; no heartbeat cadence may redefine logical identity.
+
+### 31.12 Resume context horizon
+
+For how long after resume should the latest suspension interval be included in semantic LLM context? The runtime always persists the lifecycle event; the open question is only how long it remains prompt-relevant.
+
+### 31.13 Proactive delivery TTL and coalescing
+
+What proactive outbox TTL and reconnect burst window feel natural in practice? These are delivery-tuning parameters; v0 must preserve the hard rule that stale proactive backlogs are not dumped on reconnect.
+
+### 31.14 Observed-silence shaping
+
+What shape should `f_observed-silence` use once there is real interaction data? Wall-clock downtime is excluded by definition; the open question is only how active observed silence affects thought opportunities.
 
 ## 32. Future directions
 
@@ -2105,17 +2536,19 @@ Potential later extensions include:
 - semantic association graphs / spreading activation;
 - multiple simultaneous latent thoughts;
 - multimodal perception;
-- embodiment in a physical robot;
+- microphone/STT and TTS conversational adapters;
+- Raspberry Pi deployment;
+- physical embodiment with sensor events and high-level motion intents;
 - multiple interacting agents;
 - experimental comparison against ordinary request/response chat systems.
 
 The v0 deliberately avoids association-graph activation spreading and multiple concurrent latent thought streams. One candidate competing against `NOTHING` is sufficient to test the core hypothesis.
 
----
+For embodiment, ACA remains high-level and asynchronous. Physical safety, balancing, emergency-stop behavior, and other hard real-time loops belong to an MCU or equivalent deterministic controller rather than to the LLM agent service.
 
 ## 33. Core principles
 
-The project should preserve three distinctions above all others:
+The project should preserve these distinctions above all others:
 
 > **A thought is not a message.**
 
@@ -2123,9 +2556,17 @@ The project should preserve three distinctions above all others:
 
 > **The model interprets; code decides what the interpretation is allowed to do.**
 
+> **Process uptime is not agent identity; agent downtime is not user absence.**
+
+> **Deciding to speak is not the same as being heard.**
+
+> **Time may pass without cognition.**
+
 The architecture should allow many internal activations to decay, compete, reinforce one another, or disappear without ever becoming language.
 
 A substantive human message can become durable, semantically retrievable state without forcing either an immediate reply or an immediate generative LLM call.
+
+The logical agent survives process restart through durable identity, memory, lifecycle history, and temporal state. Suspension does not fabricate experience: wall time advances, active cognition does not, and missed stochastic wakes are not replayed.
 
 The generative LLM is used when semantic interpretation or linguistic expression is justified; it is not the clock that keeps the agent mentally alive and it is never the authority that mutates the agent directly.
 
@@ -2135,5 +2576,7 @@ In short:
 simulate the dynamics;
 index experience cheaply;
 interpret semantically only when justified;
-let code retain authority.
+let code retain authority;
+persist identity across runtime sessions;
+let time pass without inventing thoughts.
 ```
