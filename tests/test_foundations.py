@@ -61,3 +61,16 @@ def test_config_defaults_match_design():
     cfg = Config()
     assert cfg.cognition.spontaneous_activation_rate_per_hour == 0.25
     assert cfg.budgets.proactive_llm_calls_per_day == 12
+    assert cfg.conversation.active_within_seconds == 180
+    assert cfg.conversation.idle_within_seconds == 1800
+
+
+def test_conversation_windows_are_configurable():
+    cfg = Config.from_mapping({"conversation": {"active_within": "10s", "idle_within": "5m"}})
+    assert cfg.conversation.active_within_seconds == 10
+    assert cfg.conversation.idle_within_seconds == 300
+
+
+def test_conversation_idle_must_not_precede_active():
+    with pytest.raises(ConfigError):
+        Config.from_mapping({"conversation": {"active_within": "5m", "idle_within": "1m"}})

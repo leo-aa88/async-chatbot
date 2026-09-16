@@ -112,6 +112,27 @@ class Cognition:
 
 
 @dataclass(frozen=True, slots=True)
+class Conversation:
+    """Cadence thresholds for inferring conversation mode (DESIGN 7.4, open tuning 31.1).
+
+    A human turn within ``active_within`` keeps the conversation ACTIVE (proactive initiative
+    suppressed); within ``idle_within`` it is IDLE; beyond that, DORMANT. Configurable so
+    proactive behavior can be exercised without waiting the production defaults.
+    """
+
+    active_within_seconds: float = parse_seconds("3m")
+    idle_within_seconds: float = parse_seconds("30m")
+
+    @staticmethod
+    def from_mapping(data: Mapping[str, Any]) -> Conversation:
+        active = parse_seconds(data.get("active_within", "3m"))
+        idle = parse_seconds(data.get("idle_within", "30m"))
+        if idle < active:
+            raise ConfigError("conversation.idle_within must be >= active_within")
+        return Conversation(active_within_seconds=active, idle_within_seconds=idle)
+
+
+@dataclass(frozen=True, slots=True)
 class Memory:
     """Memory-availability parameters (DESIGN 12)."""
 
@@ -184,6 +205,7 @@ class Config:
     timing: Timing = field(default_factory=Timing)
     memory: Memory = field(default_factory=Memory)
     budgets: Budgets = field(default_factory=Budgets)
+    conversation: Conversation = field(default_factory=Conversation)
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Config:
@@ -196,6 +218,7 @@ class Config:
             timing=Timing.from_mapping(data.get("timing", {})),
             memory=Memory.from_mapping(data.get("memory", {})),
             budgets=Budgets.from_mapping(data.get("budgets", {})),
+            conversation=Conversation.from_mapping(data.get("conversation", {})),
         )
 
     def with_overrides(self, **overrides: Any) -> Config:

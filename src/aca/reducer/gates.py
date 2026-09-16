@@ -17,7 +17,7 @@ from ..cognition.gating import (
     quiet_hours_active,
 )
 from .context import ReducerContext
-from .support import infer_mode, read_proactive_usage
+from .support import infer_mode_for, read_proactive_usage
 
 
 def _cooldown_clear(ctx: ReducerContext, now: datetime) -> bool:
@@ -41,7 +41,7 @@ def evaluate_proactive(
         capability_allowed=True,  # v0: proactive speech capability always granted
         budget_available=message_budget.allowed,
         cooldown_clear=_cooldown_clear(ctx, now),
-        mode=infer_mode(conversation, now),
+        mode=infer_mode_for(ctx, conversation, now),
         quiet_active=quiet_hours_active(now_local, ctx.config.timing.quiet_hours),
         superseded=superseded,
     )

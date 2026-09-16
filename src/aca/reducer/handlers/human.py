@@ -29,7 +29,7 @@ from ...domain.events import HumanMessage
 from ...domain.runtime import CognitionTrace, ResponseObligation
 from ...domain.state import ProvisionalMemory
 from ..context import ReducerContext
-from ..support import build_candidates, infer_mode
+from ..support import build_candidates, infer_mode_for
 from ..workitems import create_embedding_work, create_llm_work
 from .base import CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL, HandlerOutcome
 
@@ -87,7 +87,7 @@ def _update_conversation(ctx: ReducerContext, now: datetime) -> None:
         active_observed_silence_seconds=0.0,  # a present human resets observed silence
         recent_human_turn_timestamps=recent,
     )
-    updated = replace(updated, mode=infer_mode(updated, now))
+    updated = replace(updated, mode=infer_mode_for(ctx, updated, now))
     ctx.stores.state.save_conversation(updated)
 
 

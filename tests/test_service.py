@@ -92,6 +92,49 @@ async def test_mandatory_obligation_surfaced_as_failed_when_worker_keeps_errorin
 
 
 @pytest.mark.asyncio
+async def test_proactive_message_reaches_connected_idle_client_without_reconnect(tmp_path):
+    # The whole point of the project: a connected, idle client receives an unsolicited message,
+    # no reconnect required. A short active_within lets the conversation leave ACTIVE quickly so
+    # proactive initiative is permitted (DESIGN 7.4, 14.3).
+    cfg = Config.from_mapping({
+        "rng_seed": 5,
+        "cognition": {"spontaneous_activation_rate_per_hour": 100000, "semantic_worthiness_floor": 0.2,
+                      "selection_temperature": 0.3, "null_candidate_score": -5.0},
+        "conversation": {"active_within": "1s", "idle_within": "12h"},
+        "timing": {"proactive_cooldown": "0s", "proactive_ttl": "1h", "proactive_burst_window": "0s"},
+        "budgets": {"proactive_messages_per_hour": 100, "proactive_llm_calls_per_hour": 100,
+                    "proactive_llm_calls_per_day": 1000},
+    })
+    service = AgentService(tmp_path, cfg)
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        client = IpcClient(tmp_path / "aca.sock")
+        subscription = asyncio.ensure_future(client.subscribe(lambda f: asyncio.sleep(0)))
+        await asyncio.sleep(0.05)
+        # One substantive turn gives the agent something to resurface; then we stay idle+connected.
+        await client.chat_send("I am fascinated by fluid mechanics and hope to return to it")
+
+        async def wait_for_delivered_proactive():
+            while True:
+                row = service.stores.db.query_one(
+                    "SELECT COUNT(*) AS n FROM outbound_messages "
+                    "WHERE kind='PROACTIVE' AND status='DELIVERED'"
+                )
+                if row["n"] >= 1:
+                    return
+                await asyncio.sleep(0.05)
+
+        # No reconnect anywhere in here — the same connection must receive the proactive item.
+        await asyncio.wait_for(wait_for_delivered_proactive(), timeout=8)
+        subscription.cancel()
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_closing_client_does_not_stop_agent(tmp_path):
     service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
     server = IpcServer(service, tmp_path / "aca.sock")
