@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Re-exported so handlers can keep importing them from here; defined in the neutral domain layer
+# because they are part of the reducer<->worker snapshot contract.
+from ...domain.cycles import CYCLE_MANDATORY, CYCLE_PROACTIVE, CYCLE_REACTIVE_OPTIONAL
 from ...domain.runtime import CognitionTrace
 
-# How a generative cycle should be finalized by the LLMResult handler.
-CYCLE_MANDATORY = "mandatory"          # obligated reply (DESIGN 14.1)
-CYCLE_REACTIVE_OPTIONAL = "reactive"   # chosen optional reply to a human turn (DESIGN 14.2)
-CYCLE_PROACTIVE = "proactive"          # unsolicited initiative from a wake (DESIGN 14.3)
+__all__ = [
+    "CYCLE_MANDATORY",
+    "CYCLE_PROACTIVE",
+    "CYCLE_REACTIVE_OPTIONAL",
+    "HandlerOutcome",
+]
 
 
 @dataclass(slots=True)
