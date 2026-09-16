@@ -47,6 +47,16 @@ _SALIENCE_BY_CLASS = {
     MessageClass.LOW_INFORMATION: 0.2,
 }
 
+# Low-obligation, low-substance optional turns: persisted, but never earn a reactive reply
+# (DESIGN 13.6 "acknowledgement/closer -> silence allowed", 15 silence-as-action).
+_LOW_SUBSTANCE_CLASSES = frozenset(
+    {
+        MessageClass.ACKNOWLEDGEMENT,
+        MessageClass.CONVERSATION_CLOSER,
+        MessageClass.LOW_INFORMATION,
+    }
+)
+
 
 def _previous_context(ctx: ReducerContext) -> ClassificationContext:
     conversation = ctx.stores.state.load_conversation()
@@ -126,6 +136,13 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
 
     if classification.response_required:
         outcome = _mandatory_path(ctx, event, cycle_id, classification.message_class, now)
+    elif classification.message_class in _LOW_SUBSTANCE_CLASSES:
+        # Acknowledgements, closers, and low-information turns are persisted but earn no reactive
+        # reply — silence is a valid, first-class action here (DESIGN 13.6, 15). This also stops a
+        # stray token from triggering a reply merely because some older memory is salient.
+        outcome = HandlerOutcome(
+            trace=_trace(cycle_id, event, now, note="silence_low_substance")
+        )
     else:
         outcome = _optional_path(ctx, event, cycle_id, memory_id, now)
 

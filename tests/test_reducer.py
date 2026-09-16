@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from conftest import Harness
 
 from aca import ids
@@ -51,6 +52,16 @@ def test_trivial_message_skips_embedding_but_is_persisted(harness: Harness):
     harness.send_human("lol")
     assert harness.pending_work() == []  # no embedding work for trivial content
     assert harness.stores.outbox.recent_turns()[-1]["text"] == "lol"  # still a durable turn
+
+
+@pytest.mark.parametrize("text", ["t", "e", "ok", "hi"])
+def test_low_substance_turn_is_persisted_without_a_reply(harness: Harness, text):
+    # Stray tokens / acknowledgements must not earn an earnest reactive reply (DESIGN 13.6, 15).
+    harness.send_human(text)
+    assert [w for w in harness.pending_work() if w.kind.value == "LLM_COGNITION"] == []
+    harness.run_all_pending()  # runs any embedding work; must not produce an agent turn
+    assert all(t["role"] != "agent" for t in harness.stores.outbox.recent_turns())
+    assert harness.stores.outbox.recent_turns()[-1]["text"] == text  # human turn persisted
 
 
 def test_proactive_speak_path(tmp_path, clock):
