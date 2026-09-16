@@ -37,6 +37,16 @@ def test_mandatory_task_creates_obligation_and_reply(harness: Harness):
     assert len(pending_msgs) == 1 and pending_msgs[0].kind is OutboundKind.MANDATORY
 
 
+def test_trace_records_speak_action_for_mandatory(harness: Harness):
+    # `aca logs` must answer "did it speak?": mandatory/reactive traces record the outcome,
+    # not just the dispatch (DESIGN 26). Previously `action` stayed null for these cycles.
+    harness.send_human("Explain this stack trace.")
+    harness.run_all_pending()
+    traces = harness.stores.work.recent_traces()
+    mandatory = next(t for t in traces if t.trigger == "HumanMessage" and t.llm_called)
+    assert mandatory.action == "speak"
+
+
 def test_delivery_makes_turn_visible(harness: Harness):
     harness.send_human("Explain this error.")
     harness.run_all_pending()
