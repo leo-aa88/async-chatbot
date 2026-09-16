@@ -6,8 +6,9 @@ DeliveryResult is a no-op; a failed mandatory delivery stays pending (never sile
 
 from __future__ import annotations
 
-from aca.domain.enums import OutboundStatus
 from conftest import Harness
+
+from aca.domain.enums import OutboundStatus
 
 
 def _produce_mandatory(h: Harness):

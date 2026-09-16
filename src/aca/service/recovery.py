@@ -14,11 +14,11 @@ from datetime import datetime
 
 from .. import ids
 from ..clock import Clock
+from ..config import Config
 from ..domain.enums import ExitKind, LifecycleState, OutboundKind, OutboundStatus
 from ..domain.events import Event
 from ..domain.runtime import AgentIdentity, RuntimeSession
 from ..domain.state import ConversationState, SelfModel
-from ..config import Config
 from ..persistence.stores import Stores
 
 

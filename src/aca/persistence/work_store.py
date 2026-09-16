@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
-from ..domain.enums import ActionKind, ObligationStatus, WorkKind, WorkStatus
+from ..domain.enums import ObligationStatus, WorkKind, WorkStatus
 from ..domain.runtime import Action, CognitionTrace, ResponseObligation, WorkItem
 from .db import Database
 from .mapping import as_bool, dt, dumps, loads, txt

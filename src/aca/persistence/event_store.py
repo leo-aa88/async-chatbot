@@ -11,7 +11,7 @@ from datetime import datetime
 
 from ..domain.events import Event, deserialize, serialize
 from .db import Database
-from .mapping import dumps, dt, loads, txt
+from .mapping import dt, dumps, loads, txt
 
 
 class EventStore:

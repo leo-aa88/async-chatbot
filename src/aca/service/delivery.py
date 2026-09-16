@@ -12,7 +12,7 @@ directly — the reducer owns every status transition. Rules enforced here (DESI
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from .. import ids
 from ..clock import Clock

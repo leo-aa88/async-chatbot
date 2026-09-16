@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aca.domain.events import HumanMessage
 from aca.domain.state import ConversationState, SelfModel
 from aca.persistence.stores import Stores
 
-UTC = timezone.utc
 T0 = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
 

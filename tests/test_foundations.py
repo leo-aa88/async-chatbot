@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -30,12 +30,12 @@ def test_parse_duration_rejects_garbage():
 
 
 def test_rfc3339_roundtrip():
-    moment = datetime(2026, 6, 1, 12, 30, tzinfo=timezone.utc)
+    moment = datetime(2026, 6, 1, 12, 30, tzinfo=UTC)
     assert from_rfc3339(to_rfc3339(moment)) == moment
 
 
 def test_manual_clock_separates_axes():
-    clk = ManualClock(datetime(2026, 1, 1, tzinfo=timezone.utc))
+    clk = ManualClock(datetime(2026, 1, 1, tzinfo=UTC))
     m0, w0 = clk.monotonic(), clk.now_utc()
     clk.advance_wall_only(3600)  # host suspend: wall moves, monotonic frozen
     assert clk.monotonic() == m0

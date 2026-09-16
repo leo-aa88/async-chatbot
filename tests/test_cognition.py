@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from aca.cognition import activation as act
 from aca.cognition import budgets as budget
 from aca.cognition import scheduler
-from aca.cognition.classifier import classify, ClassificationContext, is_trivial, jaccard_similarity
+from aca.cognition.classifier import ClassificationContext, classify, is_trivial, jaccard_similarity
 from aca.cognition.gating import (
     OptionalResponseFactors,
     ProactiveExpressionFactors,
@@ -20,12 +20,11 @@ from aca.cognition.gating import (
     quiet_hours_active,
     refractory_factor,
 )
+from aca.cognition.selection import Candidate, select
 from aca.config import Budgets, QuietHours
 from aca.domain.enums import CandidateKind, ConversationMode, MessageClass
-from aca.cognition.selection import Candidate, select
 from aca.rng import Rng
 
-UTC = timezone.utc
 T0 = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
 

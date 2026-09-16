@@ -9,7 +9,7 @@ invariants live.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -126,7 +126,7 @@ class Harness:
 
 @pytest.fixture
 def clock():
-    return ManualClock(datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc))
+    return ManualClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
 
 
 @pytest.fixture

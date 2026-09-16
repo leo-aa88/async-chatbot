@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from conftest import Harness
 
 from aca import ids
 from aca.cognition import budgets as budget
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus, OutboundKind
+from aca.domain.enums import EnrichmentStatus
 from aca.domain.state import ProvisionalMemory
-from conftest import Harness
 
 
 def _config():

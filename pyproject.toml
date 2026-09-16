@@ -13,7 +13,7 @@ authors = [{ name = "Leonardo Araujo" }]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6"]
 
 [project.scripts]
 aca = "aca.cli.main:main"
@@ -27,5 +27,15 @@ testpaths = ["tests"]
 addopts = "-ra"
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# UP042: the `class X(str, Enum)` idiom is intentional — enum values persist as strings in
+# SQLite and travel over IPC; we rely on `.value` rather than StrEnum's implicit str().
+ignore = ["UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use compact multi-statement setup lines for readability.
+"tests/*" = ["E702"]

@@ -11,11 +11,11 @@ from datetime import datetime
 
 from ..cognition import budgets as budget
 from ..cognition.gating import (
+    HardGateResult,
     ProactiveHardGateInput,
     evaluate_proactive_hard_gates,
     quiet_hours_active,
 )
-from ..cognition.gating import HardGateResult
 from .context import ReducerContext
 from .support import infer_mode, read_proactive_usage
 

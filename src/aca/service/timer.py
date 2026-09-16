@@ -10,7 +10,7 @@ the reducer validates session/generation before acting (invariant 34).
 from __future__ import annotations
 
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 
 
 class CancellableTimer:

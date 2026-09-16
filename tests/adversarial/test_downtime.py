@@ -7,13 +7,11 @@ as observed user silence, and resume does not replay missed stochastic cognition
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+
+from conftest import Harness
 
 from aca import ids
 from aca.domain.events import AgentResumed, RuntimeInterruptionDetected
-from conftest import Harness
-
-UTC = timezone.utc
 
 
 def test_resume_does_not_add_downtime_to_observed_silence(harness: Harness):

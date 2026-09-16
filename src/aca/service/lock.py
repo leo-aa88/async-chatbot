@@ -52,7 +52,7 @@ class SingleInstanceLock:
             os.close(self._fd)
             self._fd = None
 
-    def __enter__(self) -> "SingleInstanceLock":
+    def __enter__(self) -> SingleInstanceLock:
         self.acquire()
         return self
 

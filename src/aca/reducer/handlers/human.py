@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from ... import ids
+from ...cognition.activation import half_life_to_rate_per_hour
 from ...cognition.classifier import ClassificationContext, classify
 from ...cognition.gating import OptionalResponseFactors, optional_response_probability
 from ...cognition.selection import select
@@ -27,7 +28,6 @@ from ...domain.enums import (
 from ...domain.events import HumanMessage
 from ...domain.runtime import CognitionTrace, ResponseObligation
 from ...domain.state import ProvisionalMemory
-from ...cognition.activation import half_life_to_rate_per_hour
 from ..context import ReducerContext
 from ..support import build_candidates, infer_mode
 from ..workitems import create_embedding_work, create_llm_work

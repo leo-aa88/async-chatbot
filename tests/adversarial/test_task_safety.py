@@ -6,9 +6,10 @@ never cause a real task to be dropped.
 
 from __future__ import annotations
 
+from conftest import Harness
+
 from aca.config import Config
 from aca.domain.enums import OutboundKind
-from conftest import Harness
 
 
 def test_task_creates_obligation_even_with_zero_proactive_budget(tmp_path, clock):

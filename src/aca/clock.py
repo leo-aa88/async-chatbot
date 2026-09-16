@@ -13,7 +13,7 @@ what makes downtime/suspension and stochastic timing testable and replayable.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, tzinfo
+from datetime import UTC, datetime, tzinfo
 from typing import Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
@@ -22,13 +22,13 @@ def to_rfc3339(moment: datetime) -> str:
     """Serialize a timezone-aware datetime as an RFC 3339 / UTC string."""
     if moment.tzinfo is None:
         raise ValueError("refusing to serialize a naive datetime")
-    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def from_rfc3339(text: str) -> datetime:
     """Parse an RFC 3339 timestamp into a timezone-aware UTC datetime."""
     normalized = text.replace("Z", "+00:00")
-    return datetime.fromisoformat(normalized).astimezone(timezone.utc)
+    return datetime.fromisoformat(normalized).astimezone(UTC)
 
 
 @runtime_checkable
@@ -55,7 +55,7 @@ class SystemClock:
         self._tz = ZoneInfo(local_timezone)
 
     def now_utc(self) -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     def monotonic(self) -> float:
         import time
@@ -82,7 +82,7 @@ class ManualClock:
         local_timezone: str = "UTC",
         monotonic_start: float = 0.0,
     ) -> None:
-        self._utc = (start or datetime(2026, 1, 1, tzinfo=timezone.utc)).astimezone(timezone.utc)
+        self._utc = (start or datetime(2026, 1, 1, tzinfo=UTC)).astimezone(UTC)
         self._mono = monotonic_start
         self._tz = ZoneInfo(local_timezone)
 

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from conftest import Harness
 
 from aca import ids
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus, ObligationStatus, OutboundKind, OutboundStatus
+from aca.domain.enums import EnrichmentStatus, OutboundKind, OutboundStatus
 from aca.domain.state import ProvisionalMemory
-from conftest import Harness
-
-UTC = timezone.utc
 
 
 def _insert_strong_memory(h: Harness, text="return to fluid mechanics", salience=0.9):
@@ -65,7 +62,7 @@ def test_proactive_speak_path(tmp_path, clock):
     })
     h = Harness(tmp_path, cfg, clock)
     _insert_strong_memory(h)
-    result = h.wake()
+    h.wake()
     dispatched = h.pending_work()
     assert len(dispatched) == 1  # exactly one proactive generative call (invariant 3)
     h.run_all_pending()
@@ -90,8 +87,7 @@ def test_proactive_supersedes_older_pending(tmp_path, clock):
     _insert_strong_memory(h)
     h.wake(); h.run_all_pending()
     h.wake(); h.run_all_pending()
-    proactive = [m for m in h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE)]
-    superseded = [m for m in [h.stores.outbox.get_message(x.message_id) for x in proactive]]
+    proactive = h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE)
     # At most one still-pending proactive item per channel (DESIGN 6.1).
     assert len(proactive) <= 1
     h.close()

@@ -6,7 +6,7 @@ are reclaimed, stale proactive items expire, and the logical agent_id is never r
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from aca import ids
 from aca.clock import ManualClock
@@ -16,8 +16,6 @@ from aca.domain.events import HumanMessage
 from aca.domain.runtime import OutboundMessage, WorkItem
 from aca.persistence.stores import Stores
 from aca.service.recovery import recover
-
-UTC = timezone.utc
 
 
 def _config():

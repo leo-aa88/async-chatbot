@@ -7,17 +7,14 @@ silence on parse failure.
 
 from __future__ import annotations
 
-from datetime import timezone
+from conftest import Harness
 
 from aca import ids
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus, ObligationStatus, OutboundKind
+from aca.domain.enums import EnrichmentStatus, ObligationStatus
 from aca.domain.state import ProvisionalMemory, Topic
 from aca.workers.base import LLMOutput
-from conftest import Harness
-
-UTC = timezone.utc
 
 
 class ScriptedLLM:

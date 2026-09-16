@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from aca.domain.enums import LifecycleState
 from conftest import Harness
+
+from aca.domain.enums import LifecycleState
 
 
 def test_wake_with_wrong_generation_is_dropped(harness: Harness):

@@ -6,18 +6,15 @@ per cycle; a result never re-triggers generative cognition).
 
 from __future__ import annotations
 
-from datetime import timezone
+from conftest import Harness
 
 from aca import ids
 from aca.domain.events import HumanMessage
-from conftest import Harness
-
-UTC = timezone.utc
 
 
 def test_duplicate_event_id_is_not_a_second_turn(harness: Harness):
     eid = ids.new_id(ids.EVENT)
-    r1 = harness.send_human("Explain the traceback.", event_id=eid)
+    harness.send_human("Explain the traceback.", event_id=eid)
     # Re-send the SAME event_id (client retry after a lost ACK).
     ev = HumanMessage(event_id=eid, timestamp=harness.clock.now_utc(), text="Explain the traceback.")
     with harness.stores.db.transaction():

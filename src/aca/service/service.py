@@ -12,7 +12,9 @@ import asyncio
 from dataclasses import replace
 from pathlib import Path
 
+from .. import ids
 from ..clock import Clock, SystemClock
+from ..cognition.scheduler import sample_delay_hours
 from ..config import Config
 from ..domain.enums import ExitKind, LifecycleState
 from ..domain.events import (
@@ -25,12 +27,10 @@ from ..domain.events import (
     StochasticWake,
 )
 from ..persistence.stores import Stores
-from ..rng import Rng
-from .. import ids
-from ..cognition.scheduler import sample_delay_hours
 from ..reducer.context import ReducerContext
 from ..reducer.reducer import Reducer
 from ..reducer.support import build_candidates, wake_signals
+from ..rng import Rng
 from ..workers.base import EmbeddingWorker, LLMWorker
 from ..workers.fake_embedding import FakeEmbeddingWorker
 from ..workers.fake_llm import FakeLLMWorker

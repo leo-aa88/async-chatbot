@@ -10,14 +10,14 @@ and completion are bookkeeping performed on the reducer coroutine, keeping write
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Callable
 
 from .. import ids
 from ..clock import Clock
 from ..cognition.snapshot import Snapshot
-from ..domain.events import EmbeddingResult, Event, LLMResult
 from ..domain.enums import WorkKind
+from ..domain.events import EmbeddingResult, Event, LLMResult
 from ..domain.runtime import WorkItem
 from ..persistence.stores import Stores
 from ..workers.base import EmbeddingWorker, LLMWorker

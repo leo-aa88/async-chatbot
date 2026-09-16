@@ -6,17 +6,16 @@ During quiet hours the agent must not emit proactive messages, but internal cogn
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+from conftest import Harness
 
 from aca import ids
+from aca.clock import ManualClock
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
 from aca.domain.enums import EnrichmentStatus, OutboundKind
 from aca.domain.state import ProvisionalMemory
-from aca.clock import ManualClock
-from conftest import Harness
-
-UTC = timezone.utc
 
 
 def _quiet_config():
@@ -41,7 +40,6 @@ def _seed_raw_memory(h: Harness):
 def test_no_proactive_message_during_quiet_hours(tmp_path):
     clock = ManualClock(datetime(2026, 6, 1, 2, 0, tzinfo=UTC))  # 02:00 local, inside quiet
     h = Harness(tmp_path, _quiet_config(), clock)
-    mem_id = None
     _seed_raw_memory(h)
     h.wake()
     h.run_all_pending()

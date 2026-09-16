@@ -8,8 +8,9 @@ no implicit unit conversion happens later.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
+from typing import Any
 
 from .durations import parse_hours, parse_seconds
 from .errors import ConfigError
@@ -34,7 +35,7 @@ class Temperament:
     persistence: float = 0.50
 
     @staticmethod
-    def from_mapping(data: Mapping[str, Any]) -> "Temperament":
+    def from_mapping(data: Mapping[str, Any]) -> Temperament:
         return Temperament(
             initiative=_fraction("temperament.initiative", data.get("initiative", 0.50)),
             inhibition=_fraction("temperament.inhibition", data.get("inhibition", 0.50)),
@@ -51,7 +52,7 @@ class QuietHours:
     end_local: str = "08:00"
 
     @staticmethod
-    def from_mapping(data: Mapping[str, Any]) -> "QuietHours":
+    def from_mapping(data: Mapping[str, Any]) -> QuietHours:
         return QuietHours(
             enabled=bool(data.get("enabled", False)),
             start_local=str(data.get("start_local", "01:00")),
@@ -70,7 +71,7 @@ class Timing:
     quiet_hours: QuietHours = field(default_factory=QuietHours)
 
     @staticmethod
-    def from_mapping(data: Mapping[str, Any]) -> "Timing":
+    def from_mapping(data: Mapping[str, Any]) -> Timing:
         return Timing(
             refractory_tau_hours=parse_hours(data.get("refractory_tau_hours", 2.0)),
             proactive_cooldown_seconds=parse_seconds(data.get("proactive_cooldown", "45m")),
@@ -92,7 +93,7 @@ class Cognition:
     semantic_worthiness_floor: float = 0.35
 
     @staticmethod
-    def from_mapping(data: Mapping[str, Any]) -> "Cognition":
+    def from_mapping(data: Mapping[str, Any]) -> Cognition:
         rate = float(data.get("spontaneous_activation_rate_per_hour", 0.25))
         if rate < 0.0:
             raise ConfigError("cognition.spontaneous_activation_rate_per_hour must be >= 0")
@@ -119,7 +120,7 @@ class Memory:
     candidate_activation_floor: float = 0.05
 
     @staticmethod
-    def from_mapping(data: Mapping[str, Any]) -> "Memory":
+    def from_mapping(data: Mapping[str, Any]) -> Memory:
         half_life = float(data.get("default_decay_half_life_hours", 24.0))
         if half_life <= 0.0:
             raise ConfigError("memory.default_decay_half_life_hours must be > 0")
@@ -146,7 +147,7 @@ class Budgets:
     max_enrichment_attempts: int = 3
 
     @staticmethod
-    def from_mapping(data: Mapping[str, Any]) -> "Budgets":
+    def from_mapping(data: Mapping[str, Any]) -> Budgets:
         def positive_int(name: str, value: Any) -> int:
             number = int(value)
             if number < 0:
@@ -185,7 +186,7 @@ class Config:
     budgets: Budgets = field(default_factory=Budgets)
 
     @staticmethod
-    def from_mapping(data: Mapping[str, Any]) -> "Config":
+    def from_mapping(data: Mapping[str, Any]) -> Config:
         seed = data.get("rng_seed")
         return Config(
             local_timezone=str(data.get("local_timezone", "UTC")),
@@ -197,6 +198,6 @@ class Config:
             budgets=Budgets.from_mapping(data.get("budgets", {})),
         )
 
-    def with_overrides(self, **overrides: Any) -> "Config":
+    def with_overrides(self, **overrides: Any) -> Config:
         """Return a copy with top-level fields replaced (useful for tests)."""
         return replace(self, **overrides)

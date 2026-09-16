@@ -26,7 +26,7 @@ from ..domain.events import (
     StochasticWake,
     event_type_name,
 )
-from .context import ReduceResult, ReducerContext
+from .context import ReducerContext, ReduceResult
 from .handlers.base import HandlerOutcome
 from .handlers.delivery_result import handle_delivery_result
 from .handlers.embedding_result import handle_embedding_result

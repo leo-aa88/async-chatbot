@@ -31,7 +31,7 @@ class Stores:
     outbox: OutboxStore
 
     @staticmethod
-    def open(path: str | Path) -> "Stores":
+    def open(path: str | Path) -> Stores:
         db = Database(path)
         return Stores(
             db=db,

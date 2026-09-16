@@ -78,7 +78,7 @@ class SelfModel:
     last_delivered_proactive_at: datetime | None = None
     dominant_topic: str | None = None
 
-    def with_delivered_proactive(self, at: datetime) -> "SelfModel":
+    def with_delivered_proactive(self, at: datetime) -> SelfModel:
         """Return a copy reflecting a freshly *delivered* proactive message (DESIGN 11.4)."""
         from dataclasses import replace
 
