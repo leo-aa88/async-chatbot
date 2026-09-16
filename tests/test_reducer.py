@@ -64,6 +64,16 @@ def test_low_substance_turn_is_persisted_without_a_reply(harness: Harness, text)
     assert harness.stores.outbox.recent_turns()[-1]["text"] == text  # human turn persisted
 
 
+@pytest.mark.parametrize("text", ["n", "y", "5"])
+def test_single_char_answer_stays_semantically_retrievable(harness: Harness, text):
+    # A lone meaningful answer ("n"/"y"/"5") is silent but must keep a provisional memory so it
+    # stays retrievable — no cold-retrieval failure (DESIGN 12.2). Only the ack allowlist skips it.
+    harness.send_human(text)
+    assert any(w.kind.value == "EMBEDDING" for w in harness.pending_work())
+    memories = [m for m in harness.stores.memory.recent_memories() if m.text == text]
+    assert len(memories) == 1  # provisional memory created (keyword/FTS + embedding addressable)
+
+
 def test_proactive_speak_path(tmp_path, clock):
     # Config that makes a single strong candidate dominate NOTHING deterministically.
     cfg = Config.from_mapping({

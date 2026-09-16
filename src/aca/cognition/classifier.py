@@ -122,8 +122,6 @@ def is_trivial(text: str) -> bool:
     if _is_single_emoji(stripped):
         return True
     tokens = _tokens(stripped)
-    if len(tokens) == 1 and len(tokens[0]) == 1:
-        return True  # a stray single character ("t", "e") is noise, not a real message
     return len(tokens) <= 1 and (not tokens or tokens[0] in _TRIVIAL_ACKS)
 
 
