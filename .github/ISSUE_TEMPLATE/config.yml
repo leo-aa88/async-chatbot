@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/leo-aa88/async-chatbot/discussions
+    about: Ask questions and discuss ideas before opening an issue.
+  - name: Design specification
+    url: https://github.com/leo-aa88/async-chatbot/blob/main/docs/DESIGN.md
+    about: The frozen v0.6 behavioral architecture. Read this before proposing structural changes.

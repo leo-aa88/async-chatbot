@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest an idea or enhancement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The v0.6 architecture in `docs/DESIGN.md` is design-frozen. Structural changes need
+        evidence from the running prototype or a concrete embodiment requirement — please note
+        which when relevant.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do, and what's missing or awkward today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or API you'd like. Reference DESIGN.md sections if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Cognition / reducer behavior
+        - Persistence / recovery
+        - Service / daemon / IPC
+        - CLI / client
+        - Workers (LLM / embedding)
+        - Docs / tooling / CI
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for duplicates
+          required: true
+        - label: This is consistent with the invariants in AGENTS.md (or I explain why they should change)
+          required: false

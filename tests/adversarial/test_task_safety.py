@@ -1,0 +1,87 @@
+"""Adversarial: explicit tasks are never intentionally silenced (invariants 11, 12, 13).
+
+A conservative classifier, an exhausted proactive budget, and stochastic social behavior must
+never cause a real task to be dropped.
+"""
+
+from __future__ import annotations
+
+import pytest
+from conftest import Harness
+
+from aca.cognition.classifier import classify
+from aca.config import Config
+from aca.domain.enums import OutboundKind
+
+
+def test_task_creates_obligation_even_with_zero_proactive_budget(tmp_path, clock):
+    cfg = Config.from_mapping({
+        "rng_seed": 1,
+        "budgets": {"proactive_llm_calls_per_day": 0, "proactive_llm_calls_per_hour": 0,
+                    "proactive_messages_per_hour": 0},
+    })
+    h = Harness(tmp_path, cfg, clock)
+    h.send_human("Explain this stack trace.")
+    llm_work = [w for w in h.pending_work() if w.kind.value == "LLM_COGNITION"]
+    assert len(llm_work) == 1  # proactive budget exhaustion does not block a task (inv 11)
+    h.run_all_pending()
+    msgs = h.stores.outbox.deliverable()
+    assert len(msgs) == 1 and msgs[0].kind is OutboundKind.MANDATORY
+    assert h.stores.work.pending_obligations() == []  # satisfied
+    h.close()
+
+
+def test_reprompt_after_silence_forces_response(harness: Harness):
+    # First an optional turn the agent may stay silent on...
+    harness.send_human("lol")
+    # ...then a re-prompt. It must take the response-required path (a mandatory work item).
+    harness.send_human("?")
+    llm_work = [w for w in harness.pending_work() if w.kind.value == "LLM_COGNITION"]
+    assert len(llm_work) >= 1
+    obligation_events = [
+        o for o in [harness.stores.work.obligation_by_work(w.work_id) for w in llm_work]
+        if o is not None
+    ]
+    assert obligation_events, "re-prompt must create a response obligation"
+
+
+def test_ambiguous_task_like_question_gets_obligation(harness: Harness):
+    harness.send_human("did the migration finish running?")
+    llm_work = [w for w in harness.pending_work() if w.kind.value == "LLM_COGNITION"]
+    assert len(llm_work) == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I need you to look into this issue for me.",  # the review's exact example
+        "can you take a look at the deploy",
+        "would you summarize the thread",
+        "help me figure out why it crashed",
+        "please review the diff",
+    ],
+)
+def test_directed_request_statements_are_response_required(text):
+    # Ambiguous, non-imperative, non-"?" statements that are clearly directed requests must NOT
+    # fall to the optional/stochastic path (DESIGN 13.2, 20.1) — the review's finding #2.
+    assert classify(text).response_required is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I finally got the prototype running",  # DESIGN 13.3: a genuine optional statement
+        "that talk was pretty interesting",
+    ],
+)
+def test_plain_statements_stay_optional(text):
+    # The fix must not over-correct genuine social statements into mandatory replies.
+    assert classify(text).response_required is False
+
+
+def test_directed_request_statement_creates_obligation_in_reducer(harness: Harness):
+    harness.send_human("I need you to look into this issue for me.")
+    llm_work = [w for w in harness.pending_work() if w.kind.value == "LLM_COGNITION"]
+    assert len(llm_work) == 1
+    assert harness.stores.work.obligation_by_work(llm_work[0].work_id) is not None
+    assert harness.stores.work.obligation_by_work(llm_work[0].work_id) is not None

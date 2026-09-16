@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aca"
+version = "0.6.0"
+description = "Asynchronous Conversational Agent — a persistent, introspective conversational agent."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Leonardo Araujo" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6"]
+
+[project.scripts]
+aca = "aca.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# UP042: the `class X(str, Enum)` idiom is intentional — enum values persist as strings in
+# SQLite and travel over IPC; we rely on `.value` rather than StrEnum's implicit str().
+ignore = ["UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use compact multi-statement setup lines for readability.
+"tests/*" = ["E702"]
