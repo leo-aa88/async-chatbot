@@ -607,7 +607,7 @@ $$
 Then sample:
 
 $$
-\Delta t \sim \operatorname{Exp}(\lambda_{\text{think},n})
+\Delta t \sim \mathrm{Exp}(\lambda_{\text{think},n})
 $$
 
 and schedule:
