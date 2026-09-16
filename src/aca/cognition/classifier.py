@@ -163,6 +163,17 @@ def _base_class(text: str) -> MessageClass:
             return MessageClass.ACKNOWLEDGEMENT
 
     is_question = stripped.endswith("?")
+
+    # A lone very short token ("hi", "yo", "sup", "t") is low-information, not a substantive turn.
+    if (
+        len(tokens) == 1
+        and len(tokens[0]) <= 3
+        and not is_question
+        and tokens[0] not in _TASK_KEYWORDS
+        and tokens[0] not in _IMPERATIVE_VERBS
+    ):
+        return MessageClass.LOW_INFORMATION
+
     starts_imperative = tokens[0] in _IMPERATIVE_VERBS
     has_request_intent = _has_request_intent(lowered, tokens)
 

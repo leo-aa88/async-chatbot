@@ -76,7 +76,18 @@ def test_reprompt_after_silence_forces_response():
 
 def test_trivial_detection():
     assert is_trivial("") and is_trivial("ok") and is_trivial("👍")
+    # A single character is NOT trivial: it may be a real answer ("n", "5", "y") that must stay
+    # semantically retrievable via its provisional memory (DESIGN 12.2). Only the ack allowlist
+    # and empty/emoji skip embedding.
+    assert not is_trivial("t") and not is_trivial("5") and not is_trivial("n")
     assert not is_trivial("I finally got the prototype running")
+
+
+@pytest.mark.parametrize("text", ["t", "e", "hi", "yo", "sup"])
+def test_tiny_tokens_are_low_information_and_optional(text):
+    result = classify(text)
+    assert result.message_class in (MessageClass.LOW_INFORMATION, MessageClass.ACKNOWLEDGEMENT)
+    assert result.response_required is False
 
 
 def test_jaccard_similarity_bounds():
