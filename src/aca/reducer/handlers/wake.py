@@ -49,21 +49,31 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
         ctx.rng,
     )
     if selection.is_nothing:
-        return HandlerOutcome(reschedule=True, trace=_trace(cycle_id, now, candidate_null=True, note="nothing"))
+        return HandlerOutcome(
+            reschedule=True,
+            trace=_trace(cycle_id, now, candidate_null=True, action="silence", note="nothing"),
+        )
 
     candidate = selection.candidate
     if candidate.score < ctx.config.cognition.semantic_worthiness_floor:
-        return HandlerOutcome(reschedule=True, trace=_trace(cycle_id, now, candidate=candidate, note="low_worth"))
+        return HandlerOutcome(
+            reschedule=True,
+            trace=_trace(cycle_id, now, candidate=candidate, action="silence", note="low_worth"),
+        )
 
     usage = read_proactive_usage(ctx, now)
     if not budget.proactive_llm_call_allowed(usage, ctx.config.budgets).allowed:
-        return HandlerOutcome(reschedule=True, trace=_trace(cycle_id, now, candidate=candidate, note="llm_budget"))
+        return HandlerOutcome(
+            reschedule=True,
+            trace=_trace(cycle_id, now, candidate=candidate, action="silence", note="llm_budget"),
+        )
 
     gate = evaluate_proactive(ctx, now)
     needs_enrichment = _needs_enrichment(ctx, candidate)
     if not gate.allowed and not needs_enrichment:
         return HandlerOutcome(
-            reschedule=True, trace=_trace(cycle_id, now, candidate=candidate, note=f"blocked:{gate.reason}")
+            reschedule=True,
+            trace=_trace(cycle_id, now, candidate=candidate, action="silence", note=f"blocked:{gate.reason}"),
         )
 
     _materialize_selected(ctx, candidate, now)
@@ -128,7 +138,11 @@ def _candidate_context(ctx: ReducerContext, candidate) -> dict:
     return data
 
 
-def _trace(cycle_id, now, *, candidate=None, candidate_null=False, llm_called=False, note="") -> CognitionTrace:
+def _trace(
+    cycle_id, now, *, candidate=None, candidate_null=False, llm_called=False, action=None, note="",
+) -> CognitionTrace:
+    # A wake that terminates without dispatching an LLM records action="silence" now; a dispatched
+    # proactive cycle leaves action=None until the LLMResult finalizes it (speak/silence).
     return CognitionTrace(
         cycle_id=cycle_id,
         created_at=now,
@@ -137,5 +151,6 @@ def _trace(cycle_id, now, *, candidate=None, candidate_null=False, llm_called=Fa
         candidate_id=candidate.id if candidate else None,
         candidate_was_null=candidate_null,
         llm_called=llm_called,
+        action=action,
         notes=note,
     )

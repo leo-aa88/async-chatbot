@@ -47,6 +47,17 @@ def test_trace_records_speak_action_for_mandatory(harness: Harness):
     assert mandatory.action == "speak"
 
 
+def test_trace_records_silence_action_when_silenced_before_any_llm_call(harness: Harness):
+    # The common case: the fast loop silences a turn without an LLM call (DESIGN 9.1, 19). Its
+    # trace must still say "silence", not null — otherwise `aca logs` can't tell an intentional
+    # silence apart from an unfinalized trace (DESIGN 26).
+    harness.send_human("lol")  # low-substance -> silenced by the reducer, no LLM dispatched
+    trace = harness.stores.work.recent_traces()[0]
+    assert trace.llm_called is False
+    assert trace.action == "silence"
+    assert trace.notes == "silence_low_substance"
+
+
 def test_delivery_makes_turn_visible(harness: Harness):
     harness.send_human("Explain this error.")
     harness.run_all_pending()
