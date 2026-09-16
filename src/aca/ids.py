@@ -1,9 +1,15 @@
 """Identifier generation.
 
 IDs are human-readable, prefixed, and sortable-ish (time-ordered random hex). Prefixes make
-traces legible (``evt_``, ``pmem_``, ``topic_``...). ID generation is the one place we allow
-non-determinism from ``os.urandom``; tests that need deterministic IDs inject their own values
-rather than reseeding this module.
+traces legible (``evt_``, ``pmem_``, ``topic_``...).
+
+**Sanctioned clock/randomness exception (see AGENTS.md / CLAUDE.md).** The project rule is that
+cognition and the reducer take time/randomness through an injected ``Clock``/``Rng``. ID minting
+is the one deliberate exception: it reads ``time.time()`` and ``os.urandom`` directly. This is
+safe for replay determinism because an ID is an *opaque durable key* — it is never an input to a
+cognition decision (selection, gating, scheduling all read scores/state, never an ID). A row's
+identity therefore differs between two otherwise-identical runs, but the decisions do not; tests
+that assert on durable identity inject their own IDs rather than minting them here.
 """
 
 from __future__ import annotations

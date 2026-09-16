@@ -20,9 +20,14 @@ from ..domain.enums import WorkKind
 from ..domain.events import EmbeddingResult, Event, LLMResult
 from ..domain.runtime import WorkItem
 from ..persistence.stores import Stores
+from ..reducer.handlers.llm_result import WORKER_ERROR_KEY
 from ..workers.base import EmbeddingWorker, LLMWorker
 
 _LEASE_SECONDS = 120
+# Bounded in-process retries for a live worker error before the work fails terminally and the
+# obligation is surfaced (invariant 25). Kept small so a stuck task surfaces promptly.
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 0.1
 
 
 class Dispatcher:
@@ -55,13 +60,48 @@ class Dispatcher:
         task.add_done_callback(self._tasks.discard)
 
     async def _run(self, work: WorkItem) -> None:
-        try:
-            event = await self._execute(work)
-        except Exception as exc:  # worker failure: release lease for later recovery/retry
-            with self._stores.db.transaction():
-                self._stores.work.requeue(work.work_id, error=repr(exc))
+        # dispatch() already leased this work once (attempt_count == 1).
+        attempt = 1
+        while True:
+            try:
+                event = await self._execute(work)
+            except Exception as exc:
+                if attempt >= _MAX_ATTEMPTS:
+                    # Exhausted: fail terminally and surface it, never requeue forever (inv 25).
+                    self._fail_terminal(work, exc)
+                    return
+                attempt += 1
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
+                work = self._release_for_retry(work)
+                continue
+            self._enqueue(event)
             return
-        self._enqueue(event)
+
+    def _release_for_retry(self, work: WorkItem) -> WorkItem:
+        lease_until = self._clock.now_utc() + timedelta(seconds=_LEASE_SECONDS)
+        with self._stores.db.transaction():
+            self._stores.work.lease(work.work_id, lease_until)  # RUNNING + attempt_count += 1
+        return self._stores.work.get_work(work.work_id)
+
+    def _fail_terminal(self, work: WorkItem, exc: Exception) -> None:
+        with self._stores.db.transaction():
+            self._stores.work.fail_terminal(work.work_id, repr(exc))
+        if work.kind is WorkKind.EMBEDDING:
+            # The raw event is already persisted; lexical retrieval remains (DESIGN 23.4).
+            return
+        # Surface a generative failure as a result event so the reducer can fail any mandatory
+        # obligation visibly rather than leaving it silently pending (invariant 25).
+        self._enqueue(
+            LLMResult(
+                event_id=ids.new_id(ids.EVENT),
+                timestamp=self._clock.now_utc(),
+                source="dispatcher",
+                work_id=work.work_id,
+                cycle_id=work.cycle_id,
+                basis_revision=work.basis_revision,
+                result={WORKER_ERROR_KEY: repr(exc)},
+            )
+        )
 
     async def _execute(self, work: WorkItem) -> Event:
         if work.kind is WorkKind.EMBEDDING:

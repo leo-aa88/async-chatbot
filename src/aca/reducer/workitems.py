@@ -1,9 +1,9 @@
 """Durable semantic-work creation (DESIGN 8.2, 23.5).
 
 Work is persisted PENDING with an immutable snapshot *before* dispatch, so ownership survives a
-crash and can be reclaimed by lease (invariant 24). Handlers call these helpers; the service
-later dispatches the returned work id to a worker. At most one generative work item per cycle
-(invariant 3) is the caller's responsibility — these helpers create exactly one each.
+crash and can be reclaimed by lease (invariant 24). ``create_llm_work`` enforces at most one
+generative work item per cycle (invariant 3) with a runtime guard, so the "one generative call
+per cycle" rule is checked, not merely commented.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from .. import ids
 from ..cognition.snapshot import build_snapshot
 from ..domain.enums import WorkKind, WorkStatus
 from ..domain.runtime import WorkItem
+from ..errors import AcaError
 from .context import ReducerContext
 
 
@@ -39,7 +40,14 @@ def create_llm_work(
     kind: WorkKind = WorkKind.LLM_COGNITION,
     now: datetime,
 ) -> str:
-    """Persist one generative work item with a canonical snapshot; return its ``work_id``."""
+    """Persist one generative work item with a canonical snapshot; return its ``work_id``.
+
+    Guards invariant 3: a cognition cycle may request at most one generative LLM call. A second
+    generative work item for the same ``cycle_id`` is a programming error and is rejected rather
+    than silently doubling LLM spend.
+    """
+    if ctx.stores.work.generative_exists_for_cycle(cycle_id):
+        raise AcaError(f"cycle {cycle_id} already has a generative work item (invariant 3)")
     work_id = ids.new_id(ids.WORK_ITEM)
     basis_revision = ctx.stores.state.state_revision()
     snapshot = build_snapshot(

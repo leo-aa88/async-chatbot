@@ -6,10 +6,13 @@ per cycle; a result never re-triggers generative cognition).
 
 from __future__ import annotations
 
+import pytest
 from conftest import Harness
 
 from aca import ids
 from aca.domain.events import HumanMessage
+from aca.errors import AcaError
+from aca.reducer.workitems import create_llm_work
 
 
 def test_duplicate_event_id_is_not_a_second_turn(harness: Harness):
@@ -47,3 +50,16 @@ def _generative_ids(h: Harness) -> set[str]:
         for w in h.stores.work.pending()
         if w.kind.value in ("LLM_COGNITION", "LLM_ENRICHMENT")
     }
+
+
+def test_second_generative_call_for_same_cycle_is_rejected(harness: Harness):
+    # The invariant is enforced at the choke point, not just documented (review finding #4).
+    now = harness.clock.now_utc()
+    cycle_id = ids.new_id(ids.CYCLE)
+    ctx = harness.reducer.context
+    with harness.stores.db.transaction():
+        create_llm_work(ctx, cycle_id=cycle_id, source_event_id="e",
+                        source_context={"cycle_type": "proactive"}, now=now)
+    with harness.stores.db.transaction(), pytest.raises(AcaError):
+        create_llm_work(ctx, cycle_id=cycle_id, source_event_id="e",
+                        source_context={"cycle_type": "proactive"}, now=now)

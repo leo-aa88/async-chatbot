@@ -39,6 +39,14 @@ class WorkStore:
         row = self._db.query_one("SELECT * FROM work_items WHERE work_id=?", (work_id,))
         return None if row is None else self._to_work(row)
 
+    def generative_exists_for_cycle(self, cycle_id: str) -> bool:
+        """Whether a generative (LLM) work item already exists for this cycle (invariant 3)."""
+        row = self._db.query_one(
+            "SELECT 1 FROM work_items WHERE cycle_id=? AND kind IN (?, ?) LIMIT 1",
+            (cycle_id, WorkKind.LLM_COGNITION.value, WorkKind.LLM_ENRICHMENT.value),
+        )
+        return row is not None
+
     def lease(self, work_id: str, lease_until: datetime) -> None:
         self._db.execute(
             """UPDATE work_items SET status=?, attempt_count=attempt_count+1, lease_until=?

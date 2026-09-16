@@ -79,6 +79,9 @@ replay deterministically.
 - **No source file exceeds 600 LOC.** Split by responsibility before you approach the limit.
 - **Determinism.** Cognition takes an injected `Clock` and `Rng`. Never call
   `time.time()`/`random` directly in cognition or the reducer — use the injected instances.
+  The single sanctioned exception is `ids.new_id()`, which mints opaque durable keys from the
+  wall clock + `os.urandom`; IDs are never decision inputs, so replay of behavior is unaffected
+  (tests that assert on durable identity inject their own IDs).
 - **Typed data contracts.** `domain/` holds frozen dataclasses with no IO and no behavior
   beyond validation. The reducer owns all persistence.
 - Type-hint everything; keep functions focused; match the surrounding style.

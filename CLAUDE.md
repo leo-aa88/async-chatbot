@@ -13,7 +13,10 @@ The behavioral specification is [`docs/DESIGN.md`](docs/DESIGN.md) (v0.6, design
   result event and the reducer instead.
 - **Determinism is a feature.** Cognition and the reducer receive an injected `Clock` and
   `Rng`. Do not call `time.time()`, `datetime.now()`, or the `random` module directly in
-  those layers — tests rely on `ManualClock` and a seeded `Rng`.
+  those layers — tests rely on `ManualClock` and a seeded `Rng`. **One sanctioned exception:**
+  `ids.new_id()` reads the wall clock and `os.urandom` to mint opaque durable keys. IDs are
+  never inputs to a cognition decision, so this does not affect replay of behavior; tests that
+  assert on durable identity inject their own IDs. Do not add any other direct clock/RNG reads.
 - **Every invariant in AGENTS.md has a test.** When you touch cognition, persistence, the
   reducer, delivery, or lifecycle/recovery, run `pytest` and, when relevant, extend
   `tests/adversarial/`.

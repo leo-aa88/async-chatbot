@@ -44,6 +44,9 @@ class DeliveryPump:
         self._sink = sink
         self._enqueue = enqueue
         self._inflight: set[str] = set()
+        # Monotonic timestamp of the last proactive delivery attempt; bounds the reconnect burst
+        # window across pump() calls and channels so reconnect can't dogpile (DESIGN 23.7).
+        self._last_proactive_mono: float | None = None
 
     def on_delivery_result(self, message_id: str) -> None:
         self._inflight.discard(message_id)
@@ -61,6 +64,10 @@ class DeliveryPump:
         await self._pump_one_proactive(proactive, now)
 
     async def _pump_one_proactive(self, proactive, now) -> None:
+        # Enforce the reconnect burst window across pump() calls / channels: at most one proactive
+        # delivery per window, so two channels reconnecting together cannot both slip through
+        # before the self-model cooldown updates (DESIGN 23.7 rule 5, invariant 38).
+        burst_elapsed = self._burst_window_elapsed()
         delivered_one = False
         for message in proactive:
             if message.expires_at is not None and message.expires_at <= now:
@@ -70,11 +77,18 @@ class DeliveryPump:
             if not gate.allowed:
                 self._report(message, delivered=False, error=f"revalidation:{gate.reason}")
                 continue
-            if delivered_one:
-                # Burst window: keep the rest pending rather than dogpiling (DESIGN 23.7).
+            if delivered_one or not burst_elapsed:
+                # Keep the rest pending rather than dogpiling; they retry on a later pump.
                 continue
             await self._attempt(message, now)
+            self._last_proactive_mono = self._clock.monotonic()
             delivered_one = True
+
+    def _burst_window_elapsed(self) -> bool:
+        if self._last_proactive_mono is None:
+            return True
+        window = self._config.timing.proactive_burst_window_seconds
+        return (self._clock.monotonic() - self._last_proactive_mono) >= window
 
     async def _attempt(self, message, now) -> None:
         self._inflight.add(message.message_id)
