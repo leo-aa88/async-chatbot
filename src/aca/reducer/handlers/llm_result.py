@@ -44,6 +44,14 @@ from .base import (
 WORKER_ERROR_KEY = "__worker_error__"
 
 
+def _finalize(ctx, cycle_id, action, *, useful=False, invalidated=False, note=None) -> None:
+    """Record the outcome on the cycle's trace so `aca logs` answers "did it speak?" (DESIGN 26)."""
+    ctx.stores.work.finalize_trace(
+        cycle_id, action=action, useful_enrichment=useful,
+        pre_outbox_invalidated=invalidated, note=note,
+    )
+
+
 def _cycle_type(work: WorkItem) -> str:
     return str(work.snapshot.get("context", {}).get("source", {}).get("cycle_type", CYCLE_REACTIVE_OPTIONAL))
 
@@ -89,7 +97,9 @@ def _on_worker_failure(ctx, event, work: WorkItem, cycle_type, error, now) -> Ha
             ctx.stores.work.update_obligation(
                 replace(obligation, status=ObligationStatus.FAILED, last_error=f"worker_error:{error}")
             )
+        _finalize(ctx, event.cycle_id, "failed", note="worker_failure")
         return HandlerOutcome(note=f"mandatory_worker_failure:{error}")
+    _finalize(ctx, event.cycle_id, "silence", note="worker_failure")
     return HandlerOutcome(note=f"worker_failure:{error}")
 
 
@@ -101,20 +111,23 @@ def _on_parse_failure(ctx, event, cycle_type, error, now) -> HandlerOutcome:
             ctx.stores.work.update_obligation(
                 replace(obligation, status=ObligationStatus.FAILED, last_error=error)
             )
+        _finalize(ctx, event.cycle_id, "failed", note="parse_failure")
         return HandlerOutcome(note=f"mandatory_parse_failure:{error}")
     # Proactive/reactive parse failure: no output, no regeneration (DESIGN 22.3).
+    _finalize(ctx, event.cycle_id, "silence", note="parse_failure")
     return HandlerOutcome(note=f"parse_failure:{error}")
 
 
 def _finish_mandatory(ctx, event, work: WorkItem, decision: LLMDecision, now) -> HandlerOutcome:
     obligation = ctx.stores.work.obligation_by_work(event.work_id)
-    apply_proposals(ctx, decision.proposals, now)
+    useful = apply_proposals(ctx, decision.proposals, now)
     if decision.action is not ActionKind.SPEAK or not decision.message:
         # Intentional silence is not a valid terminal action for a task (DESIGN 15, invariant 25).
         if obligation is not None:
             ctx.stores.work.update_obligation(
                 replace(obligation, status=ObligationStatus.FAILED, last_error="non_speak_for_mandatory")
             )
+        _finalize(ctx, event.cycle_id, "failed", useful=useful, note="non_speak_for_mandatory")
         return HandlerOutcome(note="mandatory_non_speak_failure")
 
     message_id = create_outbound(
@@ -126,18 +139,21 @@ def _finish_mandatory(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
         ctx.stores.work.update_obligation(
             replace(obligation, status=ObligationStatus.SATISFIED, satisfied_by_message_id=message_id)
         )
+    _finalize(ctx, event.cycle_id, "speak", useful=useful)
     return HandlerOutcome(deliver=True, note="mandatory_satisfied")
 
 
 def _finish_reactive(ctx, event, work: WorkItem, decision: LLMDecision, now) -> HandlerOutcome:
-    apply_proposals(ctx, decision.proposals, now)
+    useful = apply_proposals(ctx, decision.proposals, now)
     if decision.action is not ActionKind.SPEAK or not decision.message:
+        _finalize(ctx, event.cycle_id, "silence", useful=useful)
         return HandlerOutcome(note="reactive_silence")
 
     # An optional reply is droppable: if the conversation moved on or the candidate is gone, the
     # reply is stale (DESIGN §22.2). Optional silence is a valid terminal action here (DESIGN 15).
     superseded, reason = is_superseded(ctx, work, now)
     if superseded:
+        _finalize(ctx, event.cycle_id, "silence", useful=useful, invalidated=True, note=reason)
         return HandlerOutcome(note=f"reactive_superseded:{reason}")
 
     # A chosen optional reply is reactive: delivered like a mandatory item, not proactive-gated.
@@ -145,6 +161,7 @@ def _finish_reactive(ctx, event, work: WorkItem, decision: LLMDecision, now) -> 
         ctx, kind=OutboundKind.MANDATORY, channel=_channel(work), text=decision.message,
         cycle_id=event.cycle_id, source_event_id=None, now=now,
     )
+    _finalize(ctx, event.cycle_id, "speak", useful=useful)
     return HandlerOutcome(deliver=True, note="reactive_reply")
 
 

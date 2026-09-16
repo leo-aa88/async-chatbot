@@ -141,7 +141,7 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
         # reply — silence is a valid, first-class action here (DESIGN 13.6, 15). This also stops a
         # stray token from triggering a reply merely because some older memory is salient.
         outcome = HandlerOutcome(
-            trace=_trace(cycle_id, event, now, note="silence_low_substance")
+            trace=_trace(cycle_id, event, now, action="silence", note="silence_low_substance")
         )
     else:
         outcome = _optional_path(ctx, event, cycle_id, memory_id, now)
@@ -188,11 +188,14 @@ def _optional_path(ctx, event, cycle_id, memory_id, now) -> HandlerOutcome:
         ctx.rng,
     )
     if selection.is_nothing:
-        return HandlerOutcome(trace=_trace(cycle_id, event, now, candidate_null=True, note="silence_nothing"))
+        return HandlerOutcome(
+            trace=_trace(cycle_id, event, now, candidate_null=True, action="silence", note="silence_nothing")
+        )
 
     if selection.candidate.score < ctx.config.cognition.semantic_worthiness_floor:
         return HandlerOutcome(
-            trace=_trace(cycle_id, event, now, candidate=selection.candidate, note="silence_low_worth")
+            trace=_trace(cycle_id, event, now, candidate=selection.candidate, action="silence",
+                         note="silence_low_worth")
         )
 
     model = ctx.stores.state.load_self_model()
@@ -206,7 +209,8 @@ def _optional_path(ctx, event, cycle_id, memory_id, now) -> HandlerOutcome:
     )
     if ctx.rng.uniform() >= optional_response_probability(factors):
         return HandlerOutcome(
-            trace=_trace(cycle_id, event, now, candidate=selection.candidate, note="silence_stochastic")
+            trace=_trace(cycle_id, event, now, candidate=selection.candidate, action="silence",
+                         note="silence_stochastic")
         )
 
     work_id = create_llm_work(
@@ -244,8 +248,12 @@ def _candidate_context(ctx: ReducerContext, candidate) -> dict:
     return data
 
 
-def _trace(cycle_id, event, now, *, candidate=None, candidate_null=False, llm_called=False, note="") -> CognitionTrace:
-    conversation_mode = None
+def _trace(
+    cycle_id, event, now, *, candidate=None, candidate_null=False, llm_called=False,
+    action=None, note="",
+) -> CognitionTrace:
+    # A branch that terminates without dispatching an LLM records its outcome immediately
+    # (action="silence"); a dispatched branch leaves action=None until the LLMResult finalizes it.
     return CognitionTrace(
         cycle_id=cycle_id,
         created_at=now,
@@ -255,6 +263,6 @@ def _trace(cycle_id, event, now, *, candidate=None, candidate_null=False, llm_ca
         candidate_id=candidate.id if candidate else None,
         candidate_was_null=candidate_null,
         llm_called=llm_called,
-        conversation_mode=conversation_mode,
+        action=action,
         notes=note,
     )
