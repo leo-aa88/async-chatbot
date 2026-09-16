@@ -87,6 +87,14 @@ pip install -e ".[dev]"
 pytest                      # full suite, including tests/adversarial/ (invariant tests)
 ```
 
+Or use the [`Makefile`](Makefile) (`make help` lists all targets):
+
+```bash
+make install                # create .venv and install with dev deps
+make check                  # lint + tests (what CI gates on)
+make run                    # start the agent service
+```
+
 ## Using the agent
 
 Run the daemon and talk to it (the client is not the agent — closing it never stops the agent):
