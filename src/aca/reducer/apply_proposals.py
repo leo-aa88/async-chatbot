@@ -50,6 +50,10 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
     memory = ctx.stores.memory.get_memory(proposal.fields["provisional_memory_id"])
     if memory is None:
         return False
+    if memory.enrichment_status is EnrichmentStatus.ENRICHED:
+        # Idempotent by memory identity: a second concurrent enrichment result must not create a
+        # duplicate topic (DESIGN 12.8, invariant 23).
+        return False
     ctx.stores.memory.update_memory(
         replace(memory, enrichment_status=EnrichmentStatus.ENRICHED, last_activated_at=now)
     )

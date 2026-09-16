@@ -77,6 +77,7 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
         )
 
     _materialize_selected(ctx, candidate, now)
+    _claim_enrichment(ctx, candidate, now)  # RAW -> PENDING so concurrent wakes don't re-enrich
     from ..support import charge_proactive_llm
 
     charge_proactive_llm(ctx, now)  # a proactive generative call is being dispatched
@@ -107,6 +108,23 @@ def _needs_enrichment(ctx: ReducerContext, candidate) -> bool:
         return False
     memory = ctx.stores.memory.get_memory(candidate.id)
     return memory is not None and memory.enrichment_status is EnrichmentStatus.RAW
+
+
+def _claim_enrichment(ctx: ReducerContext, candidate, now) -> None:
+    """Claim a RAW provisional-memory candidate for enrichment (DESIGN 12.8, invariant 23).
+
+    Marking it PENDING_ENRICHMENT means ``_needs_enrichment`` returns False for any concurrent
+    wake, so the same memory can't have two enrichment jobs in flight. The claim is released back
+    to RAW (or DO_NOT_ENRICH after the attempt cap) when the result is processed if it wasn't
+    actually enriched.
+    """
+    if candidate.kind is not CandidateKind.PROVISIONAL_MEMORY:
+        return
+    memory = ctx.stores.memory.get_memory(candidate.id)
+    if memory is not None and memory.enrichment_status is EnrichmentStatus.RAW:
+        ctx.stores.memory.update_memory(
+            replace(memory, enrichment_status=EnrichmentStatus.PENDING_ENRICHMENT)
+        )
 
 
 def _materialize_selected(ctx: ReducerContext, candidate, now) -> None:
