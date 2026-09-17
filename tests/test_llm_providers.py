@@ -62,6 +62,8 @@ def test_prompt_carries_plain_voice_guidance():
     assert "Voice" in system
     assert "feel free to" in system  # the exact assistant tic it must avoid
     assert "filler openers" in system
+    assert "keep the conversation going" in system  # no filler continuation-questions
+    assert "not an always-available assistant" in system  # runtime owns timing/delivery, not it
 
 
 def test_prompt_carries_disposition():
