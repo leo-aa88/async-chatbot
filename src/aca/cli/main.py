@@ -105,14 +105,20 @@ except ImportError:  # pragma: no cover - non-readline platforms
 def _print_agent_message(text: str) -> None:
     """Print an unsolicited agent message without clobbering the user's in-progress input.
 
-    An autonomous message can arrive while the user is mid-line. We erase the current prompt+input,
-    print the message, then redraw the prompt with whatever the user had typed so far.
+    An autonomous message can arrive while the user is mid-line. We erase the current prompt+input
+    line and print the message, then let readline redraw the prompt+buffer via its own redisplay
+    machinery — keeping readline's internal display state consistent so subsequent edits
+    (Backspace, arrow keys, tab completion) render correctly. Without readline we fall back to
+    writing the prompt directly.
     """
-    buffer = _readline.get_line_buffer() if _readline is not None else ""
     sys.stdout.write("\r\033[K")               # carriage return + clear to end of line
     sys.stdout.write(f"[agent] {text}\n")
-    sys.stdout.write(_PROMPT + buffer)         # redraw prompt + preserved input
     sys.stdout.flush()
+    if _readline is not None:
+        _readline.redisplay()                  # readline redraws prompt + buffer, in sync
+    else:  # pragma: no cover - non-readline platforms
+        sys.stdout.write(_PROMPT)
+        sys.stdout.flush()
 
 
 async def _chat(data_dir: Path) -> None:
