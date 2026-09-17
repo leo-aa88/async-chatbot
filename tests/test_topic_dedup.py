@@ -54,6 +54,18 @@ def test_distinct_summaries_create_separate_topics(tmp_path, clock):
     h.close()
 
 
+def test_opposite_meaning_summaries_are_not_merged(tmp_path, clock):
+    # High lexical similarity but reversed polarity ("add" vs "remove") must stay separate topics,
+    # or a change-of-mind would be folded in as confirming evidence for the original.
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _enrich(h, _seed_memory(h), "User wants to add dark mode to the settings page")
+    _enrich(h, _seed_memory(h), "User wants to remove dark mode from the settings page")
+    topics = h.stores.memory.all_topics()
+    assert len(topics) == 2
+    assert all(t.evidence_count == 1 for t in topics)
+    h.close()
+
+
 def test_merge_can_be_disabled(tmp_path, clock):
     h = Harness(tmp_path, Config.from_mapping(
         {"rng_seed": 1, "memory": {"topic_merge_similarity": 0}}), clock)

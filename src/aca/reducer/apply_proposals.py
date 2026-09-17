@@ -114,8 +114,13 @@ def _find_similar_topic(ctx: ReducerContext, summary: str):
     best, best_score = None, 0.0
     for topic in ctx.stores.memory.all_topics(limit=50):
         score = textsim.similarity(summary, topic.summary)
-        if score >= threshold and score > best_score:
-            best, best_score = topic, score
+        if score < threshold or score <= best_score:
+            continue
+        # Veto a high lexical match that flips polarity ("add X" vs "remove X"): merging a reversal
+        # would wrongly reinforce the original as if it were confirming evidence (DESIGN 12.3).
+        if textsim.polarity_conflict(summary, topic.summary):
+            continue
+        best, best_score = topic, score
     return best
 
 
