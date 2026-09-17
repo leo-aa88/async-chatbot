@@ -66,6 +66,17 @@ def test_prompt_carries_plain_voice_guidance():
     assert "not an always-available assistant" in system  # runtime owns timing/delivery, not it
 
 
+def test_prompt_injects_configured_name():
+    # A configured identity.name is surfaced in agent_state and prepended so the agent knows its
+    # name every cycle (durable across restarts/decay). Absent -> no name line.
+    named = Snapshot(cycle_id="c", work_id="w", basis_revision=1, template_version="v0.6",
+                     context={"source": {"cycle_type": "proactive"}, "agent_state": {"name": "Wolfy"}})
+    system, _ = build_prompt(named)
+    assert system.startswith("Your name is Wolfy.")
+    anon, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
+    assert "Your name is" not in anon  # no name configured -> no name line
+
+
 def test_prompt_instructs_enrichment():
     # With a real model, topics only form if the prompt actually asks for enrichment proposals
     # (the fake worker always emitted them, masking this). Guard the instruction.
