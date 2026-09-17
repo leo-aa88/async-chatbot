@@ -19,7 +19,7 @@ import asyncio
 import codecs
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 try:  # POSIX terminal control; the agent's IPC is POSIX-oriented anyway.
     import termios
@@ -34,8 +34,12 @@ PROMPT = "> "
 class ChatUI:
     """An event-loop-driven prompt: yields submitted lines, prints messages without clobbering."""
 
-    def __init__(self, prompt: str = PROMPT) -> None:
+    def __init__(self, prompt: str = PROMPT, stamp: Callable[[], str] | None = None) -> None:
         self._prompt = prompt
+        # Optional callable returning a formatted local timestamp; when set, a submitted input line
+        # is redrawn with that stamp so the transcript shows when the human typed (symmetry with the
+        # stamps on agent messages). Formatting/timezone stay in the CLI — the editor is display-only.
+        self._stamp = stamp
         self._buffer = ""
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._fd: int | None = None
@@ -92,6 +96,18 @@ class ChatUI:
         self._render_prompt()
 
     # --- internals -----------------------------------------------------------------------
+    def _submit_line(self) -> None:
+        """Finalize the current input line: echo it (stamped, if configured) and queue it."""
+        if self._stamp is not None and self._buffer:
+            # Redraw the completed line with a leading timestamp, then a newline.
+            sys.stdout.write("\r\033[K" + f"[{self._stamp()}] " + self._prompt + self._buffer + "\n")
+        else:
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+        line, self._buffer = self._buffer, ""
+        self._queue.put_nowait(line)
+        self._render_prompt()
+
     def _render_prompt(self) -> None:
         sys.stdout.write("\r\033[K" + self._prompt + self._buffer)
         sys.stdout.flush()
@@ -117,11 +133,7 @@ class ChatUI:
         if ch == "\x1b":  # ESC: start of an arrow/Home/End/function-key sequence — swallow it
             self._esc = "start"
         elif ch in ("\n", "\r"):
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            line, self._buffer = self._buffer, ""
-            self._queue.put_nowait(line)
-            self._render_prompt()
+            self._submit_line()
         elif ch in ("\x7f", "\b"):  # Backspace / Delete
             if self._buffer:
                 self._buffer = self._buffer[:-1]
