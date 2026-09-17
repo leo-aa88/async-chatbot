@@ -16,22 +16,37 @@ from ..domain.enums import CandidateKind, ConversationMode
 from ..domain.state import ConversationState, DeferredIntent, ProvisionalMemory, Topic
 from .context import ReducerContext
 
-# Conversation-mode cadence thresholds (DESIGN 7.4). Tunable; kept simple for v0 (DESIGN 31.1).
-_ACTIVE_WITHIN_SECONDS = 180.0
-_IDLE_WITHIN_SECONDS = 1800.0
 
+def infer_mode(
+    conversation: ConversationState,
+    now: datetime,
+    *,
+    active_within_seconds: float = 180.0,
+    idle_within_seconds: float = 1800.0,
+) -> ConversationMode:
+    """Infer conversation liveness from recent human cadence (DESIGN 7.4).
 
-def infer_mode(conversation: ConversationState, now: datetime) -> ConversationMode:
-    """Infer conversation liveness from recent human cadence (DESIGN 7.4)."""
+    Thresholds are injected from ``config.conversation`` (defaults match the production values)
+    so proactive behavior can be exercised with short windows during testing (DESIGN 31.1).
+    """
     last = conversation.last_human_message_at
     if last is None:
         return ConversationMode.DORMANT
     gap = (now - last).total_seconds()
-    if gap <= _ACTIVE_WITHIN_SECONDS:
+    if gap <= active_within_seconds:
         return ConversationMode.ACTIVE
-    if gap <= _IDLE_WITHIN_SECONDS:
+    if gap <= idle_within_seconds:
         return ConversationMode.IDLE
     return ConversationMode.DORMANT
+
+
+def infer_mode_for(ctx: ReducerContext, conversation: ConversationState, now: datetime) -> ConversationMode:
+    """Infer conversation mode using this agent's configured cadence thresholds."""
+    return infer_mode(
+        conversation, now,
+        active_within_seconds=ctx.config.conversation.active_within_seconds,
+        idle_within_seconds=ctx.config.conversation.idle_within_seconds,
+    )
 
 
 def effective_memory_activation(ctx: ReducerContext, m: ProvisionalMemory, now: datetime) -> float:
