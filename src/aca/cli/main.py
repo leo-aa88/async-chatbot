@@ -57,7 +57,9 @@ async def _run_service(data_dir: Path) -> None:
     await service.start()
     await server.start()
     print(
-        f"aca service running (data dir: {data_dir}, llm: {config.llm.provider}"
+        f"aca service running ("
+        f"{'name: ' + config.identity.name + ', ' if config.identity.name else ''}"
+        f"data dir: {data_dir}, llm: {config.llm.provider}"
         f"{'/' + config.llm.model if config.llm.model else ''})",
         flush=True,
     )

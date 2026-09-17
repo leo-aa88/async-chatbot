@@ -82,6 +82,11 @@ Keep messages concise and natural. Only these proposal types are honored (others
 
 def build_prompt(snapshot: Snapshot) -> tuple[str, str]:
     """Return ``(system_prompt, user_prompt)`` for the given snapshot."""
+    system = _SYSTEM
+    name = (snapshot.context.get("agent_state") or {}).get("name")
+    if name:
+        # Durable self-name, prepended so the agent knows who it is on every cycle (DESIGN 5).
+        system = f"Your name is {name}.\n\n{_SYSTEM}"
     context = json.dumps(snapshot.context, sort_keys=True, indent=2, default=str)
     user = (
         f"cycle_id: {snapshot.cycle_id}\n"
@@ -89,7 +94,7 @@ def build_prompt(snapshot: Snapshot) -> tuple[str, str]:
         f"context:\n{context}\n\n"
         "Return your decision as the single JSON object described in the system prompt."
     )
-    return _SYSTEM, user
+    return system, user
 
 
 def cycle_type(snapshot: Snapshot) -> str:

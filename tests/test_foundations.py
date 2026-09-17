@@ -83,6 +83,11 @@ def test_enrichment_salience_floor_is_configurable_and_bounded():
         Config.from_mapping({"memory": {"enrichment_salience_floor": 1.5}})
 
 
+def test_identity_name_is_configurable_and_defaults_empty():
+    assert Config().identity.name == ""
+    assert Config.from_mapping({"identity": {"name": " Wolfy "}}).identity.name == "Wolfy"
+
+
 def test_topic_merge_similarity_is_configurable_and_bounded():
     assert Config().memory.topic_merge_similarity == 0.8
     cfg = Config.from_mapping({"memory": {"topic_merge_similarity": 0.5}})

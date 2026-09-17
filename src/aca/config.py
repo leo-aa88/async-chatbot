@@ -246,11 +246,28 @@ class LLM:
 
 
 @dataclass(frozen=True, slots=True)
+class Identity:
+    """Durable self-identity that outlives memory and DB resets (DESIGN 5, 27).
+
+    ``name`` is the agent's own name. Unlike a fact it happens to remember, it's part of the fixed
+    identity injected into every prompt, so it survives runtime sessions, memory decay, and a data
+    reset. Empty by default (the agent has no name unless one is configured).
+    """
+
+    name: str = ""
+
+    @staticmethod
+    def from_mapping(data: Mapping[str, Any]) -> Identity:
+        return Identity(name=str(data.get("name", "")).strip())
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Top-level immutable configuration."""
 
     local_timezone: str = "UTC"
     rng_seed: int | None = None
+    identity: Identity = field(default_factory=Identity)
     cognition: Cognition = field(default_factory=Cognition)
     temperament: Temperament = field(default_factory=Temperament)
     timing: Timing = field(default_factory=Timing)
@@ -265,6 +282,7 @@ class Config:
         return Config(
             local_timezone=str(data.get("local_timezone", "UTC")),
             rng_seed=None if seed is None else int(seed),
+            identity=Identity.from_mapping(data.get("identity", {})),
             cognition=Cognition.from_mapping(data.get("cognition", {})),
             temperament=Temperament.from_mapping(data.get("temperament", {})),
             timing=Timing.from_mapping(data.get("timing", {})),

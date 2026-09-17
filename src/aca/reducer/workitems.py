@@ -22,13 +22,16 @@ from .context import ReducerContext
 def _agent_state_summary(ctx: ReducerContext) -> dict[str, Any]:
     model = ctx.stores.state.load_self_model()
     conversation = ctx.stores.state.load_conversation()
-    return {
+    summary = {
         "initiative": model.initiative,
         "inhibition": model.inhibition,
         "persistence": model.persistence,
         "mode": conversation.mode.value,
         "dominant_topic": model.dominant_topic,
     }
+    if ctx.config.identity.name:
+        summary["name"] = ctx.config.identity.name  # durable self-name -> prompt (survives resets)
+    return summary
 
 
 def create_llm_work(
