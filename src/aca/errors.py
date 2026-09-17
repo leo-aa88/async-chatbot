@@ -41,3 +41,11 @@ class ServiceAlreadyRunningError(LockError):
 
 class IpcError(AcaError):
     """Raised on an IPC transport or protocol failure."""
+
+
+class WorkerError(AcaError):
+    """Raised when a semantic worker's result is unusable (e.g. truncated at max_tokens).
+
+    Propagates like any worker failure so the dispatcher's bounded retry -> terminal-failure path
+    applies (invariant 25), rather than a truncated fragment being laundered into a real reply.
+    """

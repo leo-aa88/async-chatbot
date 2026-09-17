@@ -21,6 +21,7 @@ from ..errors import AcaError
 from ..ipc.client import IpcClient
 from ..ipc.server import IpcServer
 from ..service.service import AgentService
+from ..workers.llm import build_llm_worker
 from .chat_ui import ChatUI
 
 
@@ -42,11 +43,16 @@ def _load_config(data_dir: Path) -> Config:
 # --- service start -------------------------------------------------------------------------
 async def _run_service(data_dir: Path) -> None:
     config = _load_config(data_dir)
-    service = AgentService(data_dir, config)
+    llm_worker = build_llm_worker(config.llm)  # fail fast on a misconfigured provider
+    service = AgentService(data_dir, config, llm_worker=llm_worker)
     server = IpcServer(service, _socket_path(data_dir))
     await service.start()
     await server.start()
-    print(f"aca service running (data dir: {data_dir})", flush=True)
+    print(
+        f"aca service running (data dir: {data_dir}, llm: {config.llm.provider}"
+        f"{'/' + config.llm.model if config.llm.model else ''})",
+        flush=True,
+    )
 
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()

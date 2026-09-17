@@ -96,6 +96,35 @@ make run                    # start the agent service
 make demo                   # throwaway agent that messages you on its own, then chat
 ```
 
+### Using a real LLM (provider-agnostic)
+
+By default the agent uses a deterministic **fake** worker (canned replies — it exercises the
+architecture offline). To use a real model, install the LLM extra and pick a provider in
+`<data-dir>/config.json`:
+
+```bash
+pip install -e ".[llm]"      # adds httpx
+```
+
+```json
+"llm": { "provider": "openai", "model": "gpt-4o-mini", "max_tokens": 512 }
+```
+
+Supported providers and the env var each reads for its key:
+
+| `provider` | API | Key env var |
+|---|---|---|
+| `openai` | OpenAI Chat Completions | `OPENAI_API_KEY` |
+| `anthropic` (alias `claude`) | Anthropic Messages | `ANTHROPIC_API_KEY` |
+| `grok` (alias `xai`) | xAI (OpenAI-compatible) | `XAI_API_KEY` |
+| `gemini` (alias `google`) | Google (OpenAI-compatible) | `GEMINI_API_KEY` |
+| `fake` (alias `mock`) | — (deterministic, offline) | none |
+
+Set the key, then `aca service start`. Model output is still validated, clamped, and applied by
+the reducer — a provider is never trusted as authority. `base_url` / `api_key_env` can be
+overridden in config if an endpoint or credential name differs. See
+[`examples/config.llm.json`](examples/config.llm.json).
+
 ### Seeing autonomous (proactive) messages
 
 By default the agent will not interrupt an `ACTIVE` conversation, and its spontaneous wake rate is
