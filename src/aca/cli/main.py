@@ -13,6 +13,7 @@ import json
 import os
 import signal
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..config import Config
@@ -111,7 +112,9 @@ def _cmd_simple(args: argparse.Namespace, op: str) -> int:
 async def _chat(data_dir: Path) -> None:
     client = IpcClient(_socket_path(data_dir))
     tz = _load_config(data_dir).local_timezone
-    ui = ChatUI()
+    # Stamp the human's own input line too, so a copied transcript shows who spoke when — the same
+    # local HH:MM:SS used for agent messages (display-only; the deterministic core is untouched).
+    ui = ChatUI(stamp=lambda: clock_time(datetime.now(UTC), tz))
 
     async def on_message(frame: dict) -> None:
         ui.print_message(frame.get("text", ""), at=clock_time(frame.get("at"), tz))

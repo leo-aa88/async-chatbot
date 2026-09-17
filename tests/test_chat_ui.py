@@ -99,6 +99,27 @@ async def test_message_preserves_in_progress_input(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_submitted_input_line_is_stamped_when_stamp_configured(monkeypatch):
+    ui = ChatUI(stamp=lambda: "08:05:34")
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    _feed(ui, "hello there")
+    _feed(ui, "\n")
+    rendered = out.getvalue()
+    assert "[08:05:34] > hello there" in rendered  # the human's own turn is timestamped
+    assert await ui._queue.get() == "hello there"  # submission still works
+
+
+@pytest.mark.asyncio
+async def test_blank_line_is_not_stamped(monkeypatch):
+    ui = ChatUI(stamp=lambda: "08:05:34")
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    _feed(ui, "\n")  # bare Enter on an empty line
+    assert "[08:05:34]" not in out.getvalue()
+
+
+@pytest.mark.asyncio
 async def test_message_shows_timestamp_when_provided(monkeypatch):
     ui = ChatUI()
     out = io.StringIO()
