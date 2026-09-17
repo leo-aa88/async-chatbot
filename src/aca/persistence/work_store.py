@@ -225,15 +225,20 @@ class WorkStore:
             # lexicographic string comparison is valid.
             clause, params = " AND created_at >= ?", (txt(repeated_since),)
         rep = self._db.query_one(
-            "SELECT COUNT(*) AS spoke_with_candidate, "
+            "SELECT COUNT(*) AS spoke_recent, "
+            "COUNT(candidate_id) AS spoke_with_candidate, "  # COUNT(col) ignores NULLs
             "COUNT(DISTINCT candidate_id) AS distinct_candidates "
             "FROM cognition_traces "
-            "WHERE trigger='StochasticWake' AND action='speak' AND candidate_id IS NOT NULL"
-            + clause,
+            "WHERE trigger='StochasticWake' AND action='speak'" + clause,
             params,
         )
+        spoke_recent = int(rep["spoke_recent"] or 0) if rep else 0
         spoke_c = int(rep["spoke_with_candidate"] or 0) if rep else 0
         distinct_c = int(rep["distinct_candidates"] or 0) if rep else 0
+        # Proactive burst rate: pure count of spontaneous speeches in the window — deliberately
+        # blunt (frequency, not value or theme). Wolfy's own point stands: high frequency can be
+        # noise, so read this alongside initiation quality, not as a goal to maximize.
+        metrics["proactive_spoke_recent"] = spoke_recent
         metrics["proactive_spoke_with_candidate"] = spoke_c
         metrics["proactive_repeated"] = spoke_c - distinct_c
         return metrics

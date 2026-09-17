@@ -28,9 +28,12 @@ def test_repeated_candidate_rate(tmp_path, clock):
     # A silence and a reactive speak must not count toward the proactive repeated measure.
     _trace(h, "r4", trigger="StochasticWake", cycle_type="proactive", action="silence", candidate_id="t2")
     _trace(h, "r5", trigger="HumanMessage", cycle_type="reactive", action="speak", candidate_id="t1")
+    # A proactive speak with no candidate still counts toward frequency, not toward repeated.
+    _trace(h, "r6", trigger="StochasticWake", cycle_type="proactive", action="speak", candidate_id=None)
     m = h.stores.work.trace_metrics()  # unbounded -> lifetime count
-    assert m["proactive_spoke_with_candidate"] == 3
-    assert m["proactive_repeated"] == 1  # 3 speaks, 2 distinct candidates -> 1 revoicing
+    assert m["proactive_spoke_recent"] == 4  # r1,r2,r3,r6 (all proactive speaks)
+    assert m["proactive_spoke_with_candidate"] == 3  # r6 has no candidate
+    assert m["proactive_repeated"] == 1  # 3 with candidate, 2 distinct -> 1 revoicing
     h.close()
 
 
@@ -118,12 +121,13 @@ def test_format_metrics_renders_rates_and_handles_zero_division():
         "reactive_total": 2, "reactive_spoke": 1, "mandatory_total": 0, "mandatory_spoke": 0,
         "spoke": 3, "silent": 5, "worker_failures": 1, "enrichment_gated": 0,
         "proactive_spoke_with_candidate": 4, "proactive_repeated": 1,
-        "repeated_window_seconds": 4 * 3600,
+        "proactive_spoke_recent": 5, "repeated_window_seconds": 4 * 3600,
     })
     blob = "\n".join(lines)
     assert "33% (1/3)" in blob  # proactive initiation
     assert "25% (1/4)" in blob  # repeated-candidate rate
     assert "last 4h" in blob  # window shown in the label
+    assert "5 spontaneous messages" in blob  # proactive burst/frequency
     assert "50% (1/2)" in blob  # reactive reply rate
     assert "—" in blob  # mandatory has no cycles -> no division
     assert "62% (5/8)" in blob  # overall silence rate
