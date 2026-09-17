@@ -63,6 +63,12 @@ def test_config_defaults_match_design():
     assert cfg.budgets.proactive_llm_calls_per_day == 12
     assert cfg.conversation.active_within_seconds == 180
     assert cfg.conversation.idle_within_seconds == 1800
+    assert cfg.memory.repeat_suppression_seconds == 6 * 3600
+
+
+def test_repeat_suppression_is_configurable():
+    cfg = Config.from_mapping({"memory": {"repeat_suppression": "5s"}})
+    assert cfg.memory.repeat_suppression_seconds == 5
 
 
 def test_conversation_windows_are_configurable():

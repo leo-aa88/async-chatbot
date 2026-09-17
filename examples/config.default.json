@@ -1,0 +1,12 @@
+{
+  "_comment": "Human-scale profile: the agent thinks rarely and never nags. Copy to <data-dir>/config.json. Config is JSON (the daemon loads <data-dir>/config.json); see docs/DESIGN.md 18.",
+  "cognition": {
+    "spontaneous_activation_rate_per_hour": 0.2
+  },
+  "timing": {
+    "proactive_cooldown": "45m"
+  },
+  "memory": {
+    "repeat_suppression": "6h"
+  }
+}

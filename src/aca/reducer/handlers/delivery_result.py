@@ -41,6 +41,10 @@ def handle_delivery_result(ctx: ReducerContext, event: DeliveryResult) -> Handle
     if message.kind is OutboundKind.PROACTIVE:
         model = ctx.stores.state.load_self_model()
         ctx.stores.state.save_self_model(model.with_delivered_proactive(now))
+        # Repeat-suppression is anchored to DELIVERY, not the decision to speak (DESIGN 6.1,
+        # 29.7): only a message the user actually received suppresses its candidate.
+        if message.candidate_kind and message.candidate_id:
+            ctx.stores.memory.record_expression(message.candidate_kind, message.candidate_id, now)
 
     return HandlerOutcome(note="delivered")
 

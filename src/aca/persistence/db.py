@@ -37,10 +37,32 @@ class Database:
 
     def _apply_schema(self) -> None:
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.execute(
-            "INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
+
+    # Additive column migrations that CREATE TABLE IF NOT EXISTS can't apply to an existing table.
+    _COLUMN_MIGRATIONS = (
+        ("topics", "source_memory_id", "TEXT"),
+        ("outbound_messages", "candidate_kind", "TEXT"),
+        ("outbound_messages", "candidate_id", "TEXT"),
+    )
+
+    def _migrate(self) -> None:
+        """Apply additive column migrations idempotently.
+
+        A column is added only if PRAGMA table_info shows it's missing, so a genuine migration
+        failure (locked DB, bad DDL) surfaces instead of being swallowed as "already applied".
+        """
+        for table, column, coltype in self._COLUMN_MIGRATIONS:
+            if not self._column_exists(table, column):
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+    def _column_exists(self, table: str, column: str) -> bool:
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(row[1] == column for row in rows)
 
     @property
     def connection(self) -> sqlite3.Connection:

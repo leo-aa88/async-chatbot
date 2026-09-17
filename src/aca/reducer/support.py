@@ -12,7 +12,7 @@ from ..cognition import activation as act
 from ..cognition import budgets as budget
 from ..cognition.scheduler import WakeSignals
 from ..cognition.selection import Candidate
-from ..domain.enums import CandidateKind, ConversationMode
+from ..domain.enums import CandidateKind, ConversationMode, EnrichmentStatus
 from ..domain.state import ConversationState, DeferredIntent, ProvisionalMemory, Topic
 from .context import ReducerContext
 
@@ -73,18 +73,48 @@ def effective_intent_activation(ctx: ReducerContext, i: DeferredIntent, now: dat
     )
 
 
+def _suppressed(
+    ctx: ReducerContext, kind: CandidateKind, cid: str, now: datetime, in_flight: set
+) -> bool:
+    """Whether a candidate must be excluded from selection.
+
+    Two independent reasons: it was proactively *delivered* within the repeat-suppression window
+    (DESIGN 6.1: anchored to delivery, not decision), or it has an in-flight proactive item still
+    awaiting delivery (avoid two pending messages about the same thing; released if it fails).
+    """
+    if (kind.value, cid) in in_flight:
+        return True
+    window = ctx.config.memory.repeat_suppression_seconds
+    if window <= 0:
+        return False
+    last = ctx.stores.memory.last_expressed_at(kind.value, cid)
+    return last is not None and (now - last).total_seconds() < window
+
+
+def _topic_suppressed(ctx: ReducerContext, topic, now: datetime, in_flight: set) -> bool:
+    """A topic is suppressed if it — or the memory it was enriched from — is suppressed."""
+    if _suppressed(ctx, CandidateKind.TOPIC, topic.id, now, in_flight):
+        return True
+    if topic.source_memory_id is not None:
+        return _suppressed(ctx, CandidateKind.PROVISIONAL_MEMORY, topic.source_memory_id, now, in_flight)
+    return False
+
+
 def build_candidates(ctx: ReducerContext, now: datetime) -> list[Candidate]:
     """Assemble the scored candidate pool (topics + intents + memories) above the floor.
 
     ``score`` is the pre-temperature logit combining effective activation, importance/salience,
-    and unfinished status (DESIGN 12.7, 19). NOTHING is added later by ``selection.select``.
+    and unfinished status (DESIGN 12.7, 19). A candidate is excluded if it was recently *delivered*
+    proactively (repeat-suppression window) or has an in-flight proactive item, so the agent
+    doesn't nag or double-send (DESIGN 6, 11.3, 12.7). NOTHING is added later by ``selection``.
     """
     floor = ctx.config.memory.candidate_activation_floor
+    in_flight = ctx.stores.outbox.in_flight_proactive_candidates()
     candidates: list[Candidate] = []
 
     for topic in ctx.stores.memory.all_topics():
         a = effective_topic_activation(ctx, topic, now)
-        if a < floor:
+        if a < floor or _topic_suppressed(ctx, topic, now, in_flight):
             continue
         score = a + 0.5 * topic.importance + (0.3 if topic.unfinished else 0.0)
         candidates.append(Candidate(CandidateKind.TOPIC, topic.id, score))
@@ -93,13 +123,16 @@ def build_candidates(ctx: ReducerContext, now: datetime) -> list[Candidate]:
         if intent.expires_at <= now:
             continue
         a = effective_intent_activation(ctx, intent, now)
-        if a < floor:
+        if a < floor or _suppressed(ctx, CandidateKind.DEFERRED_INTENT, intent.id, now, in_flight):
             continue
         candidates.append(Candidate(CandidateKind.DEFERRED_INTENT, intent.id, a + 0.2))
 
     for memory in ctx.stores.memory.recent_memories():
+        # An enriched memory is now represented by its topic; don't let both compete (no dupes).
+        if memory.enrichment_status is EnrichmentStatus.ENRICHED:
+            continue
         a = effective_memory_activation(ctx, memory, now)
-        if a < floor:
+        if a < floor or _suppressed(ctx, CandidateKind.PROVISIONAL_MEMORY, memory.id, now, in_flight):
             continue
         score = a + 0.5 * memory.salience
         candidates.append(Candidate(CandidateKind.PROVISIONAL_MEMORY, memory.id, score))

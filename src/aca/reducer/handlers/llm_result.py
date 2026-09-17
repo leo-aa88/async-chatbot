@@ -220,9 +220,14 @@ def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
         return HandlerOutcome(reschedule=True, note=f"pre_outbox_invalidated:{detail}")
 
     charge_proactive_message(ctx, now)
+    candidate = work.snapshot.get("context", {}).get("source", {}).get("candidate") or {}
     create_outbound(
         ctx, kind=OutboundKind.PROACTIVE, channel=_channel(work), text=decision.message,
         cycle_id=event.cycle_id, source_event_id=None, now=now,
+        # Carry the candidate so repeat-suppression is recorded on DELIVERY, not here at decision
+        # time (DESIGN 6.1: anchor to delivered, not decided). While this item is in-flight the
+        # candidate is excluded from re-selection; that dedup releases if it expires/fails.
+        candidate_kind=candidate.get("kind"), candidate_id=candidate.get("id"),
     )
     ctx.stores.work.finalize_trace(
         event.cycle_id, action="speak", useful_enrichment=useful,

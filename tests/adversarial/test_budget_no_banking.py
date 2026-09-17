@@ -8,7 +8,7 @@ from aca import ids
 from aca.cognition import budgets as budget
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus
+from aca.domain.enums import EnrichmentStatus, OutboundKind
 from aca.domain.state import ProvisionalMemory
 
 
@@ -18,6 +18,9 @@ def _config():
         "cognition": {"selection_temperature": 0.2, "null_candidate_score": -5.0,
                       "semantic_worthiness_floor": 0.3},
         "timing": {"proactive_cooldown": "0s"},
+        # Disable repeat-suppression so this test isolates *budget* behavior: the same candidate
+        # must be re-selectable across windows, and only the budget should gate it.
+        "memory": {"repeat_suppression": "0s"},
         "budgets": {"proactive_messages_per_hour": 1, "proactive_llm_calls_per_hour": 5,
                     "proactive_llm_calls_per_day": 50},
     })
@@ -33,6 +36,14 @@ def _seed(h: Harness):
         ))
 
 
+def _deliver_latest_proactive(h: Harness) -> None:
+    """Deliver the pending proactive item so its candidate is no longer in-flight (repeat_suppression
+    is 0s here, so delivery does not itself suppress) — isolating pure budget behavior."""
+    pending = h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE)
+    if pending:
+        h.deliver(pending[-1].message_id, delivered=True)
+
+
 def test_hourly_message_budget_blocks_second_proactive(tmp_path, clock):
     h = Harness(tmp_path, _config(), clock)
     _seed(h)
@@ -40,6 +51,7 @@ def test_hourly_message_budget_blocks_second_proactive(tmp_path, clock):
     h.wake(); h.run_all_pending()
     hour = budget.hour_window_id(clock.now_utc())
     assert h.stores.state.budget_count("msg_hour", hour) == 1
+    _deliver_latest_proactive(h)  # clear in-flight so only the budget can gate the next attempt
 
     # Second attempt in the same hour is blocked at pre-outbox (no new proactive message).
     h.wake(); h.run_all_pending()
@@ -51,6 +63,7 @@ def test_next_window_starts_fresh_without_banking(tmp_path, clock):
     h = Harness(tmp_path, _config(), clock)
     _seed(h)
     h.wake(); h.run_all_pending()
+    _deliver_latest_proactive(h)  # clear in-flight; repeat_suppression 0s means no further gating
     first_hour = budget.hour_window_id(clock.now_utc())
 
     # Advance one hour: a brand-new window. It grants exactly its capacity, never banked extra.

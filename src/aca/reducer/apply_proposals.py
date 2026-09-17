@@ -71,6 +71,7 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
             last_activated_at=now,
             unfinished=True,
             source="provisional_memory",
+            source_memory_id=memory.id,
         )
     )
     return True

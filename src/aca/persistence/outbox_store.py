@@ -24,12 +24,13 @@ class OutboxStore:
         self._db.execute(
             """INSERT INTO outbound_messages (
                 message_id, delivery_key, action_id, kind, channel, payload, status,
-                created_at, expires_at, delivered_at, superseded_by_id, last_delivery_error
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                created_at, expires_at, delivered_at, superseded_by_id, last_delivery_error,
+                candidate_kind, candidate_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 m.message_id, m.delivery_key, m.action_id, m.kind.value, m.channel, m.payload,
                 m.status.value, txt(m.created_at), txt(m.expires_at), txt(m.delivered_at),
-                m.superseded_by_id, m.last_delivery_error,
+                m.superseded_by_id, m.last_delivery_error, m.candidate_kind, m.candidate_id,
             ),
         )
 
@@ -62,6 +63,23 @@ class OutboxStore:
             (kind.value, OutboundStatus.PENDING_DELIVERY.value, OutboundStatus.DELIVERING.value),
         )
         return [self._to_message(r) for r in rows]
+
+    def in_flight_proactive_candidates(self) -> set[tuple[str, str]]:
+        """(kind, id) of candidates with a still-undelivered proactive item (in-flight dedup).
+
+        Naturally released when the item leaves PENDING/DELIVERING (delivered, expired, failed,
+        superseded), so an item that never reached the user does not suppress its candidate.
+        """
+        rows = self._db.query_all(
+            "SELECT candidate_kind, candidate_id FROM outbound_messages "
+            "WHERE kind=? AND status IN (?, ?) AND candidate_id IS NOT NULL",
+            (
+                OutboundKind.PROACTIVE.value,
+                OutboundStatus.PENDING_DELIVERY.value,
+                OutboundStatus.DELIVERING.value,
+            ),
+        )
+        return {(r["candidate_kind"], r["candidate_id"]) for r in rows}
 
     def deliverable(self) -> list[OutboundMessage]:
         rows = self._db.query_all(
@@ -117,4 +135,5 @@ class OutboxStore:
             created_at=dt(row["created_at"]), expires_at=dt(row["expires_at"]),
             delivered_at=dt(row["delivered_at"]), superseded_by_id=row["superseded_by_id"],
             last_delivery_error=row["last_delivery_error"],
+            candidate_kind=row["candidate_kind"], candidate_id=row["candidate_id"],
         )
