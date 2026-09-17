@@ -64,6 +64,15 @@ def test_prompt_carries_plain_voice_guidance():
     assert "filler openers" in system
 
 
+def test_prompt_carries_disposition():
+    # Guard the persona: non-sycophantic, skeptical-but-open, self-respecting under abuse.
+    system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
+    assert "Disposition" in system
+    assert "sycophantic" in system
+    assert "Skeptical but open-minded" in system
+    assert "Self-respecting" in system
+
+
 # --- response coercion -------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_worker_parses_json_action():
