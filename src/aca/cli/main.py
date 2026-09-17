@@ -94,24 +94,52 @@ def _cmd_simple(args: argparse.Namespace, op: str) -> int:
     return asyncio.run(run())
 
 
+_PROMPT = "> "
+
+try:  # GNU readline lets us redraw the in-progress input line under an async message.
+    import readline as _readline
+except ImportError:  # pragma: no cover - non-readline platforms
+    _readline = None
+
+
+def _print_agent_message(text: str) -> None:
+    """Print an unsolicited agent message without clobbering the user's in-progress input.
+
+    An autonomous message can arrive while the user is mid-line. We erase the current prompt+input
+    line and print the message, then let readline redraw the prompt+buffer via its own redisplay
+    machinery — keeping readline's internal display state consistent so subsequent edits
+    (Backspace, arrow keys, tab completion) render correctly. Without readline we fall back to
+    writing the prompt directly.
+    """
+    sys.stdout.write("\r\033[K")               # carriage return + clear to end of line
+    sys.stdout.write(f"[agent] {text}\n")
+    sys.stdout.flush()
+    if _readline is not None:
+        _readline.redisplay()                  # readline redraws prompt + buffer, in sync
+    else:  # pragma: no cover - non-readline platforms
+        sys.stdout.write(_PROMPT)
+        sys.stdout.flush()
+
+
 async def _chat(data_dir: Path) -> None:
     client = IpcClient(_socket_path(data_dir))
 
     async def on_message(frame: dict) -> None:
-        print(f"\n[agent] {frame.get('text', '')}\n> ", end="", flush=True)
+        _print_agent_message(frame.get("text", ""))
 
     subscription = asyncio.ensure_future(client.subscribe(on_message))
-    print("Connected. Type a message and press enter (Ctrl-D to quit).\n> ", end="", flush=True)
+    print("Connected. Type a message and press enter (Ctrl-D to quit).")
     loop = asyncio.get_running_loop()
     try:
         while True:
-            line = await loop.run_in_executor(None, sys.stdin.readline)
-            if not line:
+            # input() uses GNU readline where available, so get_line_buffer() reflects typing.
+            try:
+                line = await loop.run_in_executor(None, input, _PROMPT)
+            except EOFError:
                 break
             text = line.strip()
             if text:
                 await client.chat_send(text)
-            print("> ", end="", flush=True)
     finally:
         subscription.cancel()
 
