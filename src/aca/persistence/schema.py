@@ -8,7 +8,7 @@ delivery by ``delivery_key`` (invariant 38).
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -223,6 +223,7 @@ CREATE TABLE IF NOT EXISTS cognition_traces (
     basis_revision INTEGER,
     commit_revision INTEGER,
     trigger TEXT,
+    cycle_type TEXT,
     conversation_mode TEXT,
     candidate_kind TEXT,
     candidate_id TEXT,

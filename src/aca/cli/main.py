@@ -163,6 +163,40 @@ def _fmt_topic(row: dict, tz: str) -> str:
             f"act={row.get('activation', 0):.2f}  {summary}")
 
 
+def _pct(n: int, d: int) -> str:
+    return "—" if d == 0 else f"{100 * n / d:.0f}% ({n}/{d})"
+
+
+def format_metrics(m: dict) -> list[str]:
+    """Render mechanical cognition metrics from raw trace counts (pure, for reuse/testing)."""
+    spoke, silent = m.get("spoke", 0), m.get("silent", 0)
+    return [
+        f"cognition cycles: {m.get('total', 0)}",
+        f"proactive initiation:  {_pct(m.get('proactive_spoke', 0), m.get('proactive_dispatched', 0))}"
+        "  (spoke / reached-model)",
+        f"proactive blocked:     {m.get('proactive_blocked', 0)}  (budget/mode/quiet — never reached model)",
+        f"reactive reply rate:   {_pct(m.get('reactive_spoke', 0), m.get('reactive_total', 0))}",
+        f"mandatory answered:    {_pct(m.get('mandatory_spoke', 0), m.get('mandatory_total', 0))}",
+        f"overall silence rate:  {_pct(silent, spoke + silent)}",
+        f"worker failures: {m.get('worker_failures', 0)}   enrichment gated: {m.get('enrichment_gated', 0)}",
+    ]
+
+
+def _cmd_metrics(args: argparse.Namespace) -> int:
+    client = IpcClient(_socket_path(_data_dir(args)))
+
+    async def run() -> int:
+        response = await client.metrics()
+        if not response.get("ok", True):
+            print(json.dumps(response, indent=2))
+            return 1
+        for line in format_metrics(response.get("metrics", {})):
+            print(line)
+        return 0
+
+    return asyncio.run(run())
+
+
 def _cmd_list(args: argparse.Namespace, op: str, key: str, fmt) -> int:
     data_dir = _data_dir(args)
     tz = _load_config(data_dir).local_timezone
@@ -197,6 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("logs", help="recent cognition traces")
     sub.add_parser("memories", help="recent provisional memories")
     sub.add_parser("topics", help="enriched topics")
+    sub.add_parser("metrics", help="mechanical cognition metrics from the trace log")
     return parser
 
 
@@ -214,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_list(args, "memories", "memories", _fmt_memory)
         if args.command == "topics":
             return _cmd_list(args, "topics", "topics", _fmt_topic)
+        if args.command == "metrics":
+            return _cmd_metrics(args)
         return _cmd_simple(args, args.command)
     except AcaError as exc:
         print(f"error: {exc}", file=sys.stderr)

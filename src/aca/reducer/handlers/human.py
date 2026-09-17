@@ -175,7 +175,8 @@ def _mandatory_path(ctx, event, cycle_id, message_class, now) -> HandlerOutcome:
     )
     obligation = replace(obligation, work_id=work_id)
     ctx.stores.work.insert_obligation(obligation)
-    trace = _trace(cycle_id, event, now, llm_called=True, note="mandatory_response")
+    trace = _trace(cycle_id, event, now, llm_called=True, note="mandatory_response",
+                   cycle_type=CYCLE_MANDATORY)
     return HandlerOutcome(dispatch_work_ids=[work_id], trace=trace)
 
 
@@ -250,15 +251,17 @@ def _candidate_context(ctx: ReducerContext, candidate) -> dict:
 
 def _trace(
     cycle_id, event, now, *, candidate=None, candidate_null=False, llm_called=False,
-    action=None, note="",
+    action=None, note="", cycle_type=CYCLE_REACTIVE_OPTIONAL,
 ) -> CognitionTrace:
     # A branch that terminates without dispatching an LLM records its outcome immediately
     # (action="silence"); a dispatched branch leaves action=None until the LLMResult finalizes it.
+    # cycle_type is fixed at dispatch (mandatory vs reactive) and never overwritten by finalize.
     return CognitionTrace(
         cycle_id=cycle_id,
         created_at=now,
         source_event_id=event.event_id,
         trigger="HumanMessage",
+        cycle_type=cycle_type,
         candidate_kind=candidate.kind.value if candidate else (CandidateKind.NOTHING.value if candidate_null else None),
         candidate_id=candidate.id if candidate else None,
         candidate_was_null=candidate_null,

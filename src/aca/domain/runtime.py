@@ -127,6 +127,9 @@ class CognitionTrace:
     basis_revision: int | None = None
     commit_revision: int | None = None
     trigger: str | None = None
+    # Speech-act class (mandatory/reactive/proactive), set once at dispatch and never overwritten by
+    # finalize_trace — a stable classification key for metrics (unlike the mutable ``notes``).
+    cycle_type: str | None = None
     conversation_mode: str | None = None
     candidate_kind: str | None = None
     candidate_id: str | None = None

@@ -56,6 +56,9 @@ class IpcClient:
     async def logs(self) -> dict:
         return await self.request_once(p.OP_LOGS)
 
+    async def metrics(self) -> dict:
+        return await self.request_once(p.OP_METRICS)
+
     async def shutdown(self) -> dict:
         return await self.request_once(p.OP_SHUTDOWN)
 
