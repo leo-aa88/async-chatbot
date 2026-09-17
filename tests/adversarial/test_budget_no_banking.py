@@ -18,6 +18,9 @@ def _config():
         "cognition": {"selection_temperature": 0.2, "null_candidate_score": -5.0,
                       "semantic_worthiness_floor": 0.3},
         "timing": {"proactive_cooldown": "0s"},
+        # Disable repeat-suppression so this test isolates *budget* behavior: the same candidate
+        # must be re-selectable across windows, and only the budget should gate it.
+        "memory": {"repeat_suppression": "0s"},
         "budgets": {"proactive_messages_per_hour": 1, "proactive_llm_calls_per_hour": 5,
                     "proactive_llm_calls_per_day": 50},
     })
