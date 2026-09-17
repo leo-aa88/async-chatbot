@@ -10,8 +10,20 @@ imports without it when only the fake provider is used.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+
+from ...errors import WorkerError
+
+# GPT-5 family and o-series reasoning models reject the legacy ``max_tokens`` field on
+# /chat/completions and require ``max_completion_tokens``; older chat models (gpt-4*, gpt-3.5) and
+# the OpenAI-compatible third parties (Grok, Gemini) still take ``max_tokens``.
+_MAX_COMPLETION_TOKENS_MODELS = re.compile(r"^(?:gpt-5|o[0-9])", re.IGNORECASE)
+
+
+def _token_limit_param(model: str) -> str:
+    return "max_completion_tokens" if _MAX_COMPLETION_TOKENS_MODELS.match(model) else "max_tokens"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +57,7 @@ class OpenAICompatibleAdapter:
 
         payload = {
             "model": self.model,
-            "max_tokens": self.max_tokens,
+            _token_limit_param(self.model): self.max_tokens,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -57,7 +69,10 @@ class OpenAICompatibleAdapter:
             resp = await client.post(
                 f"{self.base_url.rstrip('/')}/chat/completions", json=payload, headers=headers
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                # Surface the provider's error body — a bare "400 Bad Request" hides the actual
+                # cause (wrong param, unknown model, quota) from `aca logs`/last_error.
+                raise WorkerError(f"chat/completions {resp.status_code}: {resp.text[:400]}")
             data = resp.json()
         choice = data["choices"][0]
         text = choice["message"]["content"] or ""
@@ -99,7 +114,8 @@ class AnthropicAdapter:
             resp = await client.post(
                 f"{self.base_url.rstrip('/')}/v1/messages", json=payload, headers=headers
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise WorkerError(f"v1/messages {resp.status_code}: {resp.text[:400]}")
             data = resp.json()
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         usage = data.get("usage") or {}

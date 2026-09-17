@@ -163,8 +163,50 @@ async def test_openai_adapter_shapes_request_and_parses_usage(monkeypatch):
     assert captured["url"].endswith("/chat/completions")
     assert captured["auth"] == "Bearer sk-test"
     assert captured["body"]["model"] == "some-model"
+    assert captured["body"]["max_tokens"] == 256  # legacy models keep max_tokens
+    assert "max_completion_tokens" not in captured["body"]
     assert result.text == '{"action":"speak","message":"ok"}'
     assert (result.tokens_in, result.tokens_out) == (5, 2)
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_uses_max_completion_tokens_for_gpt5(monkeypatch):
+    # GPT-5 family / o-series reject max_tokens on /chat/completions (the 400 seen in the field).
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"action":"silence"}'}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        })
+
+    _patch_httpx(monkeypatch, handler)
+    await OpenAICompatibleAdapter("https://api.openai.com/v1", "k", "gpt-5.6-luna", 512, 30.0).complete("s", "u")
+    assert captured["body"]["max_completion_tokens"] == 512
+    assert "max_tokens" not in captured["body"]
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_surfaces_error_body(monkeypatch):
+    # A 4xx must raise with the provider's actual message, not a bare status (observability).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "Unsupported parameter: 'max_tokens'"}})
+
+    _patch_httpx(monkeypatch, handler)
+    with pytest.raises(WorkerError) as exc:
+        await OpenAICompatibleAdapter("https://api.openai.com/v1", "k", "gpt-5.6-luna", 512, 30.0).complete("s", "u")
+    assert "400" in str(exc.value) and "Unsupported parameter" in str(exc.value)
+
+
+def test_token_limit_param_selection():
+    from aca.workers.llm.adapters import _token_limit_param
+    assert _token_limit_param("gpt-5.6-luna") == "max_completion_tokens"
+    assert _token_limit_param("gpt-5-mini") == "max_completion_tokens"
+    assert _token_limit_param("o3-mini") == "max_completion_tokens"
+    assert _token_limit_param("gpt-4o") == "max_tokens"
+    assert _token_limit_param("gpt-4o-mini") == "max_tokens"
+    assert _token_limit_param("grok-2-latest") == "max_tokens"
 
 
 @pytest.mark.asyncio
