@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..domain.enums import ExitKind
+from ..dotenv import load_dotenv
 from ..errors import AcaError
 from ..ipc.client import IpcClient
 from ..ipc.server import IpcServer
@@ -42,6 +43,8 @@ def _load_config(data_dir: Path) -> Config:
 
 # --- service start -------------------------------------------------------------------------
 async def _run_service(data_dir: Path) -> None:
+    # Load provider API keys from .env (data dir first, then cwd); the shell environment wins.
+    load_dotenv(data_dir / ".env", Path.cwd() / ".env")
     config = _load_config(data_dir)
     llm_worker = build_llm_worker(config.llm)  # fail fast on a misconfigured provider
     service = AgentService(data_dir, config, llm_worker=llm_worker)
