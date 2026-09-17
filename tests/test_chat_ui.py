@@ -53,6 +53,38 @@ async def test_ctrl_d_with_text_is_ignored(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_arrow_keys_do_not_inject_into_buffer(monkeypatch):
+    ui = ChatUI()
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    _feed(ui, "hello")
+    _feed(ui, "\x1b[A")  # Up arrow (CSI) — must be swallowed, not appended as "[A"
+    _feed(ui, "\x1b[D")  # Left arrow
+    _feed(ui, "world")
+    assert ui._buffer == "helloworld"
+
+
+@pytest.mark.asyncio
+async def test_delete_and_function_key_sequences_are_swallowed(monkeypatch):
+    ui = ChatUI()
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    _feed(ui, "ab")
+    _feed(ui, "\x1b[3~")  # Delete key (CSI with parameter + '~' final byte)
+    _feed(ui, "\x1bOP")   # F1 (SS3)
+    _feed(ui, "c")
+    assert ui._buffer == "abc"
+
+
+@pytest.mark.asyncio
+async def test_split_utf8_multibyte_char_is_reassembled(monkeypatch):
+    ui = ChatUI()
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    raw = "café".encode()          # b'caf\xc3\xa9'
+    ui._feed_bytes(raw[:4])         # split the 'é' across two reads: b'caf\xc3'
+    ui._feed_bytes(raw[4:])         # b'\xa9'
+    assert ui._buffer == "café"
+
+
+@pytest.mark.asyncio
 async def test_message_preserves_in_progress_input(monkeypatch):
     ui = ChatUI()
     out = io.StringIO()

@@ -16,6 +16,7 @@ terminal on exit.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -40,6 +41,11 @@ class ChatUI:
         self._fd: int | None = None
         self._old_attrs = None
         self._reader_added = False
+        # Incremental decoder so a multi-byte UTF-8 char split across os.read() calls is
+        # reassembled instead of each half becoming U+FFFD.
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        # Escape-sequence state: None normally, "start" after ESC, "csi" while consuming CSI/SS3.
+        self._esc: str | None = None
 
     def start(self) -> None:
         self._fd = sys.stdin.fileno()
@@ -93,11 +99,19 @@ class ChatUI:
         if not data:  # stdin closed
             self._queue.put_nowait(None)
             return
-        for ch in data.decode("utf-8", "replace"):
+        self._feed_bytes(data)
+
+    def _feed_bytes(self, data: bytes) -> None:
+        for ch in self._decoder.decode(data):
             self._handle_char(ch)
 
     def _handle_char(self, ch: str) -> None:
-        if ch in ("\n", "\r"):
+        if self._esc is not None:
+            self._consume_escape(ch)
+            return
+        if ch == "\x1b":  # ESC: start of an arrow/Home/End/function-key sequence — swallow it
+            self._esc = "start"
+        elif ch in ("\n", "\r"):
             sys.stdout.write("\n")
             sys.stdout.flush()
             line, self._buffer = self._buffer, ""
@@ -106,14 +120,26 @@ class ChatUI:
         elif ch in ("\x7f", "\b"):  # Backspace / Delete
             if self._buffer:
                 self._buffer = self._buffer[:-1]
-                sys.stdout.write("\b \b")
-                sys.stdout.flush()
+                self._render_prompt()  # full redraw: correct for any character width
         elif ch == "\x04":  # Ctrl-D: EOF only on an empty line
             if not self._buffer:
                 self._queue.put_nowait(None)
         elif ch == "\x03":  # Ctrl-C, if delivered as a byte rather than SIGINT
             raise KeyboardInterrupt
-        elif ch >= " ":  # printable character
+        elif ch >= " ":  # printable character (echoed at its own terminal width)
             self._buffer += ch
             sys.stdout.write(ch)
             sys.stdout.flush()
+
+    def _consume_escape(self, ch: str) -> None:
+        """Swallow an ANSI escape sequence (arrow keys, Home/End, Delete, function keys).
+
+        Discarding the whole sequence keeps its bytes (``[``, ``A``, ``~``, ...) out of the input
+        buffer, instead of them falling through as literal printable characters.
+        """
+        if self._esc == "start":
+            # CSI ("ESC [") or SS3 ("ESC O") introduce a multi-char sequence; anything else is a
+            # lone ESC or a two-char Meta combo — done after this char.
+            self._esc = "csi" if ch in ("[", "O") else None
+        elif "\x40" <= ch <= "\x7e":  # a CSI/SS3 final byte (@ .. ~) terminates the sequence
+            self._esc = None
