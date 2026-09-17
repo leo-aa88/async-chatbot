@@ -60,3 +60,22 @@ def test_earlier_file_wins_over_later(tmp_path, monkeypatch):
 
 def test_missing_file_is_ignored(tmp_path):
     assert load_dotenv(tmp_path / "nope.env") == []
+
+
+def test_allowlist_ignores_unrelated_secrets(tmp_path, monkeypatch):
+    # The review's repro: running from a directory with another app's .env must not absorb its
+    # secrets into this long-running daemon — only the requested key is ingested.
+    for var in ("OPENAI_API_KEY", "DATABASE_URL", "STRIPE_SECRET_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=sk-aca\n"
+        "DATABASE_URL=postgres://admin:secret@prod/app\n"
+        "STRIPE_SECRET_KEY=sk_live_unrelated\n"
+    )
+    load_dotenv(tmp_path / ".env", allow={"OPENAI_API_KEY"})
+    import os
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-aca"
+    assert "DATABASE_URL" not in os.environ
+    assert "STRIPE_SECRET_KEY" not in os.environ
+

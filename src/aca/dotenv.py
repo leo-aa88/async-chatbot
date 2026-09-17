@@ -11,6 +11,7 @@ enough for credentials, not a full dotenv implementation. Values are set silentl
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 
@@ -34,12 +35,21 @@ def parse_env(text: str) -> dict[str, str]:
     return result
 
 
-def load_dotenv(*paths: Path, override: bool = False) -> list[Path]:
+def load_dotenv(
+    *paths: Path, allow: Iterable[str] | None = None, override: bool = False
+) -> list[Path]:
     """Load each existing ``.env`` in ``paths`` into ``os.environ``; return the files applied.
+
+    ``allow`` restricts which keys may be ingested — anything else in the file is ignored. This
+    matters because the agent is a long-running daemon: without it, running ``aca service start``
+    from inside an unrelated project would pull *that* project's secrets into this process's
+    environment for its whole lifetime. Callers pass exactly the credential name they need.
+    ``allow=None`` accepts every key (kept for general use).
 
     Without ``override`` (the default) an existing environment variable is left untouched, so a
     shell export beats a ``.env`` and the first file listed beats later ones for the same key.
     """
+    allow_set = None if allow is None else set(allow)
     applied: list[Path] = []
     for path in paths:
         try:
@@ -49,6 +59,8 @@ def load_dotenv(*paths: Path, override: bool = False) -> list[Path]:
         except OSError:
             continue
         for key, value in data.items():
+            if allow_set is not None and key not in allow_set:
+                continue  # never absorb keys this process didn't ask for
             if override or key not in os.environ:
                 os.environ[key] = value
         applied.append(path)
