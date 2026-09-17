@@ -1,0 +1,10 @@
+{
+  "_comment": "Enable a real LLM provider (provider-agnostic). Set the matching API key env var before `aca service start` — OPENAI_API_KEY / ANTHROPIC_API_KEY / XAI_API_KEY / GEMINI_API_KEY — then copy this to <data-dir>/config.json. Pick a model your account can access; nothing is hard-coded. `base_url` and `api_key_env` may be overridden if an endpoint or credential name differs.",
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "max_tokens": 512,
+    "timeout": "60s"
+  },
+  "conversation": { "active_within": "15s" }
+}

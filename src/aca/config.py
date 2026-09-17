@@ -199,6 +199,38 @@ class Budgets:
 
 
 @dataclass(frozen=True, slots=True)
+class LLM:
+    """Which generative provider backs the slow loop (DESIGN 22, 28.5).
+
+    Provider-agnostic: ``provider`` selects an adapter (``fake`` is the deterministic offline
+    default; ``openai``/``grok``/``gemini`` share the OpenAI-style chat API; ``anthropic`` uses
+    the Messages API). Credentials come from the environment (``api_key_env``); ``base_url`` may
+    be overridden if an endpoint moves. The model is never hard-coded — set it here.
+    """
+
+    provider: str = "fake"
+    model: str = ""
+    max_tokens: int = 1024
+    timeout_seconds: float = 60.0
+    base_url: str | None = None
+    api_key_env: str | None = None
+
+    @staticmethod
+    def from_mapping(data: Mapping[str, Any]) -> LLM:
+        max_tokens = int(data.get("max_tokens", 1024))
+        if max_tokens <= 0:
+            raise ConfigError("llm.max_tokens must be > 0")
+        return LLM(
+            provider=str(data.get("provider", "fake")).strip().lower(),
+            model=str(data.get("model", "")),
+            max_tokens=max_tokens,
+            timeout_seconds=parse_seconds(data.get("timeout", "60s")),
+            base_url=(str(data["base_url"]) if data.get("base_url") else None),
+            api_key_env=(str(data["api_key_env"]) if data.get("api_key_env") else None),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Top-level immutable configuration."""
 
@@ -210,6 +242,7 @@ class Config:
     memory: Memory = field(default_factory=Memory)
     budgets: Budgets = field(default_factory=Budgets)
     conversation: Conversation = field(default_factory=Conversation)
+    llm: LLM = field(default_factory=LLM)
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Config:
@@ -223,6 +256,7 @@ class Config:
             memory=Memory.from_mapping(data.get("memory", {})),
             budgets=Budgets.from_mapping(data.get("budgets", {})),
             conversation=Conversation.from_mapping(data.get("conversation", {})),
+            llm=LLM.from_mapping(data.get("llm", {})),
         )
 
     def with_overrides(self, **overrides: Any) -> Config:
