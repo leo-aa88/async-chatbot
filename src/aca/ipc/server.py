@@ -80,7 +80,7 @@ class IpcServer:
         elif op == p.OP_LOGS:
             await p.write_message(writer, p.ok({"traces": self._logs()}))
         elif op == p.OP_METRICS:
-            await p.write_message(writer, p.ok({"metrics": self._service.stores.work.trace_metrics()}))
+            await p.write_message(writer, p.ok({"metrics": self._metrics()}))
         elif op == p.OP_SHUTDOWN:
             await p.write_message(writer, p.ok({"shutting_down": True}))
             self._closed.set()
@@ -132,6 +132,20 @@ class IpcServer:
             "conversation_mode": conversation.mode.value,
             "pending_obligations": len(stores.work.pending_obligations()),
         }
+
+    # The repeated-candidate window is proportional to the agent's own repeat-suppression cadence,
+    # so "recently" means the same thing regardless of how the agent is tuned.
+    _REPEATED_WINDOW_FACTOR = 24
+
+    def _metrics(self) -> dict:
+        from datetime import timedelta
+
+        config = self._service.reducer.context.config
+        window_s = config.memory.repeat_suppression_seconds * self._REPEATED_WINDOW_FACTOR
+        since = self._service.clock.now_utc() - timedelta(seconds=window_s)
+        metrics = self._service.stores.work.trace_metrics(repeated_since=since)
+        metrics["repeated_window_seconds"] = int(window_s)
+        return metrics
 
     def _memories(self) -> list[dict]:
         return [

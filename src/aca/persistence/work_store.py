@@ -177,7 +177,7 @@ class WorkStore:
         )
         return [self._to_trace(r) for r in rows]
 
-    def trace_metrics(self) -> dict[str, int]:
+    def trace_metrics(self, *, repeated_since: datetime | None = None) -> dict[str, int]:
         """Mechanical cognition counts from the trace log (no model calls) — see DESIGN 26.
 
         A proactive cycle is a StochasticWake; a reactive/mandatory cycle is a HumanMessage, told
@@ -210,7 +210,33 @@ class WorkStore:
                 COALESCE(SUM(notes LIKE '%enrichment_gated%'), 0) AS enrichment_gated
             FROM cognition_traces""",
         )
-        return {} if row is None else {k: int(row[k] or 0) for k in row.keys()}
+        metrics = {} if row is None else {k: int(row[k] or 0) for k in row.keys()}
+        # Repeated-candidate rate: how often a proactive SPEAK re-voiced a candidate_id it had
+        # already spoken before, WITHIN A RECENT WINDOW (``repeated_since``). Exact about candidate
+        # identity, not semantics; a proxy for topic repetition. The window matters: without it,
+        # legitimate long-gap resurfacing of a persistent topic (a design goal) would inflate the
+        # count purely with uptime. Windowed, it means "nagging lately" — re-voicing the same thing
+        # repeatedly in the recent period, not appropriately revisiting it much later (DESIGN 6.1,
+        # 11.3, 13.5, 16). Unbounded (repeated_since=None) is a lifetime re-voicing count.
+        params: tuple[str, ...] = ()
+        clause = ""
+        if repeated_since is not None:
+            # Format the cutoff with the same helper used to store created_at (RFC-3339 'Z'), so the
+            # lexicographic string comparison is valid.
+            clause, params = " AND created_at >= ?", (txt(repeated_since),)
+        rep = self._db.query_one(
+            "SELECT COUNT(*) AS spoke_with_candidate, "
+            "COUNT(DISTINCT candidate_id) AS distinct_candidates "
+            "FROM cognition_traces "
+            "WHERE trigger='StochasticWake' AND action='speak' AND candidate_id IS NOT NULL"
+            + clause,
+            params,
+        )
+        spoke_c = int(rep["spoke_with_candidate"] or 0) if rep else 0
+        distinct_c = int(rep["distinct_candidates"] or 0) if rep else 0
+        metrics["proactive_spoke_with_candidate"] = spoke_c
+        metrics["proactive_repeated"] = spoke_c - distinct_c
+        return metrics
 
     # --- mappers -------------------------------------------------------------------------
     @staticmethod
