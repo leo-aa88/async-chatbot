@@ -246,6 +246,32 @@ class LLM:
 
 
 @dataclass(frozen=True, slots=True)
+class Embedding:
+    """Which worker produces provisional-memory embeddings (DESIGN 12.2, 28.4).
+
+    ``fake`` (the default) is the deterministic offline hashing worker — good for tests but not
+    semantic. ``openai`` (and other OpenAI-compatible endpoints via ``base_url``) produce real
+    semantic vectors. Model must be set for a real provider (e.g. ``text-embedding-3-small``).
+    """
+
+    provider: str = "fake"
+    model: str = ""
+    timeout_seconds: float = 30.0
+    base_url: str | None = None
+    api_key_env: str | None = None
+
+    @staticmethod
+    def from_mapping(data: Mapping[str, Any]) -> Embedding:
+        return Embedding(
+            provider=str(data.get("provider", "fake")).strip().lower(),
+            model=str(data.get("model", "")),
+            timeout_seconds=parse_seconds(data.get("timeout", "30s")),
+            base_url=(str(data["base_url"]) if data.get("base_url") else None),
+            api_key_env=(str(data["api_key_env"]) if data.get("api_key_env") else None),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Identity:
     """Durable self-identity that outlives memory and DB resets (DESIGN 5, 27).
 
@@ -275,6 +301,7 @@ class Config:
     budgets: Budgets = field(default_factory=Budgets)
     conversation: Conversation = field(default_factory=Conversation)
     llm: LLM = field(default_factory=LLM)
+    embedding: Embedding = field(default_factory=Embedding)
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Config:
@@ -290,6 +317,7 @@ class Config:
             budgets=Budgets.from_mapping(data.get("budgets", {})),
             conversation=Conversation.from_mapping(data.get("conversation", {})),
             llm=LLM.from_mapping(data.get("llm", {})),
+            embedding=Embedding.from_mapping(data.get("embedding", {})),
         )
 
     def with_overrides(self, **overrides: Any) -> Config:
