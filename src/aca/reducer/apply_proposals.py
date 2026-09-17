@@ -76,7 +76,11 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
             decay_rate_per_hour=rate,
             created_at=now,
             last_activated_at=now,
-            unfinished=True,
+            # A freshly enriched topic is a fact/thread with no *open* loop yet. It becomes
+            # "unfinished" only when a deferred intent is attached to it (an actual unresolved
+            # thread), and finished again when that intent resolves (DESIGN 12.7, 16). This stops
+            # every topic from being permanently unfinished and thus permanently hot.
+            unfinished=False,
             source="provisional_memory",
             source_memory_id=memory.id,
         )
@@ -97,6 +101,7 @@ def _adjust_topic(ctx: ReducerContext, proposal: Proposal, now: datetime) -> boo
 
 def _create_intent(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bool:
     rate = half_life_to_rate_per_hour(ctx.config.memory.default_decay_half_life_hours)
+    topic_id = proposal.fields.get("topic_id")
     ctx.stores.memory.insert_intent(
         DeferredIntent(
             id=ids.new_id(ids.DEFERRED_INTENT),
@@ -107,10 +112,11 @@ def _create_intent(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
             last_activated_at=now,
             expires_at=now + timedelta(hours=_DEFERRED_INTENT_TTL_HOURS),
             status="pending",
-            topic_id=proposal.fields.get("topic_id"),
+            topic_id=topic_id,
             provisional_memory_id=proposal.fields.get("provisional_memory_id"),
         )
     )
+    _mark_topic_unfinished(ctx, topic_id, True, now)  # a deferred intent is an open thread
     return True
 
 
@@ -119,7 +125,21 @@ def _resolve_intent(ctx: ReducerContext, proposal: Proposal, now: datetime) -> b
     if intent is None:
         return False
     ctx.stores.memory.update_intent(replace(intent, status="resolved", last_activated_at=now))
+    # The topic is finished again once no other pending intent still references it (DESIGN 12.7).
+    if intent.topic_id and not ctx.stores.memory.has_pending_intent_for_topic(
+        intent.topic_id, exclude_intent_id=intent.id
+    ):
+        _mark_topic_unfinished(ctx, intent.topic_id, False, now)
     return True
+
+
+def _mark_topic_unfinished(ctx: ReducerContext, topic_id: str | None, unfinished: bool, now: datetime) -> None:
+    """Flip a topic's open-thread flag, if the topic exists (no-op for a memory-only intent)."""
+    if not topic_id:
+        return
+    topic = ctx.stores.memory.get_topic(topic_id)
+    if topic is not None and topic.unfinished != unfinished:
+        ctx.stores.memory.update_topic(replace(topic, unfinished=unfinished, last_activated_at=now))
 
 
 def _engagement(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bool:

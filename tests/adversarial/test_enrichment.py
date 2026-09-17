@@ -85,7 +85,9 @@ def test_salient_memory_above_floor_is_still_enriched(tmp_path, clock):
     h.wake()
     h.run_all_pending()
     assert h.stores.memory.get_memory(mid).enrichment_status is EnrichmentStatus.ENRICHED
-    assert len([t for t in h.stores.memory.all_topics() if t.summary]) == 1
+    topics = [t for t in h.stores.memory.all_topics() if t.summary]
+    assert len(topics) == 1
+    assert topics[0].unfinished is False  # a freshly enriched topic is a fact, not an open thread
     h.close()
 
 
