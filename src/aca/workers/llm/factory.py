@@ -38,6 +38,21 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
 _ALIASES = {"claude": "anthropic", "xai": "grok", "google": "gemini", "mock": "fake"}
 
 
+def key_env_for(config: LLM) -> str | None:
+    """The single environment variable holding this provider's key (None for fake/unknown).
+
+    Lets the caller load a ``.env`` scoped to exactly the credential this agent needs, instead of
+    absorbing an unrelated directory's secrets into a long-running daemon.
+    """
+    provider = _ALIASES.get(config.provider, config.provider)
+    if provider == "fake":
+        return None
+    spec = _PROVIDERS.get(provider)
+    if spec is None:
+        return None
+    return config.api_key_env or spec.key_env
+
+
 def build_llm_worker(config: LLM) -> LLMWorker:
     """Construct the generative worker for the configured provider."""
     provider = _ALIASES.get(config.provider, config.provider)

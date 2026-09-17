@@ -120,10 +120,19 @@ Supported providers and the env var each reads for its key:
 | `gemini` (alias `google`) | Google (OpenAI-compatible) | `GEMINI_API_KEY` |
 | `fake` (alias `mock`) | — (deterministic, offline) | none |
 
-Set the key, then `aca service start`. Model output is still validated, clamped, and applied by
-the reducer — a provider is never trusted as authority. `base_url` / `api_key_env` can be
-overridden in config if an endpoint or credential name differs. See
-[`examples/config.llm.json`](examples/config.llm.json).
+Provide the key in a **`.env` file** (git-ignored) rather than exporting it — the service reads
+`<data-dir>/.env` (next to `config.json`, e.g. `~/.aca/.env`) and a `.env` in the current
+directory at startup; a real shell export still wins over the file. See
+[`examples/.env.example`](examples/.env.example):
+
+```bash
+echo 'OPENAI_API_KEY=sk-...' > ~/.aca/.env
+aca service start
+```
+
+Model output is still validated, clamped, and applied by the reducer — a provider is never
+trusted as authority. `base_url` / `api_key_env` can be overridden in config if an endpoint or
+credential name differs. See [`examples/config.llm.json`](examples/config.llm.json).
 
 ### Seeing autonomous (proactive) messages
 

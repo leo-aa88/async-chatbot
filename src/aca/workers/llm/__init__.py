@@ -7,7 +7,7 @@ API for Anthropic). Whatever a provider returns is still validated and clamped b
 model output is data, never authority.
 """
 
-from .factory import build_llm_worker
+from .factory import build_llm_worker, key_env_for
 from .worker import ProviderLLMWorker
 
-__all__ = ["ProviderLLMWorker", "build_llm_worker"]
+__all__ = ["ProviderLLMWorker", "build_llm_worker", "key_env_for"]

@@ -12,7 +12,7 @@ from aca.config import LLM
 from aca.domain.cycles import CYCLE_MANDATORY, CYCLE_PROACTIVE
 from aca.errors import ConfigError, WorkerError
 from aca.workers.fake_llm import FakeLLMWorker
-from aca.workers.llm import build_llm_worker
+from aca.workers.llm import build_llm_worker, key_env_for
 from aca.workers.llm.adapters import AnthropicAdapter, ChatResult, OpenAICompatibleAdapter
 from aca.workers.llm.prompt import build_prompt
 from aca.workers.llm.worker import ProviderLLMWorker, _coerce
@@ -159,6 +159,15 @@ async def test_anthropic_adapter_shapes_request_and_parses_usage(monkeypatch):
 
 
 # --- factory -----------------------------------------------------------------------------
+def test_key_env_for_maps_provider_to_single_credential():
+    assert key_env_for(LLM(provider="fake")) is None
+    assert key_env_for(LLM(provider="openai", model="m")) == "OPENAI_API_KEY"
+    assert key_env_for(LLM(provider="claude", model="m")) == "ANTHROPIC_API_KEY"
+    assert key_env_for(LLM(provider="xai", model="m")) == "XAI_API_KEY"
+    assert key_env_for(LLM(provider="google", model="m")) == "GEMINI_API_KEY"
+    assert key_env_for(LLM(provider="openai", model="m", api_key_env="MY_KEY")) == "MY_KEY"
+
+
 def test_factory_defaults_to_fake():
     assert isinstance(build_llm_worker(LLM()), FakeLLMWorker)
     assert isinstance(build_llm_worker(LLM(provider="mock")), FakeLLMWorker)
