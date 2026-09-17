@@ -24,7 +24,11 @@ class LLMOutput:
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingOutput:
-    """A local embedding vector and the model version that produced it."""
+    """An embedding vector and the model version that produced it.
+
+    Local by default (``FakeEmbeddingWorker``, DESIGN 28.4); a real provider may be opted into via
+    ``config.embedding`` (``ProviderEmbeddingWorker``), which is a network call, not local.
+    """
 
     vector: list[float]
     model_version: str
@@ -39,4 +43,10 @@ class LLMWorker(Protocol):
 @runtime_checkable
 class EmbeddingWorker(Protocol):
     async def embed(self, text: str) -> EmbeddingOutput:
-        """Produce a local embedding for semantic addressability (DESIGN 12.2, 28.4)."""
+        """Produce an embedding for semantic addressability (DESIGN 12.2, 28.4).
+
+        Local and free by default (the fake worker). A configured real provider is an opted-in
+        remote call: because embedding runs on nearly every substantive message (DESIGN 12.2), that
+        choice sends most user text off-host at higher frequency than generative calls — see
+        ``config.Embedding``.
+        """

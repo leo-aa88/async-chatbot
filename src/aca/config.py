@@ -252,6 +252,15 @@ class Embedding:
     ``fake`` (the default) is the deterministic offline hashing worker — good for tests but not
     semantic. ``openai`` (and other OpenAI-compatible endpoints via ``base_url``) produce real
     semantic vectors. Model must be set for a real provider (e.g. ``text-embedding-3-small``).
+
+    IMPORTANT — this choice differs from ``llm.provider``. DESIGN 28.4 makes embeddings *local from
+    v0* precisely because DESIGN 12.2 embeds *nearly every substantive human message*, unclassified.
+    So opting into a real provider sends most of what the user types to a third party, at a
+    frequency well above the (rate/budget-gated) generative calls, with real per-call cost and a new
+    timeout/429/5xx failure surface on what was the cheapest part of the pipeline. It's a reasonable
+    opt-in — the operator owns the data and the account, and real semantics unlock features the fake
+    worker can't (semantic dedup, repeated-topic, dominance) — but it is not free or private the way
+    the default is. Left at ``fake`` unless deliberately configured.
     """
 
     provider: str = "fake"

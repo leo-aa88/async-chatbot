@@ -134,6 +134,24 @@ Model output is still validated, clamped, and applied by the reducer — a provi
 trusted as authority. `base_url` / `api_key_env` can be overridden in config if an endpoint or
 credential name differs. See [`examples/config.llm.json`](examples/config.llm.json).
 
+### Using real embeddings (optional)
+
+Embeddings default to a **local, free, deterministic** worker (`fake`). A real provider gives
+memories genuine *semantic* vectors (needed for semantic dedup / repeated-topic / dominance):
+
+```json
+"embedding": { "provider": "openai", "model": "text-embedding-3-small" }
+```
+
+⚠️ **This is a different trade-off from the LLM provider choice.** By design the agent embeds
+**nearly every substantive message** (DESIGN 12.2), and embeddings are *local from v0* on purpose
+(DESIGN 28.4). Turning on a real embedding provider therefore sends most of what you type to a
+third party — at a much higher frequency than the rate/budget-gated generative calls, with real
+per-call cost and a new network failure surface. It's a fine opt-in (your data, your account, and
+it unlocks the semantic features), but it is **not** free or private like the default. Supported:
+`openai` (`OPENAI_API_KEY`), `gemini` (`GEMINI_API_KEY`); `base_url` overridable. Left at `fake`
+unless set.
+
 ### Seeing autonomous (proactive) messages
 
 By default the agent will not interrupt an `ACTIVE` conversation, and its spontaneous wake rate is
