@@ -160,6 +160,14 @@ class MemoryStore:
         )
         return [self._to_intent(r) for r in rows]
 
+    def has_pending_intent_for_topic(self, topic_id: str, *, exclude_intent_id: str | None = None) -> bool:
+        """Whether any pending deferred intent still points at this topic (an open thread)."""
+        row = self._db.query_one(
+            "SELECT 1 FROM deferred_intents WHERE status='pending' AND topic_id=? AND id != ? LIMIT 1",
+            (topic_id, exclude_intent_id or ""),
+        )
+        return row is not None
+
     # --- expression suppression ----------------------------------------------------------
     def record_expression(self, kind: str, candidate_id: str, at) -> None:
         """Record that a candidate was just proactively expressed (upsert, latest wins)."""
