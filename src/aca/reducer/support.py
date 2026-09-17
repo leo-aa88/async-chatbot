@@ -12,7 +12,7 @@ from ..cognition import activation as act
 from ..cognition import budgets as budget
 from ..cognition.scheduler import WakeSignals
 from ..cognition.selection import Candidate
-from ..domain.enums import CandidateKind, ConversationMode
+from ..domain.enums import CandidateKind, ConversationMode, EnrichmentStatus
 from ..domain.state import ConversationState, DeferredIntent, ProvisionalMemory, Topic
 from .context import ReducerContext
 
@@ -73,18 +73,38 @@ def effective_intent_activation(ctx: ReducerContext, i: DeferredIntent, now: dat
     )
 
 
+def _recently_expressed(ctx: ReducerContext, kind: CandidateKind, cid: str, now: datetime) -> bool:
+    """Whether this candidate was proactively expressed within the repeat-suppression window."""
+    window = ctx.config.memory.repeat_suppression_seconds
+    if window <= 0:
+        return False
+    last = ctx.stores.memory.last_expressed_at(kind.value, cid)
+    return last is not None and (now - last).total_seconds() < window
+
+
+def _topic_recently_expressed(ctx: ReducerContext, topic, now: datetime) -> bool:
+    """A topic is suppressed if it — or the memory it was enriched from — was just expressed."""
+    if _recently_expressed(ctx, CandidateKind.TOPIC, topic.id, now):
+        return True
+    if topic.source_memory_id is not None:
+        return _recently_expressed(ctx, CandidateKind.PROVISIONAL_MEMORY, topic.source_memory_id, now)
+    return False
+
+
 def build_candidates(ctx: ReducerContext, now: datetime) -> list[Candidate]:
     """Assemble the scored candidate pool (topics + intents + memories) above the floor.
 
     ``score`` is the pre-temperature logit combining effective activation, importance/salience,
-    and unfinished status (DESIGN 12.7, 19). NOTHING is added later by ``selection.select``.
+    and unfinished status (DESIGN 12.7, 19). A candidate the agent proactively expressed within
+    the repeat-suppression window is excluded so it doesn't nag (DESIGN 6, 11.3, 12.7). NOTHING is
+    added later by ``selection.select``.
     """
     floor = ctx.config.memory.candidate_activation_floor
     candidates: list[Candidate] = []
 
     for topic in ctx.stores.memory.all_topics():
         a = effective_topic_activation(ctx, topic, now)
-        if a < floor:
+        if a < floor or _topic_recently_expressed(ctx, topic, now):
             continue
         score = a + 0.5 * topic.importance + (0.3 if topic.unfinished else 0.0)
         candidates.append(Candidate(CandidateKind.TOPIC, topic.id, score))
@@ -93,13 +113,16 @@ def build_candidates(ctx: ReducerContext, now: datetime) -> list[Candidate]:
         if intent.expires_at <= now:
             continue
         a = effective_intent_activation(ctx, intent, now)
-        if a < floor:
+        if a < floor or _recently_expressed(ctx, CandidateKind.DEFERRED_INTENT, intent.id, now):
             continue
         candidates.append(Candidate(CandidateKind.DEFERRED_INTENT, intent.id, a + 0.2))
 
     for memory in ctx.stores.memory.recent_memories():
+        # An enriched memory is now represented by its topic; don't let both compete (no dupes).
+        if memory.enrichment_status is EnrichmentStatus.ENRICHED:
+            continue
         a = effective_memory_activation(ctx, memory, now)
-        if a < floor:
+        if a < floor or _recently_expressed(ctx, CandidateKind.PROVISIONAL_MEMORY, memory.id, now):
             continue
         score = a + 0.5 * memory.salience
         candidates.append(Candidate(CandidateKind.PROVISIONAL_MEMORY, memory.id, score))

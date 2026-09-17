@@ -91,12 +91,12 @@ class MemoryStore:
         self._db.execute(
             """INSERT INTO topics (
                 id, summary, tags, activation, importance, unfinished, decay_rate_per_hour,
-                source, created_at, last_activated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                source, source_memory_id, created_at, last_activated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 t.id, t.summary, dumps(list(t.tags)), t.activation, t.importance,
-                int(t.unfinished), t.decay_rate_per_hour, t.source, txt(t.created_at),
-                txt(t.last_activated_at),
+                int(t.unfinished), t.decay_rate_per_hour, t.source, t.source_memory_id,
+                txt(t.created_at), txt(t.last_activated_at),
             ),
         )
 
@@ -160,6 +160,23 @@ class MemoryStore:
         )
         return [self._to_intent(r) for r in rows]
 
+    # --- expression suppression ----------------------------------------------------------
+    def record_expression(self, kind: str, candidate_id: str, at) -> None:
+        """Record that a candidate was just proactively expressed (upsert, latest wins)."""
+        self._db.execute(
+            """INSERT INTO expressions (candidate_kind, candidate_id, expressed_at)
+            VALUES (?,?,?)
+            ON CONFLICT(candidate_kind, candidate_id) DO UPDATE SET expressed_at=excluded.expressed_at""",
+            (kind, candidate_id, txt(at)),
+        )
+
+    def last_expressed_at(self, kind: str, candidate_id: str):
+        row = self._db.query_one(
+            "SELECT expressed_at FROM expressions WHERE candidate_kind=? AND candidate_id=?",
+            (kind, candidate_id),
+        )
+        return None if row is None else dt(row["expressed_at"])
+
     # --- row mappers ---------------------------------------------------------------------
     @staticmethod
     def _to_memory(row: sqlite3.Row) -> ProvisionalMemory:
@@ -181,8 +198,8 @@ class MemoryStore:
             id=row["id"], summary=row["summary"], tags=tuple(loads(row["tags"], [])),
             activation=row["activation"], importance=row["importance"],
             unfinished=bool(row["unfinished"]), decay_rate_per_hour=row["decay_rate_per_hour"],
-            source=row["source"], created_at=dt(row["created_at"]),
-            last_activated_at=dt(row["last_activated_at"]),
+            source=row["source"], source_memory_id=row["source_memory_id"],
+            created_at=dt(row["created_at"]), last_activated_at=dt(row["last_activated_at"]),
         )
 
     @staticmethod

@@ -139,6 +139,9 @@ class Memory:
     default_decay_half_life_hours: float = 24.0
     persistence_decay_coefficient: float = 0.6  # alpha in k_eff = k_base(1 - alpha*P)
     candidate_activation_floor: float = 0.05
+    # A candidate the agent just spoke about proactively is excluded from re-selection for this
+    # long, so it doesn't nag (DESIGN 6, 11.3, 12.7 repetition regulation). Human-scale by default.
+    repeat_suppression_seconds: float = parse_seconds("6h")
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Memory:
@@ -155,6 +158,7 @@ class Memory:
                 "memory.candidate_activation_floor",
                 data.get("candidate_activation_floor", 0.05),
             ),
+            repeat_suppression_seconds=parse_seconds(data.get("repeat_suppression", "6h")),
         )
 
 

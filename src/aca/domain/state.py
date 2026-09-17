@@ -48,6 +48,9 @@ class Topic:
     unfinished: bool = False
     tags: tuple[str, ...] = ()
     source: str = "human_message"
+    # The provisional memory this topic was enriched from, if any. Lets repeat-suppression treat
+    # a topic and its source memory as the same thought so content isn't spoken twice.
+    source_memory_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -224,8 +224,17 @@ def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
         ctx, kind=OutboundKind.PROACTIVE, channel=_channel(work), text=decision.message,
         cycle_id=event.cycle_id, source_event_id=None, now=now,
     )
+    _record_expression(ctx, work, now)  # suppress this candidate from re-selection (no nagging)
     ctx.stores.work.finalize_trace(
         event.cycle_id, action="speak", useful_enrichment=useful,
         pre_outbox_invalidated=False, note=None,
     )
     return HandlerOutcome(deliver=True, reschedule=True, note="proactive_speak")
+
+
+def _record_expression(ctx, work: WorkItem, now) -> None:
+    """Mark the just-expressed candidate so repeat-suppression excludes it (DESIGN 6, 11.3, 12.7)."""
+    candidate = work.snapshot.get("context", {}).get("source", {}).get("candidate") or {}
+    kind, cid = candidate.get("kind"), candidate.get("id")
+    if kind and cid:
+        ctx.stores.memory.record_expression(str(kind), str(cid), now)

@@ -1,0 +1,27 @@
+{
+  "_comment": "Accelerated profile for hand-testing: compresses hours of agent behavior into minutes so defects surface fast. Intentionally chatty. Do NOT use these timings for behavioral conclusions. Copy to <data-dir>/config.json.",
+  "rng_seed": 7,
+  "cognition": {
+    "spontaneous_activation_rate_per_hour": 120,
+    "semantic_worthiness_floor": 0.3,
+    "selection_temperature": 0.4,
+    "null_candidate_score": -2.0
+  },
+  "conversation": {
+    "active_within": "5s",
+    "idle_within": "30m"
+  },
+  "timing": {
+    "proactive_cooldown": "2s",
+    "proactive_ttl": "1h",
+    "proactive_burst_window": "2s"
+  },
+  "memory": {
+    "repeat_suppression": "5s"
+  },
+  "budgets": {
+    "proactive_messages_per_hour": 1000,
+    "proactive_llm_calls_per_hour": 2000,
+    "proactive_llm_calls_per_day": 20000
+  }
+}

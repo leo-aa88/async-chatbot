@@ -37,10 +37,22 @@ class Database:
 
     def _apply_schema(self) -> None:
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.execute(
-            "INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
+
+    def _migrate(self) -> None:
+        """Apply additive migrations that CREATE TABLE IF NOT EXISTS can't (new columns).
+
+        Each step is idempotent: a duplicate-column error means the column already exists.
+        """
+        for statement in ("ALTER TABLE topics ADD COLUMN source_memory_id TEXT",):
+            try:
+                self._conn.execute(statement)
+            except sqlite3.OperationalError:
+                pass  # column already present
 
     @property
     def connection(self) -> sqlite3.Connection:

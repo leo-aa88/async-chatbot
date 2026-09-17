@@ -8,7 +8,7 @@ delivery by ``delivery_key`` (invariant 38).
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS topics (
     unfinished INTEGER NOT NULL DEFAULT 0,
     decay_rate_per_hour REAL NOT NULL,
     source TEXT,
+    source_memory_id TEXT,
     created_at TEXT NOT NULL,
     last_activated_at TEXT NOT NULL
 );
@@ -199,6 +200,15 @@ CREATE TABLE IF NOT EXISTS budget_usage (
     window_id TEXT NOT NULL,
     count INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (window_kind, window_id)
+);
+
+-- When the agent last proactively expressed a candidate, so it can be suppressed from
+-- re-selection for a configured window (repeat_suppression, DESIGN 6/11.3/12.7).
+CREATE TABLE IF NOT EXISTS expressions (
+    candidate_kind TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    expressed_at TEXT NOT NULL,
+    PRIMARY KEY (candidate_kind, candidate_id)
 );
 
 CREATE TABLE IF NOT EXISTS cognition_traces (
