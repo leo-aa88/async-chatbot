@@ -45,6 +45,17 @@ def test_prompt_is_deterministic_and_carries_contract():
     assert "cog_1" in user_a and "Explain this" in user_a
 
 
+def test_proactive_and_reactive_are_distinct_speech_acts():
+    # A self-initiated thought and a reply must be instructed differently (same model, same
+    # memories, different speech-act context). Guard the proactive guidance that stops the model
+    # from thanking-for-sharing / offering generic help on an unprompted turn.
+    system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
+    assert "initiating this turn yourself" in system
+    assert "Do NOT thank" in system
+    assert "express the specific thought that made that topic worth" in system
+    assert "reactive" in system and "mandatory" in system  # all three acts still described
+
+
 # --- response coercion -------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_worker_parses_json_action():
