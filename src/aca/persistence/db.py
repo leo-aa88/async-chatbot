@@ -47,6 +47,7 @@ class Database:
     _COLUMN_MIGRATIONS = (
         ("topics", "source_memory_id", "TEXT"),
         ("topics", "evidence_count", "INTEGER NOT NULL DEFAULT 1"),
+        ("cognition_traces", "cycle_type", "TEXT"),
         ("outbound_messages", "candidate_kind", "TEXT"),
         ("outbound_messages", "candidate_id", "TEXT"),
     )

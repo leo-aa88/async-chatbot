@@ -142,13 +142,13 @@ class WorkStore:
         self._db.execute(
             """INSERT OR REPLACE INTO cognition_traces (
                 cycle_id, created_at, source_event_id, basis_revision, commit_revision,
-                trigger, conversation_mode, candidate_kind, candidate_id, candidate_was_null,
-                llm_called, action, useful_enrichment, pre_outbox_invalidated, notes,
-                rng_seed_fragment, prompt_hash
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                trigger, cycle_type, conversation_mode, candidate_kind, candidate_id,
+                candidate_was_null, llm_called, action, useful_enrichment, pre_outbox_invalidated,
+                notes, rng_seed_fragment, prompt_hash
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 t.cycle_id, txt(t.created_at), t.source_event_id, t.basis_revision,
-                t.commit_revision, t.trigger, t.conversation_mode, t.candidate_kind,
+                t.commit_revision, t.trigger, t.cycle_type, t.conversation_mode, t.candidate_kind,
                 t.candidate_id, int(t.candidate_was_null), int(t.llm_called), t.action,
                 int(t.useful_enrichment), int(t.pre_outbox_invalidated), t.notes,
                 t.rng_seed_fragment, t.prompt_hash,
@@ -184,19 +184,23 @@ class WorkStore:
         apart by its ``notes`` tag. ``blocked`` proactive cycles never reached the model (budget,
         mode, quiet hours). These raw counts feed the derived rates the CLI prints.
         """
+        # Classify by cycle_type — set once at dispatch and never overwritten — so a FAILED mandatory
+        # or superseded reactive cycle still counts toward its total (finalize_trace rewrites the
+        # free-text ``notes``, so matching on notes would silently drop failures from the ratio).
         row = self._db.query_one(
             """SELECT
                 COUNT(*) AS total,
-                COALESCE(SUM(trigger='StochasticWake'), 0) AS proactive_total,
-                COALESCE(SUM(trigger='StochasticWake' AND llm_called=1), 0) AS proactive_dispatched,
-                COALESCE(SUM(trigger='StochasticWake' AND action='speak'), 0) AS proactive_spoke,
-                COALESCE(SUM(trigger='StochasticWake' AND llm_called=0), 0) AS proactive_blocked,
-                COALESCE(SUM(notes LIKE '%reactive%'), 0) AS reactive_total,
-                COALESCE(SUM(notes LIKE '%reactive%' AND action='speak'), 0) AS reactive_spoke,
-                COALESCE(SUM(notes LIKE '%mandatory%'), 0) AS mandatory_total,
-                COALESCE(SUM(notes LIKE '%mandatory%' AND action='speak'), 0) AS mandatory_spoke,
+                COALESCE(SUM(cycle_type='proactive'), 0) AS proactive_total,
+                COALESCE(SUM(cycle_type='proactive' AND llm_called=1), 0) AS proactive_dispatched,
+                COALESCE(SUM(cycle_type='proactive' AND action='speak'), 0) AS proactive_spoke,
+                COALESCE(SUM(cycle_type='proactive' AND llm_called=0), 0) AS proactive_blocked,
+                COALESCE(SUM(cycle_type='reactive'), 0) AS reactive_total,
+                COALESCE(SUM(cycle_type='reactive' AND action='speak'), 0) AS reactive_spoke,
+                COALESCE(SUM(cycle_type='mandatory'), 0) AS mandatory_total,
+                COALESCE(SUM(cycle_type='mandatory' AND action='speak'), 0) AS mandatory_spoke,
                 COALESCE(SUM(action='speak'), 0) AS spoke,
                 COALESCE(SUM(action='silence'), 0) AS silent,
+                COALESCE(SUM(action='failed'), 0) AS failed,
                 COALESCE(SUM(notes LIKE '%worker_failure%'), 0) AS worker_failures,
                 COALESCE(SUM(notes LIKE '%enrichment_gated%'), 0) AS enrichment_gated
             FROM cognition_traces""",
@@ -230,6 +234,7 @@ class WorkStore:
             cycle_id=row["cycle_id"], created_at=dt(row["created_at"]),
             source_event_id=row["source_event_id"], basis_revision=row["basis_revision"],
             commit_revision=row["commit_revision"], trigger=row["trigger"],
+            cycle_type=row["cycle_type"] if "cycle_type" in row.keys() else None,
             conversation_mode=row["conversation_mode"], candidate_kind=row["candidate_kind"],
             candidate_id=row["candidate_id"], candidate_was_null=as_bool(row["candidate_was_null"]),
             llm_called=as_bool(row["llm_called"]), action=row["action"],

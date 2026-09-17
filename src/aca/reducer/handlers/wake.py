@@ -192,6 +192,7 @@ def _trace(
         cycle_id=cycle_id,
         created_at=now,
         trigger="StochasticWake",
+        cycle_type=CYCLE_PROACTIVE,
         candidate_kind=candidate.kind.value if candidate else (CandidateKind.NOTHING.value if candidate_null else None),
         candidate_id=candidate.id if candidate else None,
         candidate_was_null=candidate_null,
