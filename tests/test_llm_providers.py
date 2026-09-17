@@ -66,6 +66,16 @@ def test_prompt_carries_plain_voice_guidance():
     assert "not an always-available assistant" in system  # runtime owns timing/delivery, not it
 
 
+def test_prompt_instructs_enrichment():
+    # With a real model, topics only form if the prompt actually asks for enrichment proposals
+    # (the fake worker always emitted them, masking this). Guard the instruction.
+    system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
+    assert "Enrichment —" in system
+    assert "reactive or proactive alike" in system  # not scoped to proactive cycles
+    assert "ENRICH_PROVISIONAL_MEMORY proposal" in system
+    assert "output_eligible is present and false" in system  # degrades gracefully when absent
+
+
 def test_prompt_carries_disposition():
     # Guard the persona: non-sycophantic, skeptical-but-open, self-respecting under abuse.
     system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
