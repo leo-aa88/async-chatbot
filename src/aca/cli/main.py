@@ -175,6 +175,8 @@ def format_metrics(m: dict) -> list[str]:
         f"proactive initiation:  {_pct(m.get('proactive_spoke', 0), m.get('proactive_dispatched', 0))}"
         "  (spoke / reached-model)",
         f"proactive blocked:     {m.get('proactive_blocked', 0)}  (budget/mode/quiet — never reached model)",
+        f"repeated-topic rate:   {_pct(m.get('proactive_repeated', 0), m.get('proactive_spoke_with_candidate', 0))}"
+        "  (proactive re-voicings of an already-voiced item)",
         f"reactive reply rate:   {_pct(m.get('reactive_spoke', 0), m.get('reactive_total', 0))}",
         f"mandatory answered:    {_pct(m.get('mandatory_spoke', 0), m.get('mandatory_total', 0))}",
         f"overall silence rate:  {_pct(silent, spoke + silent)}",

@@ -210,7 +210,21 @@ class WorkStore:
                 COALESCE(SUM(notes LIKE '%enrichment_gated%'), 0) AS enrichment_gated
             FROM cognition_traces""",
         )
-        return {} if row is None else {k: int(row[k] or 0) for k in row.keys()}
+        metrics = {} if row is None else {k: int(row[k] or 0) for k in row.keys()}
+        # Repeated-topic rate: how often a proactive SPEAK re-voiced a candidate it had already
+        # spoken before (a distinct-count can't live in the aggregate above). High = nagging /
+        # circling the same thought; low = fresh material each time (DESIGN 6.1, 11.3).
+        rep = self._db.query_one(
+            """SELECT COUNT(*) AS spoke_with_candidate,
+                      COUNT(DISTINCT candidate_id) AS distinct_candidates
+            FROM cognition_traces
+            WHERE trigger='StochasticWake' AND action='speak' AND candidate_id IS NOT NULL""",
+        )
+        spoke_c = int(rep["spoke_with_candidate"] or 0) if rep else 0
+        distinct_c = int(rep["distinct_candidates"] or 0) if rep else 0
+        metrics["proactive_spoke_with_candidate"] = spoke_c
+        metrics["proactive_repeated"] = spoke_c - distinct_c
+        return metrics
 
     # --- mappers -------------------------------------------------------------------------
     @staticmethod

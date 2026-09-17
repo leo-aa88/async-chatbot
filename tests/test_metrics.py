@@ -9,12 +9,28 @@ from aca.config import Config
 from aca.domain.runtime import CognitionTrace
 
 
-def _trace(h: Harness, cid: str, *, trigger, cycle_type, action, llm=True, notes=None) -> None:
+def _trace(h: Harness, cid: str, *, trigger, cycle_type, action, llm=True, notes=None,
+           candidate_id=None) -> None:
     with h.stores.db.transaction():
         h.stores.work.insert_trace(CognitionTrace(
             cycle_id=cid, created_at=h.clock.now_utc(), trigger=trigger, cycle_type=cycle_type,
-            llm_called=llm, action=action, notes=notes,
+            llm_called=llm, action=action, notes=notes, candidate_id=candidate_id,
         ))
+
+
+def test_repeated_topic_rate(tmp_path, clock):
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    # Three proactive speaks: topic t1 voiced twice (a repeat), t2 once.
+    _trace(h, "r1", trigger="StochasticWake", cycle_type="proactive", action="speak", candidate_id="t1")
+    _trace(h, "r2", trigger="StochasticWake", cycle_type="proactive", action="speak", candidate_id="t1")
+    _trace(h, "r3", trigger="StochasticWake", cycle_type="proactive", action="speak", candidate_id="t2")
+    # A silence and a reactive speak must not count toward the proactive repeated-topic measure.
+    _trace(h, "r4", trigger="StochasticWake", cycle_type="proactive", action="silence", candidate_id="t2")
+    _trace(h, "r5", trigger="HumanMessage", cycle_type="reactive", action="speak", candidate_id="t1")
+    m = h.stores.work.trace_metrics()
+    assert m["proactive_spoke_with_candidate"] == 3
+    assert m["proactive_repeated"] == 1  # 3 speaks, 2 distinct candidates -> 1 revoicing
+    h.close()
 
 
 def test_trace_metrics_counts(tmp_path, clock):
@@ -82,9 +98,11 @@ def test_format_metrics_renders_rates_and_handles_zero_division():
         "total": 8, "proactive_dispatched": 3, "proactive_spoke": 1, "proactive_blocked": 1,
         "reactive_total": 2, "reactive_spoke": 1, "mandatory_total": 0, "mandatory_spoke": 0,
         "spoke": 3, "silent": 5, "worker_failures": 1, "enrichment_gated": 0,
+        "proactive_spoke_with_candidate": 4, "proactive_repeated": 1,
     })
     blob = "\n".join(lines)
     assert "33% (1/3)" in blob  # proactive initiation
+    assert "25% (1/4)" in blob  # repeated-topic rate
     assert "50% (1/2)" in blob  # reactive reply rate
     assert "—" in blob  # mandatory has no cycles -> no division
     assert "62% (5/8)" in blob  # overall silence rate
