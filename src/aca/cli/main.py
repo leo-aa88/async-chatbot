@@ -150,14 +150,14 @@ def _fmt_trace(row: dict, tz: str) -> str:
 def _fmt_memory(row: dict, tz: str) -> str:
     text = (row.get("text") or "").replace("\n", " ")
     return (f"{human_time(row.get('created_at'), tz)}  [{row.get('enrichment_status', '?')}] "
-            f"act={row.get('activation', 0):.2f}  {text[:80]}")
+            f"act={row.get('activation', 0):.2f}  {text}")
 
 
 def _fmt_topic(row: dict, tz: str) -> str:
     flag = "unfinished" if row.get("unfinished") else "done"
     summary = (row.get("summary") or "").replace("\n", " ")
     return (f"{human_time(row.get('created_at'), tz)}  [{flag}] "
-            f"act={row.get('activation', 0):.2f}  {summary[:80]}")
+            f"act={row.get('activation', 0):.2f}  {summary}")
 
 
 def _cmd_list(args: argparse.Namespace, op: str, key: str, fmt) -> int:
