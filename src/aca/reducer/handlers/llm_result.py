@@ -21,7 +21,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ...domain.enums import ActionKind, ObligationStatus, OutboundKind, WorkStatus
+from ...domain.enums import (
+    ActionKind,
+    EnrichmentStatus,
+    ObligationStatus,
+    OutboundKind,
+    WorkStatus,
+)
 from ...domain.events import LLMResult
 from ...domain.proposals import LLMDecision, parse_decision
 from ...domain.runtime import WorkItem
@@ -165,8 +171,35 @@ def _finish_reactive(ctx, event, work: WorkItem, decision: LLMDecision, now) -> 
     return HandlerOutcome(deliver=True, note="reactive_reply")
 
 
+def _release_enrichment_claim(ctx, work: WorkItem, now) -> None:
+    """Release a PENDING_ENRICHMENT claim the wake made if this result didn't enrich the memory.
+
+    Resets to RAW so it can be retried later, or to DO_NOT_ENRICH after the configured attempt cap
+    so a salient memory can't become a recurring token leak (DESIGN 12.8, invariant 23).
+    """
+    candidate = work.snapshot.get("context", {}).get("source", {}).get("candidate") or {}
+    memory_id = candidate.get("provisional_memory_id") or (
+        candidate.get("id") if candidate.get("kind") == "PROVISIONAL_MEMORY" else None
+    )
+    if not memory_id:
+        return
+    memory = ctx.stores.memory.get_memory(memory_id)
+    if memory is None or memory.enrichment_status is not EnrichmentStatus.PENDING_ENRICHMENT:
+        return  # already ENRICHED by this cycle, or never claimed — nothing to release
+    attempts = memory.enrichment_attempts + 1
+    status = (
+        EnrichmentStatus.DO_NOT_ENRICH
+        if attempts >= ctx.config.budgets.max_enrichment_attempts
+        else EnrichmentStatus.RAW
+    )
+    ctx.stores.memory.update_memory(
+        replace(memory, enrichment_status=status, enrichment_attempts=attempts)
+    )
+
+
 def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) -> HandlerOutcome:
     useful = apply_proposals(ctx, decision.proposals, now)
+    _release_enrichment_claim(ctx, work, now)
     if decision.action is not ActionKind.SPEAK or not decision.message:
         ctx.stores.work.finalize_trace(
             event.cycle_id, action="silence", useful_enrichment=useful,
