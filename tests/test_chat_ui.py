@@ -96,3 +96,13 @@ async def test_message_preserves_in_progress_input(monkeypatch):
     # The in-progress input is redrawn after the message (not lost or garbled).
     assert rendered.rstrip().endswith("> half typed")
     assert ui._buffer == "half typed"
+
+
+@pytest.mark.asyncio
+async def test_message_shows_timestamp_when_provided(monkeypatch):
+    ui = ChatUI()
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    ui.print_message("a timed thought", at="14:30:05")
+    rendered = out.getvalue()
+    assert "[14:30:05] [agent] a timed thought" in rendered
