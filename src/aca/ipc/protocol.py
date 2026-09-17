@@ -18,6 +18,7 @@ OP_STATUS = "status"
 OP_MEMORIES = "memories"
 OP_TOPICS = "topics"
 OP_LOGS = "logs"
+OP_METRICS = "metrics"
 OP_SUBSCRIBE = "subscribe"  # register this connection to receive delivered agent messages
 OP_SHUTDOWN = "shutdown"
 

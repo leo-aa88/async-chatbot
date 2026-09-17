@@ -79,6 +79,8 @@ class IpcServer:
             await p.write_message(writer, p.ok({"topics": self._topics()}))
         elif op == p.OP_LOGS:
             await p.write_message(writer, p.ok({"traces": self._logs()}))
+        elif op == p.OP_METRICS:
+            await p.write_message(writer, p.ok({"metrics": self._service.stores.work.trace_metrics()}))
         elif op == p.OP_SHUTDOWN:
             await p.write_message(writer, p.ok({"shutting_down": True}))
             self._closed.set()

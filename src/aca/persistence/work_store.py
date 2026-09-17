@@ -177,6 +177,32 @@ class WorkStore:
         )
         return [self._to_trace(r) for r in rows]
 
+    def trace_metrics(self) -> dict[str, int]:
+        """Mechanical cognition counts from the trace log (no model calls) — see DESIGN 26.
+
+        A proactive cycle is a StochasticWake; a reactive/mandatory cycle is a HumanMessage, told
+        apart by its ``notes`` tag. ``blocked`` proactive cycles never reached the model (budget,
+        mode, quiet hours). These raw counts feed the derived rates the CLI prints.
+        """
+        row = self._db.query_one(
+            """SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(trigger='StochasticWake'), 0) AS proactive_total,
+                COALESCE(SUM(trigger='StochasticWake' AND llm_called=1), 0) AS proactive_dispatched,
+                COALESCE(SUM(trigger='StochasticWake' AND action='speak'), 0) AS proactive_spoke,
+                COALESCE(SUM(trigger='StochasticWake' AND llm_called=0), 0) AS proactive_blocked,
+                COALESCE(SUM(notes LIKE '%reactive%'), 0) AS reactive_total,
+                COALESCE(SUM(notes LIKE '%reactive%' AND action='speak'), 0) AS reactive_spoke,
+                COALESCE(SUM(notes LIKE '%mandatory%'), 0) AS mandatory_total,
+                COALESCE(SUM(notes LIKE '%mandatory%' AND action='speak'), 0) AS mandatory_spoke,
+                COALESCE(SUM(action='speak'), 0) AS spoke,
+                COALESCE(SUM(action='silence'), 0) AS silent,
+                COALESCE(SUM(notes LIKE '%worker_failure%'), 0) AS worker_failures,
+                COALESCE(SUM(notes LIKE '%enrichment_gated%'), 0) AS enrichment_gated
+            FROM cognition_traces""",
+        )
+        return {} if row is None else {k: int(row[k] or 0) for k in row.keys()}
+
     # --- mappers -------------------------------------------------------------------------
     @staticmethod
     def _to_work(row: sqlite3.Row) -> WorkItem:
