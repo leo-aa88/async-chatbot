@@ -24,6 +24,7 @@ from ..ipc.client import IpcClient
 from ..ipc.server import IpcServer
 from ..service.service import AgentService
 from ..timefmt import clock_time, human_time
+from ..workers.embedding_factory import build_embedding_worker, embedding_key_env_for
 from ..workers.llm import build_llm_worker, key_env_for
 from .chat_ui import ChatUI
 
@@ -46,13 +47,14 @@ def _load_config(data_dir: Path) -> Config:
 # --- service start -------------------------------------------------------------------------
 async def _run_service(data_dir: Path) -> None:
     config = _load_config(data_dir)
-    # Load only the configured provider's key from .env (data dir first, then cwd); the shell
+    # Load only the configured providers' keys from .env (data dir first, then cwd); the shell
     # environment wins, and no unrelated secrets from a cwd .env are absorbed into the daemon.
-    needed_key = key_env_for(config.llm)
-    if needed_key:
-        load_dotenv(data_dir / ".env", Path.cwd() / ".env", allow={needed_key})
+    needed_keys = {k for k in (key_env_for(config.llm), embedding_key_env_for(config.embedding)) if k}
+    if needed_keys:
+        load_dotenv(data_dir / ".env", Path.cwd() / ".env", allow=needed_keys)
     llm_worker = build_llm_worker(config.llm)  # fail fast on a misconfigured provider
-    service = AgentService(data_dir, config, llm_worker=llm_worker)
+    embedding_worker = build_embedding_worker(config.embedding)  # fail fast likewise
+    service = AgentService(data_dir, config, llm_worker=llm_worker, embedding_worker=embedding_worker)
     server = IpcServer(service, _socket_path(data_dir))
     await service.start()
     await server.start()
@@ -60,7 +62,9 @@ async def _run_service(data_dir: Path) -> None:
         f"aca service running ("
         f"{'name: ' + config.identity.name + ', ' if config.identity.name else ''}"
         f"data dir: {data_dir}, llm: {config.llm.provider}"
-        f"{'/' + config.llm.model if config.llm.model else ''})",
+        f"{'/' + config.llm.model if config.llm.model else ''}"
+        f", embedding: {config.embedding.provider}"
+        f"{'/' + config.embedding.model if config.embedding.model else ''})",
         flush=True,
     )
 

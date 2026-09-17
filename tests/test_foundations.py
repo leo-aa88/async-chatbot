@@ -88,6 +88,15 @@ def test_identity_name_is_configurable_and_defaults_empty():
     assert Config.from_mapping({"identity": {"name": " Wolfy "}}).identity.name == "Wolfy"
 
 
+def test_embedding_config_defaults_and_parse():
+    assert Config().embedding.provider == "fake"
+    cfg = Config.from_mapping({"embedding": {"provider": "OpenAI", "model": "text-embedding-3-small",
+                                             "timeout": "10s"}})
+    assert cfg.embedding.provider == "openai"
+    assert cfg.embedding.model == "text-embedding-3-small"
+    assert cfg.embedding.timeout_seconds == 10
+
+
 def test_topic_merge_similarity_is_configurable_and_bounded():
     assert Config().memory.topic_merge_similarity == 0.8
     cfg = Config.from_mapping({"memory": {"topic_merge_similarity": 0.5}})
