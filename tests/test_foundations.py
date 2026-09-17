@@ -64,11 +64,23 @@ def test_config_defaults_match_design():
     assert cfg.conversation.active_within_seconds == 180
     assert cfg.conversation.idle_within_seconds == 1800
     assert cfg.memory.repeat_suppression_seconds == 6 * 3600
+    assert cfg.memory.enrichment_salience_floor == 0.6
 
 
 def test_repeat_suppression_is_configurable():
     cfg = Config.from_mapping({"memory": {"repeat_suppression": "5s"}})
     assert cfg.memory.repeat_suppression_seconds == 5
+
+
+def test_enrichment_salience_floor_is_configurable_and_bounded():
+    cfg = Config.from_mapping({"memory": {"enrichment_salience_floor": 0.8}})
+    assert cfg.memory.enrichment_salience_floor == 0.8
+    import pytest
+
+    from aca.errors import ConfigError
+
+    with pytest.raises(ConfigError):
+        Config.from_mapping({"memory": {"enrichment_salience_floor": 1.5}})
 
 
 def test_conversation_windows_are_configurable():

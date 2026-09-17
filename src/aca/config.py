@@ -142,6 +142,9 @@ class Memory:
     # A candidate the agent just spoke about proactively is excluded from re-selection for this
     # long, so it doesn't nag (DESIGN 6, 11.3, 12.7 repetition regulation). Human-scale by default.
     repeat_suppression_seconds: float = parse_seconds("6h")
+    # Quality gate: only memories at least this salient are enriched into topics (DESIGN 12.3).
+    # Below it, a memory stays RAW/retrievable but never becomes a topic — keeps junk out.
+    enrichment_salience_floor: float = 0.6
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Memory:
@@ -159,6 +162,10 @@ class Memory:
                 data.get("candidate_activation_floor", 0.05),
             ),
             repeat_suppression_seconds=parse_seconds(data.get("repeat_suppression", "6h")),
+            enrichment_salience_floor=_fraction(
+                "memory.enrichment_salience_floor",
+                data.get("enrichment_salience_floor", 0.6),
+            ),
         )
 
 

@@ -54,6 +54,13 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
         # Idempotent by memory identity: a second concurrent enrichment result must not create a
         # duplicate topic (DESIGN 12.8, invariant 23).
         return False
+    if memory.salience < ctx.config.memory.enrichment_salience_floor:
+        # Quality gate: too low-value to promote to a topic. Mark it so it isn't retried, but keep
+        # it retrievable as a RAW-tier memory (DESIGN 12.3, 12.8).
+        ctx.stores.memory.update_memory(
+            replace(memory, enrichment_status=EnrichmentStatus.DO_NOT_ENRICH)
+        )
+        return False
     ctx.stores.memory.update_memory(
         replace(memory, enrichment_status=EnrichmentStatus.ENRICHED, last_activated_at=now)
     )
