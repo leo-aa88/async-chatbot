@@ -83,6 +83,18 @@ def test_enrichment_salience_floor_is_configurable_and_bounded():
         Config.from_mapping({"memory": {"enrichment_salience_floor": 1.5}})
 
 
+def test_topic_merge_similarity_is_configurable_and_bounded():
+    assert Config().memory.topic_merge_similarity == 0.8
+    cfg = Config.from_mapping({"memory": {"topic_merge_similarity": 0.5}})
+    assert cfg.memory.topic_merge_similarity == 0.5
+    import pytest
+
+    from aca.errors import ConfigError
+
+    with pytest.raises(ConfigError):
+        Config.from_mapping({"memory": {"topic_merge_similarity": 2.0}})
+
+
 def test_conversation_windows_are_configurable():
     cfg = Config.from_mapping({"conversation": {"active_within": "10s", "idle_within": "5m"}})
     assert cfg.conversation.active_within_seconds == 10

@@ -91,22 +91,22 @@ class MemoryStore:
         self._db.execute(
             """INSERT INTO topics (
                 id, summary, tags, activation, importance, unfinished, decay_rate_per_hour,
-                source, source_memory_id, created_at, last_activated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                source, source_memory_id, evidence_count, created_at, last_activated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 t.id, t.summary, dumps(list(t.tags)), t.activation, t.importance,
                 int(t.unfinished), t.decay_rate_per_hour, t.source, t.source_memory_id,
-                txt(t.created_at), txt(t.last_activated_at),
+                t.evidence_count, txt(t.created_at), txt(t.last_activated_at),
             ),
         )
 
     def update_topic(self, t: Topic) -> None:
         self._db.execute(
             """UPDATE topics SET summary=?, tags=?, activation=?, importance=?, unfinished=?,
-                decay_rate_per_hour=?, last_activated_at=? WHERE id=?""",
+                decay_rate_per_hour=?, evidence_count=?, last_activated_at=? WHERE id=?""",
             (
                 t.summary, dumps(list(t.tags)), t.activation, t.importance, int(t.unfinished),
-                t.decay_rate_per_hour, txt(t.last_activated_at), t.id,
+                t.decay_rate_per_hour, t.evidence_count, txt(t.last_activated_at), t.id,
             ),
         )
 
@@ -207,6 +207,7 @@ class MemoryStore:
             activation=row["activation"], importance=row["importance"],
             unfinished=bool(row["unfinished"]), decay_rate_per_hour=row["decay_rate_per_hour"],
             source=row["source"], source_memory_id=row["source_memory_id"],
+            evidence_count=row["evidence_count"] if "evidence_count" in row.keys() else 1,
             created_at=dt(row["created_at"]), last_activated_at=dt(row["last_activated_at"]),
         )
 

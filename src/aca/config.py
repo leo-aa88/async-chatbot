@@ -145,6 +145,10 @@ class Memory:
     # Quality gate: only memories at least this salient are enriched into topics (DESIGN 12.3).
     # Below it, a memory stays RAW/retrievable but never becomes a topic — keeps junk out.
     enrichment_salience_floor: float = 0.6
+    # Topic de-duplication: when a new enrichment's summary is at least this similar (0..1) to an
+    # existing topic, reinforce that topic instead of creating a near-duplicate (DESIGN 12.3). Set
+    # to 0 to disable merging (always create a new topic). Conservative default — near-identical only.
+    topic_merge_similarity: float = 0.8
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Memory:
@@ -165,6 +169,10 @@ class Memory:
             enrichment_salience_floor=_fraction(
                 "memory.enrichment_salience_floor",
                 data.get("enrichment_salience_floor", 0.6),
+            ),
+            topic_merge_similarity=_fraction(
+                "memory.topic_merge_similarity",
+                data.get("topic_merge_similarity", 0.8),
             ),
         )
 
