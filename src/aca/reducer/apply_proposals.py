@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 from .. import ids
+from ..cognition import textsim
 from ..cognition.activation import half_life_to_rate_per_hour, reinforced
 from ..domain.enums import EnrichmentStatus
 from ..domain.proposals import Proposal
@@ -65,6 +66,20 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
         replace(memory, enrichment_status=EnrichmentStatus.ENRICHED, last_activated_at=now)
     )
     summary = proposal.fields.get("topic_summary") or memory.text[:200]
+    existing = _find_similar_topic(ctx, summary)
+    if existing is not None:
+        # Near-duplicate of an existing topic: reinforce it instead of spawning a parallel topic
+        # (DESIGN 12.3). Keep the stronger activation/importance and count the added evidence.
+        ctx.stores.memory.update_topic(
+            replace(
+                existing,
+                activation=max(existing.activation, memory.activation),
+                importance=max(existing.importance, memory.salience),
+                evidence_count=existing.evidence_count + 1,
+                last_activated_at=now,
+            )
+        )
+        return True
     rate = half_life_to_rate_per_hour(ctx.config.memory.default_decay_half_life_hours)
     ctx.stores.memory.insert_topic(
         Topic(
@@ -86,6 +101,22 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
         )
     )
     return True
+
+
+def _find_similar_topic(ctx: ReducerContext, summary: str):
+    """The most similar existing topic at/above the merge threshold, or None (DESIGN 12.3).
+
+    Deterministic lexical comparison over recent topics. A threshold of 0 disables merging.
+    """
+    threshold = ctx.config.memory.topic_merge_similarity
+    if threshold <= 0.0:
+        return None
+    best, best_score = None, 0.0
+    for topic in ctx.stores.memory.all_topics(limit=50):
+        score = textsim.similarity(summary, topic.summary)
+        if score >= threshold and score > best_score:
+            best, best_score = topic, score
+    return best
 
 
 def _adjust_topic(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bool:

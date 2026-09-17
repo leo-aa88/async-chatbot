@@ -46,6 +46,7 @@ class Database:
     # Additive column migrations that CREATE TABLE IF NOT EXISTS can't apply to an existing table.
     _COLUMN_MIGRATIONS = (
         ("topics", "source_memory_id", "TEXT"),
+        ("topics", "evidence_count", "INTEGER NOT NULL DEFAULT 1"),
         ("outbound_messages", "candidate_kind", "TEXT"),
         ("outbound_messages", "candidate_id", "TEXT"),
     )

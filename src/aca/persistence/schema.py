@@ -8,7 +8,7 @@ delivery by ``delivery_key`` (invariant 38).
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS topics (
     decay_rate_per_hour REAL NOT NULL,
     source TEXT,
     source_memory_id TEXT,
+    evidence_count INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     last_activated_at TEXT NOT NULL
 );

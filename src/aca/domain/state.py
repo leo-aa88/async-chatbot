@@ -51,6 +51,9 @@ class Topic:
     # The provisional memory this topic was enriched from, if any. Lets repeat-suppression treat
     # a topic and its source memory as the same thought so content isn't spoken twice.
     source_memory_id: str | None = None
+    # How many enrichments have landed on this topic. Starts at 1; incremented each time a new
+    # provisional memory is merged into it instead of creating a near-duplicate topic (DESIGN 12.3).
+    evidence_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)
