@@ -112,6 +112,9 @@ class OutboundMessage:
     delivered_at: datetime | None = None
     superseded_by_id: str | None = None
     last_delivery_error: str | None = None
+    # The candidate a PROACTIVE item speaks about; used to anchor repeat-suppression to delivery.
+    candidate_kind: str | None = None
+    candidate_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

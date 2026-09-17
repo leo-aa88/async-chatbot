@@ -43,16 +43,26 @@ class Database:
             (str(SCHEMA_VERSION),),
         )
 
-    def _migrate(self) -> None:
-        """Apply additive migrations that CREATE TABLE IF NOT EXISTS can't (new columns).
+    # Additive column migrations that CREATE TABLE IF NOT EXISTS can't apply to an existing table.
+    _COLUMN_MIGRATIONS = (
+        ("topics", "source_memory_id", "TEXT"),
+        ("outbound_messages", "candidate_kind", "TEXT"),
+        ("outbound_messages", "candidate_id", "TEXT"),
+    )
 
-        Each step is idempotent: a duplicate-column error means the column already exists.
+    def _migrate(self) -> None:
+        """Apply additive column migrations idempotently.
+
+        A column is added only if PRAGMA table_info shows it's missing, so a genuine migration
+        failure (locked DB, bad DDL) surfaces instead of being swallowed as "already applied".
         """
-        for statement in ("ALTER TABLE topics ADD COLUMN source_memory_id TEXT",):
-            try:
-                self._conn.execute(statement)
-            except sqlite3.OperationalError:
-                pass  # column already present
+        for table, column, coltype in self._COLUMN_MIGRATIONS:
+            if not self._column_exists(table, column):
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+    def _column_exists(self, table: str, column: str) -> bool:
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(row[1] == column for row in rows)
 
     @property
     def connection(self) -> sqlite3.Connection:

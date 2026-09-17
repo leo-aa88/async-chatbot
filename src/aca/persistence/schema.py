@@ -161,7 +161,11 @@ CREATE TABLE IF NOT EXISTS outbound_messages (
     expires_at TEXT,
     delivered_at TEXT,
     superseded_by_id TEXT,
-    last_delivery_error TEXT
+    last_delivery_error TEXT,
+    -- The candidate this proactive item speaks about, so repeat-suppression can be recorded on
+    -- successful DELIVERY (not at decision time) and in-flight items suppress duplicates.
+    candidate_kind TEXT,
+    candidate_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_outbound_status ON outbound_messages (status, kind);
 

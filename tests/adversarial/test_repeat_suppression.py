@@ -1,9 +1,10 @@
-"""Adversarial: the agent doesn't nag — a just-expressed thought isn't resurfaced (DESIGN 6, 11.3, 12.7).
+"""Adversarial: the agent doesn't nag — but suppression is anchored to DELIVERY, not the decision.
 
-Fast-mode testing surfaced the agent repeating itself: it spoke about the same memory (and the
-topic enriched from it, same text) on back-to-back wakes. This locks in the fix: a proactively
-expressed candidate is suppressed from re-selection for `memory.repeat_suppression`, an enriched
-memory is represented only by its topic, and a topic inherits its source memory's suppression.
+Repeat-suppression must behave like proactive cooldown (DESIGN 6.1, 29.7): only a message the
+user actually received suppresses its candidate. An item that was decided-but-never-delivered
+(expired/failed) must not make the agent act as if it already said something. While an item is
+still in-flight (pending delivery) its candidate is excluded to avoid double-sending, and that
+exclusion is released the moment the item leaves PENDING.
 """
 
 from __future__ import annotations
@@ -35,6 +36,10 @@ def _proactive_count(h: Harness) -> int:
     )["n"]
 
 
+def _latest_proactive_id(h: Harness) -> str:
+    return h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE)[-1].message_id
+
+
 def _seed_topic(h: Harness):
     now = h.clock.now_utc()
     with h.stores.db.transaction():
@@ -55,23 +60,47 @@ def _seed_memory(h: Harness):
         ))
 
 
-def test_same_topic_is_not_resurfaced_within_window(tmp_path, clock):
+def test_in_flight_proactive_is_not_duplicated(tmp_path, clock):
+    # While a proactive item is pending delivery, its candidate is excluded (no double-send)...
     h = Harness(tmp_path, _config("1h"), clock)
     _seed_topic(h)
     h.wake(); h.run_all_pending()
     assert _proactive_count(h) == 1
-    # A second wake in-window must not speak about the same topic again.
     h.wake(); h.run_all_pending()
     assert _proactive_count(h) == 1
+    h.close()
+
+
+def test_delivered_proactive_is_suppressed_within_window(tmp_path, clock):
+    # ...and once delivered, it stays suppressed for the repeat-suppression window.
+    h = Harness(tmp_path, _config("1h"), clock)
+    _seed_topic(h)
+    h.wake(); h.run_all_pending()
+    h.deliver(_latest_proactive_id(h), delivered=True)
+    h.wake(); h.run_all_pending()
+    assert _proactive_count(h) == 1
+    h.close()
+
+
+def test_expired_proactive_does_not_suppress(tmp_path, clock):
+    # The review's repro: an item decided-but-never-delivered must NOT suppress its candidate.
+    h = Harness(tmp_path, _config("6h"), clock)
+    _seed_topic(h)
+    h.wake(); h.run_all_pending()
+    # Simulate the item expiring without ever reaching a client (the expired:* delivery path).
+    h.deliver(_latest_proactive_id(h), delivered=False, error="expired:ttl")
+    # The topic never reached the user, so it must be selectable again immediately.
+    h.wake(); h.run_all_pending()
+    assert _proactive_count(h) == 2
     h.close()
 
 
 def test_memory_and_its_enriched_topic_are_not_both_spoken(tmp_path, clock):
     h = Harness(tmp_path, _config("1h"), clock)
     _seed_memory(h)
-    h.wake(); h.run_all_pending()  # speaks about the memory, enriches it into a topic
+    h.wake(); h.run_all_pending()  # speaks about the memory (in-flight), enriches into a topic
     assert _proactive_count(h) == 1
-    # The enriched memory is excluded, and its topic inherits the memory's suppression.
+    # Enriched memory is excluded structurally; its topic inherits the in-flight suppression.
     h.wake(); h.run_all_pending()
     assert _proactive_count(h) == 1
     h.close()
@@ -81,7 +110,7 @@ def test_suppression_expires_after_window(tmp_path, clock):
     h = Harness(tmp_path, _config("30s"), clock)
     _seed_topic(h)
     h.wake(); h.run_all_pending()
-    assert _proactive_count(h) == 1
+    h.deliver(_latest_proactive_id(h), delivered=True)
     # Past the repeat-suppression window the thought may resurface (revisit later, DESIGN 13.5).
     clock.advance(60)
     h.wake(); h.run_all_pending()

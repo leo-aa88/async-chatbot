@@ -35,6 +35,8 @@ def create_outbound(
     cycle_id: str | None,
     source_event_id: str | None,
     now: datetime,
+    candidate_kind: str | None = None,
+    candidate_id: str | None = None,
 ) -> str:
     """Persist a SPEAK action + outbound item; return the new ``message_id``."""
     action = Action(
@@ -62,6 +64,8 @@ def create_outbound(
         status=OutboundStatus.PENDING_DELIVERY,
         created_at=now,
         expires_at=expires_at,
+        candidate_kind=candidate_kind,
+        candidate_id=candidate_id,
     )
     ctx.stores.outbox.insert_message(message)
 
