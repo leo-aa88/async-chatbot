@@ -179,7 +179,10 @@ def format_metrics(m: dict) -> list[str]:
         f"mandatory answered:    {_pct(m.get('mandatory_spoke', 0), m.get('mandatory_total', 0))}",
         f"overall silence rate:  {_pct(silent, spoke + silent)}",
         f"worker failures: {m.get('worker_failures', 0)}   enrichment gated: {m.get('enrichment_gated', 0)}",
-    ]
+    ] + (
+        [f"unclassified:          {m['unclassified']}  (pre-upgrade cycles, no cycle_type)"]
+        if m.get("unclassified", 0) else []
+    )
 
 
 def _cmd_metrics(args: argparse.Namespace) -> int:
