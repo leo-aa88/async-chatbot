@@ -211,9 +211,11 @@ class WorkStore:
             FROM cognition_traces""",
         )
         metrics = {} if row is None else {k: int(row[k] or 0) for k in row.keys()}
-        # Repeated-topic rate: how often a proactive SPEAK re-voiced a candidate it had already
-        # spoken before (a distinct-count can't live in the aggregate above). High = nagging /
-        # circling the same thought; low = fresh material each time (DESIGN 6.1, 11.3).
+        # Repeated-candidate rate: how often a proactive SPEAK re-voiced a candidate_id it had
+        # already spoken before (a distinct-count can't live in the aggregate above). This is exact
+        # about candidate identity, not semantics — two different ids on the same subject don't
+        # count, and the same candidate resurfacing weeks later does; it's a proxy for topic
+        # repetition. High = nagging / circling the same thought; low = fresh (DESIGN 6.1, 11.3).
         rep = self._db.query_one(
             """SELECT COUNT(*) AS spoke_with_candidate,
                       COUNT(DISTINCT candidate_id) AS distinct_candidates
