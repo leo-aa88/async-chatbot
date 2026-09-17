@@ -62,6 +62,17 @@ def test_prompt_carries_plain_voice_guidance():
     assert "Voice" in system
     assert "feel free to" in system  # the exact assistant tic it must avoid
     assert "filler openers" in system
+    assert "keep the conversation going" in system  # no filler continuation-questions
+    assert "not an always-available assistant" in system  # runtime owns timing/delivery, not it
+
+
+def test_prompt_carries_disposition():
+    # Guard the persona: non-sycophantic, skeptical-but-open, self-respecting under abuse.
+    system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
+    assert "Disposition" in system
+    assert "sycophantic" in system
+    assert "Skeptical but open-minded" in system
+    assert "Self-respecting" in system
 
 
 # --- response coercion -------------------------------------------------------------------
