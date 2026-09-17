@@ -21,6 +21,7 @@ from ..errors import AcaError
 from ..ipc.client import IpcClient
 from ..ipc.server import IpcServer
 from ..service.service import AgentService
+from .chat_ui import ChatUI
 
 
 def _data_dir(args: argparse.Namespace) -> Path:
@@ -94,53 +95,25 @@ def _cmd_simple(args: argparse.Namespace, op: str) -> int:
     return asyncio.run(run())
 
 
-_PROMPT = "> "
-
-try:  # GNU readline lets us redraw the in-progress input line under an async message.
-    import readline as _readline
-except ImportError:  # pragma: no cover - non-readline platforms
-    _readline = None
-
-
-def _print_agent_message(text: str) -> None:
-    """Print an unsolicited agent message without clobbering the user's in-progress input.
-
-    An autonomous message can arrive while the user is mid-line. We erase the current prompt+input
-    line and print the message, then let readline redraw the prompt+buffer via its own redisplay
-    machinery — keeping readline's internal display state consistent so subsequent edits
-    (Backspace, arrow keys, tab completion) render correctly. Without readline we fall back to
-    writing the prompt directly.
-    """
-    sys.stdout.write("\r\033[K")               # carriage return + clear to end of line
-    sys.stdout.write(f"[agent] {text}\n")
-    sys.stdout.flush()
-    if _readline is not None:
-        _readline.redisplay()                  # readline redraws prompt + buffer, in sync
-    else:  # pragma: no cover - non-readline platforms
-        sys.stdout.write(_PROMPT)
-        sys.stdout.flush()
-
-
 async def _chat(data_dir: Path) -> None:
     client = IpcClient(_socket_path(data_dir))
+    ui = ChatUI()
 
     async def on_message(frame: dict) -> None:
-        _print_agent_message(frame.get("text", ""))
+        ui.print_message(frame.get("text", ""))
 
     subscription = asyncio.ensure_future(client.subscribe(on_message))
     print("Connected. Type a message and press enter (Ctrl-D to quit).")
-    loop = asyncio.get_running_loop()
+    ui.start()
     try:
-        while True:
-            # input() uses GNU readline where available, so get_line_buffer() reflects typing.
-            try:
-                line = await loop.run_in_executor(None, input, _PROMPT)
-            except EOFError:
-                break
+        # Keystrokes and agent-message prints are both handled on this event loop — a single
+        # terminal writer, so async messages can't clobber the input line (no thread, no mutex).
+        async for line in ui.lines():
             text = line.strip()
             if text:
                 await client.chat_send(text)
     finally:
+        ui.stop()
         subscription.cancel()
 
 
