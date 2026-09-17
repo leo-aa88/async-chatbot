@@ -10,7 +10,7 @@ import pytest
 from aca.cognition.snapshot import Snapshot
 from aca.config import LLM
 from aca.domain.cycles import CYCLE_MANDATORY, CYCLE_PROACTIVE
-from aca.errors import ConfigError
+from aca.errors import ConfigError, WorkerError
 from aca.workers.fake_llm import FakeLLMWorker
 from aca.workers.llm import build_llm_worker
 from aca.workers.llm.adapters import AnthropicAdapter, ChatResult, OpenAICompatibleAdapter
@@ -66,6 +66,51 @@ def test_prose_fallback_speaks_on_mandatory_but_silences_on_proactive():
         "action": "speak", "message": "just some prose, no json",
     }
     assert _coerce("just some prose, no json", speech_fallback=False) == {"action": "silence"}
+
+
+def test_malformed_json_is_never_spoken_as_prose():
+    # The review's repro: a truncated/partial JSON object must NOT be spoken verbatim (scaffolding
+    # leak). It's treated as a parse failure the reducer handles, not prose.
+    partial = '{"action": "speak", "message": "Sure, here is a detailed explanation of the'
+    assert _coerce(partial, speech_fallback=True) == {}
+    assert _coerce("```json\n{\"action\":\"speak\"", speech_fallback=True) == {}
+
+
+@pytest.mark.asyncio
+async def test_worker_raises_on_truncated_response():
+    class Truncating:
+        async def complete(self, system, user):
+            return ChatResult('{"action":"speak","message":"cut off mid', 10, 5, truncated=True)
+
+    with pytest.raises(WorkerError):
+        await ProviderLLMWorker(Truncating()).run(_snapshot(CYCLE_MANDATORY))
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_flags_truncation(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "partial"}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 256},
+        })
+
+    _patch_httpx(monkeypatch, handler)
+    result = await OpenAICompatibleAdapter("https://x/v1", "k", "m", 256, 30.0).complete("s", "u")
+    assert result.truncated is True
+
+
+@pytest.mark.asyncio
+async def test_anthropic_adapter_flags_truncation(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "content": [{"type": "text", "text": "partial"}],
+            "stop_reason": "max_tokens",
+            "usage": {"input_tokens": 9, "output_tokens": 256},
+        })
+
+    _patch_httpx(monkeypatch, handler)
+    result = await AnthropicAdapter("https://api.anthropic.com", "k", "m", 256, 30.0).complete("s", "u")
+    assert result.truncated is True
 
 
 # --- adapters (mocked transport, no network) ---------------------------------------------

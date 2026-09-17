@@ -14,6 +14,7 @@ import json
 from typing import Any
 
 from ...cognition.snapshot import Snapshot
+from ...errors import WorkerError
 from ..base import LLMOutput
 from .adapters import ChatAdapter
 from .prompt import build_prompt, wants_speech
@@ -28,20 +29,34 @@ class ProviderLLMWorker:
     async def run(self, snapshot: Snapshot) -> LLMOutput:
         system, user = build_prompt(snapshot)
         result = await self._adapter.complete(system, user)
+        if result.truncated:
+            # A cut-off generation is not a real decision — never speak a fragment. Fail like any
+            # worker malfunction so the reducer surfaces it (obligation FAILED / proactive silence).
+            raise WorkerError("provider response truncated at max_tokens")
         decision = _coerce(result.text, wants_speech(snapshot))
         return LLMOutput(result=decision, tokens_in=result.tokens_in, tokens_out=result.tokens_out)
 
 
 def _coerce(text: str, speech_fallback: bool) -> dict[str, Any]:
-    """Turn raw model text into a decision dict for the reducer to validate."""
+    """Turn raw model text into a decision dict for the reducer to validate.
+
+    A valid JSON action is used as-is. Text that *attempts* JSON but doesn't parse (malformed or
+    partial) is treated as a parse failure — never spoken — so JSON scaffolding can't leak into the
+    user's chat. Only genuine plain prose is spoken (and only on a speech cycle)."""
     parsed = _extract_json(text)
     if isinstance(parsed, dict) and "action" in parsed:
         return parsed
-    # Non-JSON prose: keep the user answered on speech cycles; stay silent on proactive ones.
     cleaned = text.strip()
+    if _looks_like_json_attempt(cleaned):
+        return {}  # malformed/partial JSON -> reducer parse failure (FAILED / silence), not prose
     if speech_fallback and cleaned:
         return {"action": "speak", "message": cleaned}
     return {"action": "silence"}
+
+
+def _looks_like_json_attempt(text: str) -> bool:
+    """Whether the text was trying to be the JSON contract (so a parse failure isn't real prose)."""
+    return text.startswith("{") or text.startswith("```")
 
 
 def _extract_json(text: str) -> Any:

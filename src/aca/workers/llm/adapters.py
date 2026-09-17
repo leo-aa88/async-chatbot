@@ -19,6 +19,9 @@ class ChatResult:
     text: str
     tokens_in: int
     tokens_out: int
+    # True when generation was cut off by the token cap (OpenAI finish_reason == "length",
+    # Anthropic stop_reason == "max_tokens"). A truncated reply must not be treated as complete.
+    truncated: bool = False
 
 
 @runtime_checkable
@@ -56,9 +59,15 @@ class OpenAICompatibleAdapter:
             )
             resp.raise_for_status()
             data = resp.json()
-        text = data["choices"][0]["message"]["content"] or ""
+        choice = data["choices"][0]
+        text = choice["message"]["content"] or ""
         usage = data.get("usage") or {}
-        return ChatResult(text, int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0)))
+        return ChatResult(
+            text,
+            int(usage.get("prompt_tokens", 0)),
+            int(usage.get("completion_tokens", 0)),
+            truncated=choice.get("finish_reason") == "length",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,4 +103,9 @@ class AnthropicAdapter:
             data = resp.json()
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         usage = data.get("usage") or {}
-        return ChatResult(text, int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0)))
+        return ChatResult(
+            text,
+            int(usage.get("input_tokens", 0)),
+            int(usage.get("output_tokens", 0)),
+            truncated=data.get("stop_reason") == "max_tokens",
+        )
