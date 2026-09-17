@@ -56,6 +56,14 @@ def test_proactive_and_reactive_are_distinct_speech_acts():
     assert "reactive" in system and "mandatory" in system  # all three acts still described
 
 
+def test_prompt_carries_plain_voice_guidance():
+    # Guard the anti-"4o tic" voice guidance so the agent doesn't out itself as a chat assistant.
+    system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
+    assert "Voice" in system
+    assert "feel free to" in system  # the exact assistant tic it must avoid
+    assert "filler openers" in system
+
+
 # --- response coercion -------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_worker_parses_json_action():
