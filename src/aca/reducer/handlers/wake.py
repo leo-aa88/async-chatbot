@@ -71,9 +71,10 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
     gate = evaluate_proactive(ctx, now)
     needs_enrichment = _needs_enrichment(ctx, candidate)
     if not gate.allowed and not needs_enrichment:
+        note = _silence_note(ctx, candidate, gate)
         return HandlerOutcome(
             reschedule=True,
-            trace=_trace(cycle_id, now, candidate=candidate, action="silence", note=f"blocked:{gate.reason}"),
+            trace=_trace(cycle_id, now, candidate=candidate, action="silence", note=note),
         )
 
     _materialize_selected(ctx, candidate, now)
@@ -103,25 +104,51 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
     )
 
 
+def _silence_note(ctx: ReducerContext, candidate, gate) -> str:
+    """Observability: distinguish a candidate held back by the enrichment quality gate.
+
+    A RAW provisional memory that lost enrichment eligibility purely because it fell below the
+    salience floor is recorded as ``enrichment_gated:low_salience`` (not a generic ``blocked``),
+    so ``aca logs`` shows which junk memories were kept out of the topic set (DESIGN 12.3).
+    """
+    if candidate.kind is CandidateKind.PROVISIONAL_MEMORY:
+        memory = ctx.stores.memory.get_memory(candidate.id)
+        if memory is not None and memory.enrichment_status is EnrichmentStatus.RAW:
+            return "enrichment_gated:low_salience"
+    return f"blocked:{gate.reason}"
+
+
 def _needs_enrichment(ctx: ReducerContext, candidate) -> bool:
     if candidate.kind is not CandidateKind.PROVISIONAL_MEMORY:
         return False
     memory = ctx.stores.memory.get_memory(candidate.id)
-    return memory is not None and memory.enrichment_status is EnrichmentStatus.RAW
+    return memory is not None and _enrichment_eligible(ctx, memory)
+
+
+def _enrichment_eligible(ctx: ReducerContext, memory) -> bool:
+    """RAW and salient enough to be worth promoting to a topic (quality gate, DESIGN 12.3/12.8).
+
+    Low-salience memories (short acknowledgements, filler) stay RAW and retrievable but are never
+    enriched into topics — this keeps junk like "ok I get" out of the topic set.
+    """
+    return (
+        memory.enrichment_status is EnrichmentStatus.RAW
+        and memory.salience >= ctx.config.memory.enrichment_salience_floor
+    )
 
 
 def _claim_enrichment(ctx: ReducerContext, candidate, now) -> None:
-    """Claim a RAW provisional-memory candidate for enrichment (DESIGN 12.8, invariant 23).
+    """Claim an enrichment-eligible provisional memory (DESIGN 12.8, invariant 23).
 
     Marking it PENDING_ENRICHMENT means ``_needs_enrichment`` returns False for any concurrent
-    wake, so the same memory can't have two enrichment jobs in flight. The claim is released back
-    to RAW (or DO_NOT_ENRICH after the attempt cap) when the result is processed if it wasn't
-    actually enriched.
+    wake, so the same memory can't have two enrichment jobs in flight. Only salient-enough
+    memories are claimed; the claim is released back to RAW (or DO_NOT_ENRICH after the attempt
+    cap) when the result is processed if it wasn't actually enriched.
     """
     if candidate.kind is not CandidateKind.PROVISIONAL_MEMORY:
         return
     memory = ctx.stores.memory.get_memory(candidate.id)
-    if memory is not None and memory.enrichment_status is EnrichmentStatus.RAW:
+    if memory is not None and _enrichment_eligible(ctx, memory):
         ctx.stores.memory.update_memory(
             replace(memory, enrichment_status=EnrichmentStatus.PENDING_ENRICHMENT)
         )

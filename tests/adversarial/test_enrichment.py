@@ -8,6 +8,8 @@ to RAW / DO_NOT_ENRICH (after the attempt cap) if a cycle doesn't actually enric
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from conftest import Harness
 
 from aca import ids
@@ -36,12 +38,12 @@ def _config():
     })
 
 
-def _seed_raw(h: Harness, text="machine telos and purpose"):
+def _seed_raw(h: Harness, text="machine telos and purpose", *, salience=0.95):
     now = h.clock.now_utc()
     mid = ids.new_id(ids.PROVISIONAL_MEMORY)
     with h.stores.db.transaction():
         h.stores.memory.insert_memory(ProvisionalMemory(
-            id=mid, event_id="seed", text=text, activation=0.95, salience=0.95,
+            id=mid, event_id="seed", text=text, activation=0.95, salience=salience,
             decay_rate_per_hour=half_life_to_rate_per_hour(24.0),
             created_at=now, last_activated_at=now, enrichment_status=EnrichmentStatus.RAW,
         ))
@@ -58,6 +60,32 @@ def test_concurrent_wakes_enrich_a_memory_at_most_once(tmp_path, clock):
     h.run_all_pending()
     topics = [t for t in h.stores.memory.all_topics() if t.summary]
     assert len(topics) == 1  # exactly one topic, not one per wake (invariant 23)
+    h.close()
+
+
+def test_low_salience_memory_is_never_enriched(tmp_path, clock):
+    # A junk memory ("ok I get") is retrievable but below the enrichment salience floor. Even when
+    # it wins selection and the model proposes enrichment, the reducer refuses to promote it and
+    # parks it DO_NOT_ENRICH — no topic is ever created (quality gate, DESIGN 12.3).
+    config = _config().with_overrides(memory=replace(_config().memory, enrichment_salience_floor=0.6))
+    h = Harness(tmp_path, config, clock)  # DORMANT -> proactive dispatch allowed
+    mid = _seed_raw(h, text="ok I get", salience=0.4)
+    h.wake()
+    h.run_all_pending()
+    assert h.stores.memory.get_memory(mid).enrichment_status is EnrichmentStatus.DO_NOT_ENRICH
+    assert [t for t in h.stores.memory.all_topics() if t.summary] == []
+    h.close()
+
+
+def test_salient_memory_above_floor_is_still_enriched(tmp_path, clock):
+    # The gate must not starve legitimate memories: one just above the floor still becomes a topic.
+    config = _config().with_overrides(memory=replace(_config().memory, enrichment_salience_floor=0.6))
+    h = Harness(tmp_path, config, clock)
+    mid = _seed_raw(h, text="the ethics of machine autonomy", salience=0.75)
+    h.wake()
+    h.run_all_pending()
+    assert h.stores.memory.get_memory(mid).enrichment_status is EnrichmentStatus.ENRICHED
+    assert len([t for t in h.stores.memory.all_topics() if t.summary]) == 1
     h.close()
 
 
