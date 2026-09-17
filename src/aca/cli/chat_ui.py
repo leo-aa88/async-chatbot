@@ -41,6 +41,11 @@ class ChatUI:
         # stamps on agent messages). Formatting/timezone stay in the CLI — the editor is display-only.
         self._stamp = stamp
         self._buffer = ""
+        # How many physical terminal rows the current prompt+input occupies. A long line wraps
+        # across several rows, and clearing only the cursor's row leaves the wrapped remainder on
+        # screen (duplicated on the next redraw). Tracking the row count lets us clear the whole
+        # block. Kept in sync on every echo/redraw.
+        self._rendered_rows = 1
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._fd: int | None = None
         self._old_attrs = None
@@ -61,7 +66,7 @@ class ChatUI:
                 self._old_attrs = None
         asyncio.get_running_loop().add_reader(self._fd, self._on_readable)
         self._reader_added = True
-        self._render_prompt()
+        self._draw_prompt()
 
     def stop(self) -> None:
         if self._reader_added and self._fd is not None:
@@ -90,26 +95,51 @@ class ChatUI:
         ``at`` is an already-formatted local timestamp (formatting/timezone live in the CLI, so the
         editor stays display-only); it is shown before the message when provided.
         """
-        sys.stdout.write("\r\033[K")  # return to column 0, clear the current (prompt+input) line
+        self._clear_block()  # wipe the whole (possibly wrapped) input block, not just one row
         stamp = f"[{at}] " if at else ""
         sys.stdout.write(f"{stamp}[agent] {text}\n")
-        self._render_prompt()
+        self._draw_prompt()
 
     # --- internals -----------------------------------------------------------------------
     def _submit_line(self) -> None:
         """Finalize the current input line: echo it (stamped, if configured) and queue it."""
+        self._clear_block()
         if self._stamp is not None and self._buffer:
             # Redraw the completed line with a leading timestamp, then a newline.
-            sys.stdout.write("\r\033[K" + f"[{self._stamp()}] " + self._prompt + self._buffer + "\n")
+            sys.stdout.write(f"[{self._stamp()}] " + self._prompt + self._buffer + "\n")
         else:
-            sys.stdout.write("\n")
+            sys.stdout.write(self._prompt + self._buffer + "\n")
         sys.stdout.flush()
         line, self._buffer = self._buffer, ""
         self._queue.put_nowait(line)
-        self._render_prompt()
+        self._draw_prompt()
 
-    def _render_prompt(self) -> None:
-        sys.stdout.write("\r\033[K" + self._prompt + self._buffer)
+    def _cols(self) -> int:
+        """Current terminal width; a huge value when stdout is not a tty (tests) so nothing wraps."""
+        try:
+            return os.get_terminal_size(sys.stdout.fileno()).columns or 80
+        except (OSError, ValueError):
+            return 1_000_000
+
+    def _rows_for(self, cells: int) -> int:
+        width = self._cols()
+        return max(1, (cells + width - 1) // width)
+
+    def _clear_block(self) -> None:
+        """Erase the current prompt+input, spanning every wrapped row (cursor assumed at its end).
+
+        Moves up to the first row of the block, returns to column 0, and clears to end of screen.
+        (A line that ends exactly on the terminal width is the one ambiguous case for cursor row;
+        the common long-line wrap is handled correctly.)
+        """
+        if self._rendered_rows > 1:
+            sys.stdout.write(f"\033[{self._rendered_rows - 1}A")
+        sys.stdout.write("\r\033[J")
+
+    def _draw_prompt(self) -> None:
+        """Draw the prompt+input on a freshly-cleared line and remember how many rows it spans."""
+        sys.stdout.write(self._prompt + self._buffer)
+        self._rendered_rows = self._rows_for(len(self._prompt) + len(self._buffer))
         sys.stdout.flush()
 
     def _on_readable(self) -> None:
@@ -136,8 +166,9 @@ class ChatUI:
             self._submit_line()
         elif ch in ("\x7f", "\b"):  # Backspace / Delete
             if self._buffer:
+                self._clear_block()  # clear the old (possibly wrapped) line before shrinking it
                 self._buffer = self._buffer[:-1]
-                self._render_prompt()  # full redraw: correct for any character width
+                self._draw_prompt()  # full redraw: correct for any character width
         elif ch == "\x04":  # Ctrl-D: EOF only on an empty line
             if not self._buffer:
                 self._queue.put_nowait(None)
@@ -146,6 +177,9 @@ class ChatUI:
         elif ch >= " ":  # printable character (echoed at its own terminal width)
             self._buffer += ch
             sys.stdout.write(ch)
+            # Keep the row count current as the line grows and wraps, so a later out-of-band
+            # message or submit clears every row (not just the cursor's).
+            self._rendered_rows = self._rows_for(len(self._prompt) + len(self._buffer))
             sys.stdout.flush()
 
     def _consume_escape(self, ch: str) -> None:

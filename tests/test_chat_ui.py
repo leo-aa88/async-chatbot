@@ -120,6 +120,38 @@ async def test_blank_line_is_not_stamped(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_wrapped_input_is_fully_cleared_before_message(monkeypatch):
+    # A line longer than the terminal width wraps across rows; an out-of-band message must clear
+    # every row, not just the cursor's, or the wrapped remainder is left behind and duplicated.
+    ui = ChatUI()
+    ui._cols = lambda: 20  # force wrapping at 20 columns
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    _feed(ui, "x" * 45)  # "> " (2) + 45 = 47 cells -> ceil(47/20) = 3 rows
+    assert ui._rendered_rows == 3
+    out.truncate(0)
+    out.seek(0)
+    ui.print_message("ping")
+    rendered = out.getvalue()
+    assert "\033[2A" in rendered  # move up rendered_rows-1 rows to the block's first row
+    assert "\033[J" in rendered  # erase from there to end of screen
+    assert "[agent] ping" in rendered
+
+
+@pytest.mark.asyncio
+async def test_short_input_uses_no_cursor_up(monkeypatch):
+    ui = ChatUI()
+    ui._cols = lambda: 80
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    _feed(ui, "hi")
+    out.truncate(0)
+    out.seek(0)
+    ui.print_message("ping")
+    assert "\033[" not in out.getvalue().replace("\033[J", "")  # no cursor-up for a single row
+
+
+@pytest.mark.asyncio
 async def test_message_shows_timestamp_when_provided(monkeypatch):
     ui = ChatUI()
     out = io.StringIO()
