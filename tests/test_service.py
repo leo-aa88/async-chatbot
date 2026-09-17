@@ -58,6 +58,46 @@ async def test_daemon_answers_task_and_dedupes_retry(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_list_payloads_and_push_frame_carry_timestamps(tmp_path):
+    # logs/memories and pushed chat frames must carry ISO timestamps the CLI can render human-
+    # readably (DESIGN 28.2). Assert they are present and parse back to a real wall-clock time.
+    from aca.timefmt import human_time
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        client = IpcClient(tmp_path / "aca.sock")
+        frames: list[dict] = []
+        got = asyncio.Event()
+
+        async def on_msg(frame):
+            frames.append(frame)
+            got.set()
+
+        subscription = asyncio.ensure_future(client.subscribe(on_msg))
+        await asyncio.sleep(0.05)
+        await client.chat_send("Explain this stack trace.")
+        await asyncio.wait_for(got.wait(), timeout=3)
+
+        assert frames and "at" in frames[0]
+        assert human_time(frames[0]["at"]) != "—"  # parseable ISO -> rendered, not the placeholder
+
+        traces = (await client.logs())["traces"]
+        assert traces and all("created_at" in t for t in traces)
+        assert all(human_time(t["created_at"]) != "—" for t in traces)
+
+        memories = (await client.memories())["memories"]
+        assert all("created_at" in m for m in memories)
+
+        subscription.cancel()
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_mandatory_obligation_surfaced_as_failed_when_worker_keeps_erroring(tmp_path):
     # Review finding #3: a live worker error must not requeue forever. After bounded retries the
     # obligation is surfaced as FAILED — never left silently pending (invariant 25).

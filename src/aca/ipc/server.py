@@ -9,11 +9,17 @@ service's delivery sink; each push carries a ``delivery_key`` so clients dedupli
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 
 from ..domain.events import HumanMessage
 from ..service.service import AgentService
 from . import protocol as p
+
+
+def _iso(value: datetime | None) -> str | None:
+    """ISO-8601 for the wire; the client renders it to local wall-clock time for display."""
+    return value.isoformat() if value is not None else None
 
 
 class IpcServer:
@@ -96,6 +102,7 @@ class IpcServer:
         frame = {
             "kind": p.PUSH_MESSAGE, "channel": channel, "text": payload,
             "delivery_key": delivery_key, "message_id": message_id,
+            "at": _iso(self._service.clock.now_utc()),
         }
         dead: list[asyncio.StreamWriter] = []
         delivered = False
@@ -127,19 +134,23 @@ class IpcServer:
     def _memories(self) -> list[dict]:
         return [
             {"id": m.id, "text": m.text, "activation": m.activation,
-             "enrichment_status": m.enrichment_status.value}
+             "enrichment_status": m.enrichment_status.value,
+             "created_at": _iso(m.created_at), "last_activated_at": _iso(m.last_activated_at)}
             for m in self._service.stores.memory.recent_memories(limit=20)
         ]
 
     def _topics(self) -> list[dict]:
         return [
-            {"id": t.id, "summary": t.summary, "activation": t.activation, "unfinished": t.unfinished}
+            {"id": t.id, "summary": t.summary, "activation": t.activation,
+             "unfinished": t.unfinished,
+             "created_at": _iso(t.created_at), "last_activated_at": _iso(t.last_activated_at)}
             for t in self._service.stores.memory.all_topics(limit=20)
         ]
 
     def _logs(self) -> list[dict]:
         return [
             {"cycle_id": tr.cycle_id, "trigger": tr.trigger, "action": tr.action,
-             "candidate_kind": tr.candidate_kind, "llm_called": tr.llm_called, "notes": tr.notes}
+             "candidate_kind": tr.candidate_kind, "llm_called": tr.llm_called, "notes": tr.notes,
+             "created_at": _iso(tr.created_at)}
             for tr in self._service.stores.work.recent_traces(limit=20)
         ]

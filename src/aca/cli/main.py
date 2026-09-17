@@ -22,6 +22,7 @@ from ..errors import AcaError
 from ..ipc.client import IpcClient
 from ..ipc.server import IpcServer
 from ..service.service import AgentService
+from ..timefmt import clock_time, human_time
 from ..workers.llm import build_llm_worker, key_env_for
 from .chat_ui import ChatUI
 
@@ -109,10 +110,11 @@ def _cmd_simple(args: argparse.Namespace, op: str) -> int:
 
 async def _chat(data_dir: Path) -> None:
     client = IpcClient(_socket_path(data_dir))
+    tz = _load_config(data_dir).local_timezone
     ui = ChatUI()
 
     async def on_message(frame: dict) -> None:
-        ui.print_message(frame.get("text", ""))
+        ui.print_message(frame.get("text", ""), at=clock_time(frame.get("at"), tz))
 
     subscription = asyncio.ensure_future(client.subscribe(on_message))
     print("Connected. Type a message and press enter (Ctrl-D to quit).")
@@ -132,6 +134,51 @@ async def _chat(data_dir: Path) -> None:
 def _cmd_chat(args: argparse.Namespace) -> int:
     asyncio.run(_chat(_data_dir(args)))
     return 0
+
+
+# --- human-readable list views ------------------------------------------------------------
+def _fmt_trace(row: dict, tz: str) -> str:
+    parts = [human_time(row.get("created_at"), tz), row.get("trigger", "?"),
+             row.get("action") or "-", row.get("candidate_kind") or "-"]
+    if row.get("llm_called"):
+        parts.append("llm")
+    if row.get("notes"):
+        parts.append(f"({row['notes']})")
+    return "  ".join(parts)
+
+
+def _fmt_memory(row: dict, tz: str) -> str:
+    text = (row.get("text") or "").replace("\n", " ")
+    return (f"{human_time(row.get('created_at'), tz)}  [{row.get('enrichment_status', '?')}] "
+            f"act={row.get('activation', 0):.2f}  {text[:80]}")
+
+
+def _fmt_topic(row: dict, tz: str) -> str:
+    flag = "unfinished" if row.get("unfinished") else "done"
+    summary = (row.get("summary") or "").replace("\n", " ")
+    return (f"{human_time(row.get('created_at'), tz)}  [{flag}] "
+            f"act={row.get('activation', 0):.2f}  {summary[:80]}")
+
+
+def _cmd_list(args: argparse.Namespace, op: str, key: str, fmt) -> int:
+    data_dir = _data_dir(args)
+    tz = _load_config(data_dir).local_timezone
+    client = IpcClient(_socket_path(data_dir))
+
+    async def run() -> int:
+        response = await getattr(client, op)()
+        if not response.get("ok", True):
+            print(json.dumps(response, indent=2))
+            return 1
+        rows = response.get(key, [])
+        if not rows:
+            print(f"(no {key})")
+            return 0
+        for row in rows:
+            print(fmt(row, tz))
+        return 0
+
+    return asyncio.run(run())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -158,6 +205,12 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_service(args)
         if args.command == "chat":
             return _cmd_chat(args)
+        if args.command == "logs":
+            return _cmd_list(args, "logs", "traces", _fmt_trace)
+        if args.command == "memories":
+            return _cmd_list(args, "memories", "memories", _fmt_memory)
+        if args.command == "topics":
+            return _cmd_list(args, "topics", "topics", _fmt_topic)
         return _cmd_simple(args, args.command)
     except AcaError as exc:
         print(f"error: {exc}", file=sys.stderr)
