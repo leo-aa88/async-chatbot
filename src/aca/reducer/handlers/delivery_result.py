@@ -48,6 +48,10 @@ def handle_delivery_result(ctx: ReducerContext, event: DeliveryResult) -> Handle
 # Delivery-adapter dispositions carried in DeliveryResult.error for a non-delivered proactive
 # item: these are drops (never late delivery, DESIGN 23.7), distinct from a transport failure.
 _PROACTIVE_DROP_PREFIXES = ("expired", "revalidation", "superseded", "coalesced")
+# No client was connected to receive it. Client absence is operational state, not failure or
+# conversational silence (DESIGN 29.7): the item stays pending and is delivered on reconnect
+# (subject to TTL revalidation), rather than being lost.
+_NO_CLIENT = "no_client"
 
 
 def _handle_undelivered(ctx, event, message) -> HandlerOutcome:
@@ -61,6 +65,10 @@ def _handle_undelivered(ctx, event, message) -> HandlerOutcome:
             )
             ctx.stores.outbox.set_status(event.message_id, status, error=error)
             return HandlerOutcome(note=f"proactive_{status.value.lower()}")
+        if error == _NO_CLIENT:
+            # Held for reconnect, not failed — this is why an idle client eventually receives it.
+            ctx.stores.outbox.set_status(event.message_id, OutboundStatus.PENDING_DELIVERY, error=error)
+            return HandlerOutcome(note="proactive_held_no_client")
         # Genuine transport failure: do not linger or dogpile later.
         ctx.stores.outbox.set_status(event.message_id, OutboundStatus.FAILED, error=error)
         return HandlerOutcome(note="proactive_delivery_failed")
