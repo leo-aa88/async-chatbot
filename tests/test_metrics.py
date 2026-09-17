@@ -10,26 +10,45 @@ from aca.domain.runtime import CognitionTrace
 
 
 def _trace(h: Harness, cid: str, *, trigger, cycle_type, action, llm=True, notes=None,
-           candidate_id=None) -> None:
+           candidate_id=None, created_at=None) -> None:
     with h.stores.db.transaction():
         h.stores.work.insert_trace(CognitionTrace(
-            cycle_id=cid, created_at=h.clock.now_utc(), trigger=trigger, cycle_type=cycle_type,
-            llm_called=llm, action=action, notes=notes, candidate_id=candidate_id,
+            cycle_id=cid, created_at=created_at or h.clock.now_utc(), trigger=trigger,
+            cycle_type=cycle_type, llm_called=llm, action=action, notes=notes,
+            candidate_id=candidate_id,
         ))
 
 
-def test_repeated_topic_rate(tmp_path, clock):
+def test_repeated_candidate_rate(tmp_path, clock):
     h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
-    # Three proactive speaks: topic t1 voiced twice (a repeat), t2 once.
+    # Three proactive speaks: candidate t1 voiced twice (a repeat), t2 once.
     _trace(h, "r1", trigger="StochasticWake", cycle_type="proactive", action="speak", candidate_id="t1")
     _trace(h, "r2", trigger="StochasticWake", cycle_type="proactive", action="speak", candidate_id="t1")
     _trace(h, "r3", trigger="StochasticWake", cycle_type="proactive", action="speak", candidate_id="t2")
-    # A silence and a reactive speak must not count toward the proactive repeated-topic measure.
+    # A silence and a reactive speak must not count toward the proactive repeated measure.
     _trace(h, "r4", trigger="StochasticWake", cycle_type="proactive", action="silence", candidate_id="t2")
     _trace(h, "r5", trigger="HumanMessage", cycle_type="reactive", action="speak", candidate_id="t1")
-    m = h.stores.work.trace_metrics()
+    m = h.stores.work.trace_metrics()  # unbounded -> lifetime count
     assert m["proactive_spoke_with_candidate"] == 3
     assert m["proactive_repeated"] == 1  # 3 speaks, 2 distinct candidates -> 1 revoicing
+    h.close()
+
+
+def test_repeated_candidate_rate_windowed_excludes_old_revoicings(tmp_path, clock):
+    # A legitimate long-gap resurface (same candidate, months apart) must NOT read as nagging: only
+    # re-voicings inside the recent window count.
+    from datetime import timedelta
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    now = h.clock.now_utc()
+    _trace(h, "o1", trigger="StochasticWake", cycle_type="proactive", action="speak",
+           candidate_id="t1", created_at=now - timedelta(days=60))  # voiced long ago
+    _trace(h, "n1", trigger="StochasticWake", cycle_type="proactive", action="speak",
+           candidate_id="t1")                    # resurfaced now (appropriate, not nagging)
+    m = h.stores.work.trace_metrics(repeated_since=now - timedelta(days=1))
+    assert m["proactive_spoke_with_candidate"] == 1  # only the in-window voicing
+    assert m["proactive_repeated"] == 0  # not counted as a repeat
+    # Lifetime view still sees the re-voicing.
+    assert h.stores.work.trace_metrics()["proactive_repeated"] == 1
     h.close()
 
 
@@ -99,10 +118,12 @@ def test_format_metrics_renders_rates_and_handles_zero_division():
         "reactive_total": 2, "reactive_spoke": 1, "mandatory_total": 0, "mandatory_spoke": 0,
         "spoke": 3, "silent": 5, "worker_failures": 1, "enrichment_gated": 0,
         "proactive_spoke_with_candidate": 4, "proactive_repeated": 1,
+        "repeated_window_seconds": 4 * 3600,
     })
     blob = "\n".join(lines)
     assert "33% (1/3)" in blob  # proactive initiation
-    assert "25% (1/4)" in blob  # repeated-topic rate
+    assert "25% (1/4)" in blob  # repeated-candidate rate
+    assert "last 4h" in blob  # window shown in the label
     assert "50% (1/2)" in blob  # reactive reply rate
     assert "—" in blob  # mandatory has no cycles -> no division
     assert "62% (5/8)" in blob  # overall silence rate

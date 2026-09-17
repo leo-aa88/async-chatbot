@@ -167,6 +167,14 @@ def _pct(n: int, d: int) -> str:
     return "—" if d == 0 else f"{100 * n / d:.0f}% ({n}/{d})"
 
 
+def _hours(seconds: int) -> str:
+    """Compact human window like '4h' or '6d' for the metrics label."""
+    if seconds <= 0:
+        return "all time"
+    hours = seconds / 3600
+    return f"{hours / 24:.0f}d" if hours >= 48 else f"{hours:.0f}h"
+
+
 def format_metrics(m: dict) -> list[str]:
     """Render mechanical cognition metrics from raw trace counts (pure, for reuse/testing)."""
     spoke, silent = m.get("spoke", 0), m.get("silent", 0)
@@ -175,7 +183,8 @@ def format_metrics(m: dict) -> list[str]:
         f"proactive initiation:  {_pct(m.get('proactive_spoke', 0), m.get('proactive_dispatched', 0))}"
         "  (spoke / reached-model)",
         f"proactive blocked:     {m.get('proactive_blocked', 0)}  (budget/mode/quiet — never reached model)",
-        f"repeated-candidate rate: {_pct(m.get('proactive_repeated', 0), m.get('proactive_spoke_with_candidate', 0))}"
+        f"repeated-candidate rate (last {_hours(m.get('repeated_window_seconds', 0))}): "
+        f"{_pct(m.get('proactive_repeated', 0), m.get('proactive_spoke_with_candidate', 0))}"
         "  (proactive re-voicings of the same candidate; a proxy for topic repetition)",
         f"reactive reply rate:   {_pct(m.get('reactive_spoke', 0), m.get('reactive_total', 0))}",
         f"mandatory answered:    {_pct(m.get('mandatory_spoke', 0), m.get('mandatory_total', 0))}",
