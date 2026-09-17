@@ -57,6 +57,10 @@ run: ## Start the agent service (foreground)
 chat: ## Open an interactive chat client
 	$(BIN)/aca chat
 
+.PHONY: demo
+demo: install ## Throwaway agent tuned to message you on its own; drops into chat
+	ACA=$(BIN)/aca bash scripts/demo.sh
+
 .PHONY: status
 status: ## Show agent status
 	$(BIN)/aca status

@@ -93,7 +93,20 @@ Or use the [`Makefile`](Makefile) (`make help` lists all targets):
 make install                # create .venv and install with dev deps
 make check                  # lint + tests (what CI gates on)
 make run                    # start the agent service
+make demo                   # throwaway agent that messages you on its own, then chat
 ```
+
+### Seeing autonomous (proactive) messages
+
+By default the agent will not interrupt an `ACTIVE` conversation, and its spontaneous wake rate is
+low — so autonomous messages are rare (that's the point: they should feel earned, not spammy). To
+watch the behavior quickly, run `make demo`: it launches a throwaway agent tuned with a short
+`conversation.active_within` and a modest wake rate, then drops you into chat. Say something, stop
+typing for ~15 seconds, and it will message you on its own — no prompt, no reconnect.
+
+> Tip: a very high `spontaneous_activation_rate_per_hour` (e.g. `3600`) will quickly exhaust the
+> daily proactive budget (`budgets.proactive_llm_calls_per_day`) and then go quiet until the UTC
+> day rolls over. The demo profile uses a sane rate; prefer ~`300` for hand-testing.
 
 ## Using the agent
 
