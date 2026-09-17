@@ -187,17 +187,22 @@ class WorkStore:
         # Classify by cycle_type — set once at dispatch and never overwritten — so a FAILED mandatory
         # or superseded reactive cycle still counts toward its total (finalize_trace rewrites the
         # free-text ``notes``, so matching on notes would silently drop failures from the ratio).
+        # Proactive is derived from the always-set, never-overwritten ``trigger`` (so it covers
+        # rows from before the cycle_type column existed). Reactive/mandatory need cycle_type, which
+        # older rows lack — those human-triggered rows are surfaced as ``unclassified`` rather than
+        # silently dropped, so proactive+reactive+mandatory+unclassified == total reconciles.
         row = self._db.query_one(
             """SELECT
                 COUNT(*) AS total,
-                COALESCE(SUM(cycle_type='proactive'), 0) AS proactive_total,
-                COALESCE(SUM(cycle_type='proactive' AND llm_called=1), 0) AS proactive_dispatched,
-                COALESCE(SUM(cycle_type='proactive' AND action='speak'), 0) AS proactive_spoke,
-                COALESCE(SUM(cycle_type='proactive' AND llm_called=0), 0) AS proactive_blocked,
+                COALESCE(SUM(trigger='StochasticWake'), 0) AS proactive_total,
+                COALESCE(SUM(trigger='StochasticWake' AND llm_called=1), 0) AS proactive_dispatched,
+                COALESCE(SUM(trigger='StochasticWake' AND action='speak'), 0) AS proactive_spoke,
+                COALESCE(SUM(trigger='StochasticWake' AND llm_called=0), 0) AS proactive_blocked,
                 COALESCE(SUM(cycle_type='reactive'), 0) AS reactive_total,
                 COALESCE(SUM(cycle_type='reactive' AND action='speak'), 0) AS reactive_spoke,
                 COALESCE(SUM(cycle_type='mandatory'), 0) AS mandatory_total,
                 COALESCE(SUM(cycle_type='mandatory' AND action='speak'), 0) AS mandatory_spoke,
+                COALESCE(SUM(trigger='HumanMessage' AND cycle_type IS NULL), 0) AS unclassified,
                 COALESCE(SUM(action='speak'), 0) AS spoke,
                 COALESCE(SUM(action='silence'), 0) AS silent,
                 COALESCE(SUM(action='failed'), 0) AS failed,

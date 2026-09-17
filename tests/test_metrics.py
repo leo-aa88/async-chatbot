@@ -28,16 +28,22 @@ def test_trace_metrics_counts(tmp_path, clock):
     _trace(h, "c5", trigger="HumanMessage", cycle_type="reactive", action="speak")
     _trace(h, "c6", trigger="HumanMessage", cycle_type="reactive", action="silence")
     _trace(h, "c7", trigger="HumanMessage", cycle_type="mandatory", action="speak")
+    # 2 pre-upgrade rows without cycle_type: a human one is unclassified; a wake one is still
+    # proactive (derived from the stable trigger, so history isn't lost).
+    _trace(h, "c8", trigger="HumanMessage", cycle_type=None, action="silence")
+    _trace(h, "c9", trigger="StochasticWake", cycle_type=None, action="speak")
 
     m = h.stores.work.trace_metrics()
-    assert m["total"] == 7
-    assert m["proactive_total"] == 4
-    assert m["proactive_dispatched"] == 3
-    assert m["proactive_spoke"] == 1
+    assert m["total"] == 9
+    assert m["proactive_total"] == 5  # 4 tagged + 1 old wake via trigger
+    assert m["proactive_dispatched"] == 4
+    assert m["proactive_spoke"] == 2
     assert m["proactive_blocked"] == 1
     assert m["reactive_total"] == 2 and m["reactive_spoke"] == 1
     assert m["mandatory_total"] == 1 and m["mandatory_spoke"] == 1
-    assert m["spoke"] == 3 and m["silent"] == 4
+    assert m["unclassified"] == 1  # only the old human row
+    # reconciliation: proactive + reactive + mandatory + unclassified == total
+    assert m["proactive_total"] + m["reactive_total"] + m["mandatory_total"] + m["unclassified"] == m["total"]
     h.close()
 
 
@@ -82,3 +88,9 @@ def test_format_metrics_renders_rates_and_handles_zero_division():
     assert "50% (1/2)" in blob  # reactive reply rate
     assert "—" in blob  # mandatory has no cycles -> no division
     assert "62% (5/8)" in blob  # overall silence rate
+    assert "unclassified" not in blob  # omitted when zero
+
+
+def test_format_metrics_shows_unclassified_when_present():
+    lines = format_metrics({"total": 50, "unclassified": 46, "spoke": 2, "silent": 2})
+    assert any("unclassified:          46" in line for line in lines)
