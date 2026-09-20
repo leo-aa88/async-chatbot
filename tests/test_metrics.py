@@ -123,10 +123,13 @@ def test_format_metrics_renders_rates_and_handles_zero_division():
         "proactive_spoke_with_candidate": 4, "proactive_repeated": 1,
         "proactive_spoke_recent": 5, "repeated_window_seconds": 4 * 3600,
         "dominance_cluster": 3, "dominance_total": 5, "proactive_total": 6,
+        "advance_count": 2, "advance_transitions": 4, "repetition_count": 1, "switch_count": 1,
     })
     blob = "\n".join(lines)
     assert "33% (1/3)" in blob  # proactive initiation, reached-model
     assert "17% (1/6)" in blob  # proactive initiation, all-cycle (spoke / all proactive)
+    assert "advance rate" in blob and "50% (2/4)" in blob  # progressive elaboration
+    assert "repeats=1 switches=1" in blob
     assert "25% (1/4)" in blob  # repeated-candidate rate
     assert "last 4h" in blob  # window shown in the label
     assert "5 spontaneous messages" in blob  # proactive burst/frequency
