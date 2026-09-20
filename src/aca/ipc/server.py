@@ -154,19 +154,37 @@ class IpcServer:
         """Largest semantic cluster among recently self-voiced (embeddable) candidates.
 
         Observational only — never fed back into activation (that would be a self-reinforcing
-        obsession loop). Restricted to one embedding model so cosine is meaningful across drift.
+        obsession loop). A spoken candidate is usually a TOPIC (enriched memories are dropped from
+        candidacy), so a topic is resolved to its source memory's embedding; a raw memory candidate
+        resolves directly; a deferred intent has no embedding and is skipped. Vectors are kept in
+        candidate order (clustering is order-sensitive) and grouped by embedding model before
+        comparing (cosine across models is meaningless).
         """
         from ..cognition.vectors import dominant_cluster_fraction
 
-        ids = self._service.stores.work.proactive_spoken_candidate_ids(since=since)
-        pairs = self._service.stores.memory.embeddings_for_memories(ids)
-        if len(pairs) < 2:
-            return (0, len(pairs))
+        mem = self._service.stores.memory
+        candidates = self._service.stores.work.proactive_spoken_candidates(since=since)
+        # Resolve each spoken candidate to the memory whose embedding represents it, in order.
+        memory_ids: list[str] = []
+        for kind, cid in candidates:
+            if kind == "PROVISIONAL_MEMORY":
+                memory_ids.append(cid)
+            elif kind == "TOPIC":
+                topic = mem.get_topic(cid)
+                if topic is not None and topic.source_memory_id:
+                    memory_ids.append(topic.source_memory_id)
+            # DEFERRED_INTENT / NOTHING: no embedding to cluster
+        embeddings = mem.embeddings_by_memory(memory_ids)
+        ordered = [embeddings[mid] for mid in memory_ids if mid in embeddings]  # preserve order
+        if len(ordered) < 2:
+            return (0, len(ordered))
+        # Cluster within each embedding model (cosine across models is meaningless), but count the
+        # denominator as the whole embeddable set. The largest single-model cluster is the numerator.
         by_model: dict[str, list] = {}
-        for model_version, vector in pairs:
+        for model_version, vector in ordered:
             by_model.setdefault(model_version, []).append(vector)
-        vectors = max(by_model.values(), key=len)  # the largest single-model group (drift-safe)
-        return dominant_cluster_fraction(vectors, threshold)
+        largest = max(dominant_cluster_fraction(g, threshold)[0] for g in by_model.values())
+        return (largest, len(ordered))
 
     def _memories(self) -> list[dict]:
         return [

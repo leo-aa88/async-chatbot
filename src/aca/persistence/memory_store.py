@@ -86,6 +86,22 @@ class MemoryStore:
         row = self._db.query_one("SELECT vector FROM embeddings WHERE id=?", (embedding_id,))
         return None if row is None else loads(row["vector"], [])
 
+    def embeddings_by_memory(self, memory_ids: list[str]) -> dict[str, tuple[str, list[float]]]:
+        """Map each given memory id to its ``(model_version, vector)`` (absent if not embedded).
+
+        Id-keyed so callers can look up in a caller-defined order (clustering is order-sensitive);
+        ``embeddings_for_memories`` returns the same data as an unordered list.
+        """
+        if not memory_ids:
+            return {}
+        placeholders = ",".join("?" for _ in memory_ids)
+        rows = self._db.query_all(
+            "SELECT provisional_memory_id, model_version, vector FROM embeddings "
+            f"WHERE provisional_memory_id IN ({placeholders})",
+            tuple(memory_ids),
+        )
+        return {r["provisional_memory_id"]: (r["model_version"], loads(r["vector"], [])) for r in rows}
+
     def embeddings_for_memories(self, memory_ids: list[str]) -> list[tuple[str, list[float]]]:
         """Return ``(model_version, vector)`` for each given memory that has an embedding.
 
