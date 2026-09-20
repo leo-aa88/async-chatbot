@@ -145,9 +145,10 @@ class Memory:
     # Quality gate: only memories at least this salient are enriched into topics (DESIGN 12.3).
     # Below it, a memory stays RAW/retrievable but never becomes a topic — keeps junk out.
     enrichment_salience_floor: float = 0.6
-    # Topic de-duplication: when a new enrichment's summary is at least this similar (0..1) to an
-    # existing topic, reinforce that topic instead of creating a near-duplicate (DESIGN 12.3). Set
-    # to 0 to disable merging (always create a new topic). Conservative default — near-identical only.
+    # Topic de-duplication (lexical path): when a new enrichment's summary is at least this similar
+    # (0..1) to an existing topic, reinforce that topic instead of creating a near-duplicate (DESIGN
+    # 12.3). 0 disables the LEXICAL path only; the semantic path (topic_dedup_cosine) is separate, so
+    # to disable merging entirely set BOTH to 0. Conservative default — near-identical wording only.
     topic_merge_similarity: float = 0.8
     # Semantic-neighborhood threshold (cosine, 0..1) for grouping distinct utterances that mean
     # roughly the same thing — used by the observational topic-dominance metric (and, later, semantic
@@ -156,7 +157,8 @@ class Memory:
     # Semantic de-dup threshold (cosine, 0..1): a new enrichment whose embedding is at least this
     # close to an existing topic's is treated as a near-duplicate and merged, catching paraphrases
     # the lexical check misses. Deliberately VERY high (> semantic_neighbor_threshold) so related-
-    # but-distinct topics ("robot embodiment" vs "robot safety") are not merged. 0 disables. τ_dedup.
+    # but-distinct topics ("robot embodiment" vs "robot safety") are not merged. 0 disables the
+    # semantic path (set both this and topic_merge_similarity to 0 to disable all merging). τ_dedup.
     topic_dedup_cosine: float = 0.94
 
     @staticmethod

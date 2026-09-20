@@ -78,3 +78,51 @@ def test_different_embedding_model_is_not_compared(tmp_path, clock):
     _enrich(h, _seed_memory(h, "b", [1.0, 0.0, 0.0], model="m2"), "Agent on hardware")
     assert len(h.stores.memory.all_topics()) == 2
     h.close()
+
+
+def test_semantic_merge_preserves_source_memory_id(tmp_path, clock):
+    # A merge reinforces the existing topic in place — it must not change which memory the topic
+    # traces back to (source_memory_id stays the first memory's).
+    h = Harness(tmp_path, _cfg(), clock)
+    first = _seed_memory(h, "a", [1.0, 0.0, 0.0])
+    _enrich(h, first, "Plan to put the runtime on a robot")
+    _enrich(h, _seed_memory(h, "b", [1.0, 0.0, 0.0]), "Deploy the agent onto physical hardware")
+    topics = h.stores.memory.all_topics()
+    assert len(topics) == 1
+    assert topics[0].source_memory_id == first  # unchanged by the merge
+    h.close()
+
+
+def test_lexical_only_fallback_when_no_embedding(tmp_path, clock):
+    # A memory with no embedding can't use the semantic path; the lexical path still merges
+    # near-identical summaries (default config, semantic present but this memory lacks a vector).
+    now_cfg = Config.from_mapping({"rng_seed": 1})  # default lexical 0.8 + semantic 0.94
+    h = Harness(tmp_path, now_cfg, clock)
+
+    def seed_no_embedding(text, salience=0.9):
+        now = h.clock.now_utc()
+        mid = ids.new_id(ids.PROVISIONAL_MEMORY)
+        with h.stores.db.transaction():
+            h.stores.memory.insert_memory(ProvisionalMemory(
+                id=mid, event_id="e", text=text, activation=0.9, salience=salience,
+                decay_rate_per_hour=half_life_to_rate_per_hour(24.0),
+                created_at=now, last_activated_at=now, enrichment_status=EnrichmentStatus.RAW,
+            ))
+        return mid
+
+    _enrich(h, seed_no_embedding("x"), "Robot safety constraints and limits")
+    _enrich(h, seed_no_embedding("y"), "Robot safety constraints and limits")  # identical summary
+    assert len(h.stores.memory.all_topics()) == 1  # merged lexically, no embedding needed
+    h.close()
+
+
+def test_both_thresholds_zero_disables_all_merging(tmp_path, clock):
+    # topic_merge_similarity=0 alone no longer disables merging once embeddings exist (semantic
+    # still runs); only zeroing BOTH disables it.
+    both_off = Config.from_mapping(
+        {"rng_seed": 1, "memory": {"topic_merge_similarity": 0, "topic_dedup_cosine": 0}})
+    h = Harness(tmp_path, both_off, clock)
+    _enrich(h, _seed_memory(h, "a", [1.0, 0.0, 0.0]), "identical summary")
+    _enrich(h, _seed_memory(h, "b", [1.0, 0.0, 0.0]), "identical summary")
+    assert len(h.stores.memory.all_topics()) == 2  # nothing merges
+    h.close()

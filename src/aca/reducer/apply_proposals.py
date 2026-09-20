@@ -121,6 +121,11 @@ def _find_similar_topic(ctx: ReducerContext, summary: str, memory):
       memory) >= ``topic_dedup_cosine`` (catches paraphrases). The cosine threshold is deliberately
       very high so related-but-distinct topics don't merge, and only same-model vectors compare.
     A threshold of 0 disables that signal; both 0 => no merging.
+
+    Limitation: the polarity veto is computed on the *summaries*, while the semantic signal is on
+    the *memory* embeddings. A reversal expressed only in memory text but not surfaced in either
+    summary could therefore slip through the semantic path; embedding-level polarity would be needed
+    to close that fully. The very high cosine threshold keeps the blast radius small in practice.
     """
     lex_threshold = ctx.config.memory.topic_merge_similarity
     dedup_cos = ctx.config.memory.topic_dedup_cosine
