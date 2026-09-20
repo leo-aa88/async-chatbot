@@ -236,10 +236,7 @@ class MemoryStore:
         return None if row is None else dt(row["expressed_at"])
 
     def recent_expressions(self, since) -> list[tuple[str, str]]:
-        """``(candidate_kind, candidate_id)`` of candidates proactively voiced since ``since``.
-
-        Feeds the semantic-continuity gate: don't re-voice, in reworded form, something just said.
-        """
+        """``(candidate_kind, candidate_id)`` of candidates proactively voiced at/after ``since``."""
         rows = self._db.query_all(
             "SELECT candidate_kind, candidate_id FROM expressions WHERE expressed_at >= ? "
             "ORDER BY expressed_at DESC",

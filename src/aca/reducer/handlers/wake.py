@@ -10,15 +10,14 @@ justified — dispatches at most one proactive generative call (invariant 3).
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta
 
 from ... import ids
 from ...cognition import budgets as budget
-from ...cognition import vectors
 from ...domain.enums import CandidateKind, EnrichmentStatus, LifecycleState, WorkKind
 from ...domain.events import StochasticWake
 from ...domain.runtime import CognitionTrace
 from ..context import ReducerContext
+from ..continuity import is_semantic_repeat
 from ..gates import evaluate_proactive
 from ..support import build_candidates, read_proactive_usage
 from ..workitems import create_llm_work
@@ -75,7 +74,13 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
     # Continuity gate: don't re-voice, in reworded form, a thought just voiced. A speak is eligible
     # only if the mode gate allows it AND the candidate isn't a semantic near-repeat of a recently
     # expressed one. Advances (same subject, new content) score below the dedup threshold and pass.
-    speak_eligible = gate.allowed and not _semantic_repeat(ctx, candidate, now)
+    # This is a post-selection *mute*, not pool exclusion: a near-repeat can still win a wake and be
+    # dispatched enrichment-only. That's the v1 "suppress, never force" choice (a hot paraphrase may
+    # keep winning as a silent no-op rather than a genuine advance being forced up); the reducer's
+    # pre-outbox re-check (llm_result) is the authority that actually blocks the outbound.
+    speak_eligible = gate.allowed and not is_semantic_repeat(
+        ctx, candidate.kind.value, candidate.id, now
+    )
     if not speak_eligible and not needs_enrichment:
         note = "continuity_repeat" if gate.allowed else _silence_note(ctx, candidate, gate)
         return HandlerOutcome(
@@ -108,41 +113,6 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
         reschedule=True,
         trace=_trace(cycle_id, now, candidate=candidate, llm_called=True, note="proactive_dispatch"),
     )
-
-
-def _candidate_vector(ctx: ReducerContext, kind: str, candidate_id: str):
-    """A candidate's ``(model_version, vector)`` — a topic via its summary embedding, a memory via
-    its own — or None if it has none. Same resolution the dominance/advance metrics use."""
-    if kind == CandidateKind.TOPIC.value:
-        return ctx.stores.memory.topic_embeddings_by_id([candidate_id]).get(candidate_id)
-    if kind == CandidateKind.PROVISIONAL_MEMORY.value:
-        return ctx.stores.memory.embeddings_by_memory([candidate_id]).get(candidate_id)
-    return None
-
-
-def _semantic_repeat(ctx: ReducerContext, candidate, now) -> bool:
-    """Whether the candidate is a near-paraphrase of something voiced within the repeat window.
-
-    Uses the same very-high ``topic_dedup_cosine`` as dedup, so only genuine re-voicings are
-    suppressed — an *advance* (same subject, new content) sits below it and is allowed through. 0
-    disables. Compares same-model vectors only (drift-safe).
-    """
-    dedup = ctx.config.memory.topic_dedup_cosine
-    if dedup <= 0.0:
-        return False
-    current = _candidate_vector(ctx, candidate.kind.value, candidate.id)
-    if current is None:
-        return False
-    since = now - timedelta(seconds=ctx.config.memory.repeat_suppression_seconds)
-    for kind, cid in ctx.stores.memory.recent_expressions(since):
-        if cid == candidate.id:
-            continue  # exact re-selection is already handled by repeat-suppression in selection
-        other = _candidate_vector(ctx, kind, cid)
-        if other is None or other[0] != current[0]:
-            continue
-        if vectors.cosine(current[1], other[1]) >= dedup:
-            return True
-    return False
 
 
 def _silence_note(ctx: ReducerContext, candidate, gate) -> str:
