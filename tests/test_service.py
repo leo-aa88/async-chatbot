@@ -22,13 +22,9 @@ class RaisingLLM:
 
 @pytest.mark.asyncio
 async def test_metrics_reports_semantic_dominance(tmp_path):
-    # Real path: proactive speaks carry TOPIC ids (enriched memories are dropped from candidacy),
-    # so dominance must resolve each topic to its source memory's embedding. 3 topics share one
-    # neighborhood, 1 is distinct -> largest cluster 3 of 4.
-    from aca.cognition.activation import half_life_to_rate_per_hour
-    from aca.domain.enums import EnrichmentStatus
+    # Real path: proactive speaks carry TOPIC ids, resolved to each topic's SUMMARY embedding.
+    # 3 topics share one neighborhood, 1 is distinct -> largest cluster 3 of 4.
     from aca.domain.runtime import CognitionTrace
-    from aca.domain.state import ProvisionalMemory, Topic
 
     service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
     server = IpcServer(service, tmp_path / "aca.sock")
@@ -37,29 +33,17 @@ async def test_metrics_reports_semantic_dominance(tmp_path):
     try:
         st = service.stores
         now = service.clock.now_utc()
-        rate = half_life_to_rate_per_hour(24.0)
         vectors = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
         for i, vec in enumerate(vectors):
-            mid, tid = f"mem_{i}", f"topic_{i}"
+            tid = f"topic_{i}"
             with st.db.transaction():
-                st.memory.insert_memory(ProvisionalMemory(
-                    id=mid, event_id="e", text="t", activation=0.8, salience=0.8,
-                    decay_rate_per_hour=rate, created_at=now, last_activated_at=now,
-                    enrichment_status=EnrichmentStatus.ENRICHED,
-                ))
-                st.memory.insert_embedding(f"emb_{i}", mid, "m", vec, now)
-                st.memory.insert_topic(Topic(
-                    id=tid, summary=f"topic {i}", activation=0.8, importance=0.8,
-                    decay_rate_per_hour=rate, created_at=now, last_activated_at=now,
-                    source_memory_id=mid,
-                ))
-                # The self-voiced candidate is the TOPIC, not the (now-enriched) memory.
+                st.memory.insert_topic_embedding(tid, "m", vec, now)
                 st.work.insert_trace(CognitionTrace(
                     cycle_id=f"c{i}", created_at=now, trigger="StochasticWake",
                     cycle_type="proactive", action="speak", candidate_kind="TOPIC", candidate_id=tid,
                 ))
         metrics = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
-        assert metrics["dominance_total"] == 4  # all four topics resolved to an embedding
+        assert metrics["dominance_total"] == 4  # all four topic summaries resolved to an embedding
         assert metrics["dominance_cluster"] == 3
     finally:
         await server.close()
