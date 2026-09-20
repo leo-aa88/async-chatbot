@@ -153,6 +153,17 @@ class MemoryStore:
         row = self._db.query_one("SELECT * FROM topics WHERE id=?", (topic_id,))
         return None if row is None else self._to_topic(row)
 
+    def delete_topic(self, topic_id: str) -> None:
+        """Remove a topic and its summary embedding (used when merging a duplicate away)."""
+        self._db.execute("DELETE FROM topics WHERE id=?", (topic_id,))
+        self._db.execute("DELETE FROM topic_embeddings WHERE topic_id=?", (topic_id,))
+
+    def reassign_topic_for_intents(self, from_topic_id: str, to_topic_id: str) -> None:
+        """Repoint deferred intents from a merged-away topic to the surviving one."""
+        self._db.execute(
+            "UPDATE deferred_intents SET topic_id=? WHERE topic_id=?", (to_topic_id, from_topic_id)
+        )
+
     def all_topics(self, limit: int = 50) -> list[Topic]:
         rows = self._db.query_all(
             "SELECT * FROM topics ORDER BY last_activated_at DESC LIMIT ?", (limit,)
