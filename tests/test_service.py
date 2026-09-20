@@ -105,6 +105,42 @@ async def test_semantic_dominance_never_clusters_across_models(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_semantic_dominance_undefined_for_single_candidate(tmp_path):
+    # Dominance needs >= 2 embeddable candidates; with one, it reports (0, 0) so the CLI renders "—"
+    # rather than a misleading 100%.
+    from aca.cli.main import format_metrics
+    from aca.cognition.activation import half_life_to_rate_per_hour
+    from aca.domain.enums import EnrichmentStatus
+    from aca.domain.runtime import CognitionTrace
+    from aca.domain.state import ProvisionalMemory
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        st = service.stores
+        now = service.clock.now_utc()
+        with st.db.transaction():
+            st.memory.insert_memory(ProvisionalMemory(
+                id="mem_0", event_id="e", text="t", activation=0.8, salience=0.8,
+                decay_rate_per_hour=half_life_to_rate_per_hour(24.0),
+                created_at=now, last_activated_at=now, enrichment_status=EnrichmentStatus.RAW,
+            ))
+            st.memory.insert_embedding("emb_0", "mem_0", "m", [1.0, 0.0, 0.0], now)
+            st.work.insert_trace(CognitionTrace(
+                cycle_id="c0", created_at=now, trigger="StochasticWake", cycle_type="proactive",
+                action="speak", candidate_kind="PROVISIONAL_MEMORY", candidate_id="mem_0",
+            ))
+        metrics = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
+        assert metrics["dominance_total"] == 0 and metrics["dominance_cluster"] == 0
+        assert "topic dominance" in "\n".join(format_metrics(metrics))  # renders (—) without error
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_daemon_answers_task_and_dedupes_retry(tmp_path):
     service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
     server = IpcServer(service, tmp_path / "aca.sock")
