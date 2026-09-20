@@ -235,6 +235,18 @@ class MemoryStore:
         )
         return None if row is None else dt(row["expressed_at"])
 
+    def recent_expressions(self, since) -> list[tuple[str, str]]:
+        """``(candidate_kind, candidate_id)`` of candidates proactively voiced since ``since``.
+
+        Feeds the semantic-continuity gate: don't re-voice, in reworded form, something just said.
+        """
+        rows = self._db.query_all(
+            "SELECT candidate_kind, candidate_id FROM expressions WHERE expressed_at >= ? "
+            "ORDER BY expressed_at DESC",
+            (txt(since),),
+        )
+        return [(r["candidate_kind"], r["candidate_id"]) for r in rows]
+
     # --- row mappers ---------------------------------------------------------------------
     @staticmethod
     def _to_memory(row: sqlite3.Row) -> ProvisionalMemory:
