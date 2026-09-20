@@ -107,8 +107,7 @@ def _memory_embedding(ctx: ReducerContext, memory_id: str | None):
     """A memory's ``(model_version, vector)`` or None (topics inherit their source memory's)."""
     if not memory_id:
         return None
-    pairs = ctx.stores.memory.embeddings_for_memories([memory_id])
-    return pairs[0] if pairs else None
+    return ctx.stores.memory.embeddings_by_memory([memory_id]).get(memory_id)
 
 
 def _find_similar_topic(ctx: ReducerContext, summary: str, memory):
