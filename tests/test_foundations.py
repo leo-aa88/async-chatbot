@@ -115,6 +115,12 @@ def test_semantic_neighbor_threshold_configurable():
     assert cfg.memory.semantic_neighbor_threshold == 0.7
 
 
+def test_topic_dedup_cosine_configurable():
+    assert Config().memory.topic_dedup_cosine == 0.94
+    cfg = Config.from_mapping({"memory": {"topic_dedup_cosine": 0.9}})
+    assert cfg.memory.topic_dedup_cosine == 0.9
+
+
 def test_conversation_windows_are_configurable():
     cfg = Config.from_mapping({"conversation": {"active_within": "10s", "idle_within": "5m"}})
     assert cfg.conversation.active_within_seconds == 10
