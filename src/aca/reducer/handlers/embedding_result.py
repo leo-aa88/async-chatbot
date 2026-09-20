@@ -8,10 +8,12 @@ completion must **not** recursively launch generative cognition (invariant 7). I
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 
 from ...cognition import textsim, vectors
 from ...domain.enums import WorkStatus
 from ...domain.events import EmbeddingResult
+from ...domain.state import Topic
 from ..context import ReducerContext
 from .base import HandlerOutcome
 
@@ -42,11 +44,14 @@ def handle_embedding_result(ctx: ReducerContext, event: EmbeddingResult) -> Hand
 
     if work is not None:
         ctx.stores.work.complete(event.work_id, event.event_id, event.timestamp)
-    # Embedding does not change wake-relevant state; no reschedule (DESIGN 29.3 step 7).
+    # A topic merge here reduces the topic set but doesn't create a new wake opportunity (it only
+    # collapses duplicates), so — like plain embedding attachment — no reschedule (DESIGN 29.3.7).
     return HandlerOutcome(note="embedding_attached")
 
 
-def _merge_duplicate_topic(ctx: ReducerContext, topic, model_version: str, vector, now) -> None:
+def _merge_duplicate_topic(
+    ctx: ReducerContext, topic: Topic, model_version: str, vector: list[float], now: datetime
+) -> None:
     """Merge ``topic`` into an existing near-duplicate (by summary cosine), or do nothing.
 
     Compares only same-model summary vectors (drift-safe), vetoes polarity flips, and requires
@@ -57,6 +62,8 @@ def _merge_duplicate_topic(ctx: ReducerContext, topic, model_version: str, vecto
     dedup = ctx.config.memory.topic_dedup_cosine
     if dedup <= 0.0:
         return
+    # Scans the 50 most-recently-active topics (same bound as the enrich-time lexical check); a
+    # duplicate older than that is left to lexical/future comparison rather than an unbounded scan.
     others = [t for t in ctx.stores.memory.all_topics(limit=50) if t.id != topic.id]
     embeddings = ctx.stores.memory.topic_embeddings_by_id([t.id for t in others])
     best, best_cos = None, 0.0
