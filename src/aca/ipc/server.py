@@ -148,6 +148,13 @@ class IpcServer:
         largest, total = self._semantic_dominance(since, config.memory.semantic_neighbor_threshold)
         metrics["dominance_cluster"] = largest
         metrics["dominance_total"] = total
+        adv, reps, sw, trans = self._advance_rate(
+            since, config.memory.semantic_neighbor_threshold, config.memory.topic_dedup_cosine
+        )
+        metrics["advance_count"] = adv
+        metrics["repetition_count"] = reps
+        metrics["switch_count"] = sw
+        metrics["advance_transitions"] = trans
         return metrics
 
     def _semantic_dominance(self, since, threshold: float) -> tuple[int, int]:
@@ -187,6 +194,41 @@ class IpcServer:
             by_model.setdefault(model_version, []).append(vector)
         largest = max(dominant_cluster_fraction(g, threshold)[0] for g in by_model.values())
         return (largest, len(ordered))
+
+    def _advance_rate(self, since, neighbor: float, dedup: float) -> tuple[int, int, int, int]:
+        """Classify each consecutive self-voiced message vs the previous one (DESIGN 6, 16).
+
+        The "it's thinking" signal is *progressive elaboration*: same topic, new implication. Using
+        the summary embedding for a topic candidate (its raw source memory is a fragment, DESIGN
+        12.3) and the memory embedding for a raw-memory candidate, each transition falls in a band:
+          repetition : cosine >= dedup      (near-paraphrase)
+          advance    : neighbor <= cosine < dedup  (same subject, new content — the good one)
+          switch     : cosine < neighbor    (new thread)
+        Observational only. Returns ``(advances, repetitions, switches, transitions)``.
+        """
+        from ..cognition.vectors import cosine
+
+        mem = self._service.stores.memory
+        candidates = self._service.stores.work.proactive_spoken_candidates(since=since)
+        topic_emb = mem.topic_embeddings_by_id([c for k, c in candidates if k == "TOPIC"])
+        mem_emb = mem.embeddings_by_memory([c for k, c in candidates if k == "PROVISIONAL_MEMORY"])
+        seq = []  # (model_version, vector) per resolvable message, in time order
+        for kind, cid in candidates:
+            e = topic_emb.get(cid) if kind == "TOPIC" else mem_emb.get(cid)
+            if e is not None:
+                seq.append(e)
+        advances = repetitions = switches = 0
+        for (m0, v0), (m1, v1) in zip(seq, seq[1:], strict=False):
+            if m0 != m1:
+                continue  # cross-model transition is not comparable (drift); skip
+            c = cosine(v0, v1)
+            if c >= dedup:
+                repetitions += 1
+            elif c >= neighbor:
+                advances += 1
+            else:
+                switches += 1
+        return (advances, repetitions, switches, advances + repetitions + switches)
 
     def _memories(self) -> list[dict]:
         return [

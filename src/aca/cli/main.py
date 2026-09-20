@@ -198,6 +198,9 @@ def format_metrics(m: dict) -> list[str]:
         f"topic dominance (last {_hours(m.get('repeated_window_seconds', 0))}): "
         f"{_pct(m.get('dominance_cluster', 0), m.get('dominance_total', 0))}"
         "  (largest semantic cluster of self-voiced messages; observational)",
+        f"advance rate (last {_hours(m.get('repeated_window_seconds', 0))}): "
+        f"{_pct(m.get('advance_count', 0), m.get('advance_transitions', 0))}"
+        f"  (same-topic new implication; repeats={m.get('repetition_count', 0)} switches={m.get('switch_count', 0)})",
         f"reactive reply rate:   {_pct(m.get('reactive_spoke', 0), m.get('reactive_total', 0))}",
         f"mandatory answered:    {_pct(m.get('mandatory_spoke', 0), m.get('mandatory_total', 0))}",
         f"overall silence rate:  {_pct(silent, spoke + silent)}",

@@ -105,6 +105,38 @@ async def test_semantic_dominance_never_clusters_across_models(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_advance_rate_classifies_consecutive_messages(tmp_path):
+    # The "progressive elaboration" signal: consecutive self-voiced messages classified vs the
+    # previous by cosine band. Four topics in time order: rep (1.0), advance (0.90), switch (0.44).
+    from aca.domain.runtime import CognitionTrace
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        st = service.stores
+        now = service.clock.now_utc()
+        vectors = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.9, 0.43589, 0.0], [0.0, 1.0, 0.0]]
+        for i, vec in enumerate(vectors):
+            tid = f"topic_{i}"
+            with st.db.transaction():
+                st.memory.insert_topic_embedding(tid, "m", vec, now)
+                st.work.insert_trace(CognitionTrace(
+                    cycle_id=f"c{i}", created_at=now, trigger="StochasticWake",
+                    cycle_type="proactive", action="speak", candidate_kind="TOPIC", candidate_id=tid,
+                ))
+        m = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
+        assert m["advance_transitions"] == 3
+        assert m["repetition_count"] == 1   # v0->v1 cosine 1.0
+        assert m["advance_count"] == 1      # v1->v2 cosine 0.90
+        assert m["switch_count"] == 1       # v2->v3 cosine ~0.44
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_semantic_dominance_undefined_for_single_candidate(tmp_path):
     # Dominance needs >= 2 embeddable candidates; with one, it reports (0, 0) so the CLI renders "—"
     # rather than a misleading 100%.
