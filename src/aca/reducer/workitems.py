@@ -84,6 +84,30 @@ def create_llm_work(
     return work_id
 
 
+def create_topic_embedding_work(
+    ctx: ReducerContext, *, topic_id: str, summary: str, source_event_id: str, now: datetime
+) -> str:
+    """Persist one embedding work item for a topic *summary*; return its ``work_id``.
+
+    The summary — not the topic's source memory's raw text — is the semantic unit for dedup and
+    dominance (DESIGN 12.3). Runs through the same async embedding path as memory embeddings.
+    """
+    work_id = ids.new_id(ids.WORK_ITEM)
+    ctx.stores.work.insert_work(
+        WorkItem(
+            work_id=work_id,
+            kind=WorkKind.EMBEDDING,
+            cycle_id=ids.new_id(ids.CYCLE),  # embeddings aren't subject to the one-generative guard
+            basis_revision=ctx.stores.state.state_revision(),
+            source_event_id=source_event_id,
+            status=WorkStatus.PENDING,
+            created_at=now,
+            snapshot={"topic_id": topic_id, "text": summary},
+        )
+    )
+    return work_id
+
+
 def create_embedding_work(
     ctx: ReducerContext, *, memory_id: str, source_event_id: str, cycle_id: str, now: datetime
 ) -> str:

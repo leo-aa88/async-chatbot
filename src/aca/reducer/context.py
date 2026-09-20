@@ -25,6 +25,10 @@ class ReducerContext:
     agent_id: str
     runtime_session_id: str
     scheduler_generation: int
+    # Work items created deep inside proposal application (e.g. a topic-summary embedding job at
+    # enrichment) that the reducer must dispatch. The reducer drains and clears this each event, so
+    # handlers don't have to thread work ids back up through apply_proposals.
+    deferred_work_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

@@ -20,12 +20,19 @@ def handle_embedding_result(ctx: ReducerContext, event: EmbeddingResult) -> Hand
     if work is not None and work.status is WorkStatus.COMPLETED:
         return HandlerOutcome(note="duplicate_embedding", committed=False)
 
-    memory = ctx.stores.memory.get_memory(event.provisional_memory_id)
-    if memory is not None:
-        ctx.stores.memory.insert_embedding(
-            event.embedding_id, memory.id, event.model_version, event.vector, event.timestamp
-        )
-        ctx.stores.memory.update_memory(replace(memory, embedding_id=event.embedding_id))
+    if event.topic_id:
+        # Topic-summary embedding (DESIGN 12.3): stored in its own table, keyed by topic id.
+        if ctx.stores.memory.get_topic(event.topic_id) is not None:
+            ctx.stores.memory.insert_topic_embedding(
+                event.topic_id, event.model_version, event.vector, event.timestamp
+            )
+    else:
+        memory = ctx.stores.memory.get_memory(event.provisional_memory_id)
+        if memory is not None:
+            ctx.stores.memory.insert_embedding(
+                event.embedding_id, memory.id, event.model_version, event.vector, event.timestamp
+            )
+            ctx.stores.memory.update_memory(replace(memory, embedding_id=event.embedding_id))
 
     if work is not None:
         ctx.stores.work.complete(event.work_id, event.event_id, event.timestamp)
