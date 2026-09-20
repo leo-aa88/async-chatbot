@@ -86,6 +86,22 @@ class MemoryStore:
         row = self._db.query_one("SELECT vector FROM embeddings WHERE id=?", (embedding_id,))
         return None if row is None else loads(row["vector"], [])
 
+    def embeddings_for_memories(self, memory_ids: list[str]) -> list[tuple[str, list[float]]]:
+        """Return ``(model_version, vector)`` for each given memory that has an embedding.
+
+        Ids without an embedding (e.g. topic candidates, or a memory not yet embedded) are simply
+        absent. Callers must group by model_version before comparing — cosine across models is
+        meaningless (drift).
+        """
+        if not memory_ids:
+            return []
+        placeholders = ",".join("?" for _ in memory_ids)
+        rows = self._db.query_all(
+            f"SELECT model_version, vector FROM embeddings WHERE provisional_memory_id IN ({placeholders})",
+            tuple(memory_ids),
+        )
+        return [(r["model_version"], loads(r["vector"], [])) for r in rows]
+
     # --- topics --------------------------------------------------------------------------
     def insert_topic(self, t: Topic) -> None:
         self._db.execute(

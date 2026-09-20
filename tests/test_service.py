@@ -21,6 +21,45 @@ class RaisingLLM:
 
 
 @pytest.mark.asyncio
+async def test_metrics_reports_semantic_dominance(tmp_path):
+    # Observational semantic dominance over self-voiced candidates: 3 memories share one embedding
+    # neighborhood, 1 is distinct -> largest cluster 3 of 4. Exercises the real server path
+    # (store queries + model_version grouping + clustering).
+    from aca.cognition.activation import half_life_to_rate_per_hour
+    from aca.domain.enums import EnrichmentStatus
+    from aca.domain.runtime import CognitionTrace
+    from aca.domain.state import ProvisionalMemory
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        st = service.stores
+        now = service.clock.now_utc()
+        vectors = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        for i, vec in enumerate(vectors):
+            mid = f"mem_{i}"
+            with st.db.transaction():
+                st.memory.insert_memory(ProvisionalMemory(
+                    id=mid, event_id="e", text="t", activation=0.8, salience=0.8,
+                    decay_rate_per_hour=half_life_to_rate_per_hour(24.0),
+                    created_at=now, last_activated_at=now, enrichment_status=EnrichmentStatus.RAW,
+                ))
+                st.memory.insert_embedding(f"emb_{i}", mid, "m", vec, now)
+                st.work.insert_trace(CognitionTrace(
+                    cycle_id=f"c{i}", created_at=now, trigger="StochasticWake",
+                    cycle_type="proactive", action="speak", candidate_id=mid,
+                ))
+        metrics = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
+        assert metrics["dominance_total"] == 4
+        assert metrics["dominance_cluster"] == 3
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_daemon_answers_task_and_dedupes_retry(tmp_path):
     service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
     server = IpcServer(service, tmp_path / "aca.sock")

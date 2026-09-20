@@ -194,6 +194,9 @@ def format_metrics(m: dict) -> list[str]:
         f"repeated-candidate rate (last {_hours(m.get('repeated_window_seconds', 0))}): "
         f"{_pct(m.get('proactive_repeated', 0), m.get('proactive_spoke_with_candidate', 0))}"
         "  (proactive re-voicings of the same candidate; a proxy for topic repetition)",
+        f"topic dominance (last {_hours(m.get('repeated_window_seconds', 0))}): "
+        f"{_pct(m.get('dominance_cluster', 0), m.get('dominance_total', 0))}"
+        "  (largest semantic cluster of self-voiced messages; observational)",
         f"reactive reply rate:   {_pct(m.get('reactive_spoke', 0), m.get('reactive_total', 0))}",
         f"mandatory answered:    {_pct(m.get('mandatory_spoke', 0), m.get('mandatory_total', 0))}",
         f"overall silence rate:  {_pct(silent, spoke + silent)}",

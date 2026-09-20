@@ -145,7 +145,28 @@ class IpcServer:
         since = self._service.clock.now_utc() - timedelta(seconds=window_s)
         metrics = self._service.stores.work.trace_metrics(repeated_since=since)
         metrics["repeated_window_seconds"] = int(window_s)
+        largest, total = self._semantic_dominance(since, config.memory.semantic_neighbor_threshold)
+        metrics["dominance_cluster"] = largest
+        metrics["dominance_total"] = total
         return metrics
+
+    def _semantic_dominance(self, since, threshold: float) -> tuple[int, int]:
+        """Largest semantic cluster among recently self-voiced (embeddable) candidates.
+
+        Observational only — never fed back into activation (that would be a self-reinforcing
+        obsession loop). Restricted to one embedding model so cosine is meaningful across drift.
+        """
+        from ..cognition.vectors import dominant_cluster_fraction
+
+        ids = self._service.stores.work.proactive_spoken_candidate_ids(since=since)
+        pairs = self._service.stores.memory.embeddings_for_memories(ids)
+        if len(pairs) < 2:
+            return (0, len(pairs))
+        by_model: dict[str, list] = {}
+        for model_version, vector in pairs:
+            by_model.setdefault(model_version, []).append(vector)
+        vectors = max(by_model.values(), key=len)  # the largest single-model group (drift-safe)
+        return dominant_cluster_fraction(vectors, threshold)
 
     def _memories(self) -> list[dict]:
         return [
