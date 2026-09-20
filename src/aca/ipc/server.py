@@ -162,7 +162,12 @@ class IpcServer:
         embedding — a TOPIC via its *summary* embedding (the semantic unit, DESIGN 12.3), a raw
         memory via its own; deferred intents and un-embedded candidates are skipped. Order is the
         time order of the speaks (clustering/adjacency are order-sensitive). Shared by dominance
-        and advance-rate."""
+        and advance-rate.
+
+        The skip rule is deliberately identical for both callers: a TOPIC resolves *only* through
+        ``topic_embeddings`` — never a fallback to its source-memory vector, which diverges from the
+        summary — so a topic whose summary hasn't been embedded yet is dropped from both the
+        dominance denominator and the advance-rate sequence rather than counted on a wrong vector."""
         mem = self._service.stores.memory
         candidates = self._service.stores.work.proactive_spoken_candidates(since=since)
         topic_emb = mem.topic_embeddings_by_id([c for k, c in candidates if k == "TOPIC"])

@@ -51,6 +51,59 @@ async def test_metrics_reports_semantic_dominance(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dominance_skips_topic_with_only_source_memory_embedding(tmp_path):
+    # Stage-3 guard: a TOPIC candidate is resolved to its SUMMARY embedding only. A topic that has
+    # a source-memory embedding but no topic_embeddings row must be *skipped*, not silently resolved
+    # via the old (wrong) source-memory path — live cosine proved source fragments diverge from the
+    # summary (DESIGN 12.3). Two summary-embedded topics cluster; the source-only one is excluded.
+    from aca.cognition.activation import half_life_to_rate_per_hour
+    from aca.domain.enums import EnrichmentStatus
+    from aca.domain.runtime import CognitionTrace
+    from aca.domain.state import ProvisionalMemory, Topic
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        st = service.stores
+        now = service.clock.now_utc()
+        rate = half_life_to_rate_per_hour(24.0)
+
+        def speak(tid: str) -> None:
+            st.work.insert_trace(CognitionTrace(
+                cycle_id=f"c_{tid}", created_at=now, trigger="StochasticWake",
+                cycle_type="proactive", action="speak", candidate_kind="TOPIC", candidate_id=tid,
+            ))
+
+        with st.db.transaction():
+            # Two topics with SUMMARY embeddings in the same neighborhood.
+            for tid in ("topic_a", "topic_b"):
+                st.memory.insert_topic_embedding(tid, "m", [1.0, 0.0, 0.0], now)
+                speak(tid)
+            # topic_c has NO summary embedding, only a source memory that *is* embedded. If the
+            # resolver ever fell back to the source vector, topic_c would be counted (and cluster).
+            st.memory.insert_memory(ProvisionalMemory(
+                id="mem_src", event_id="e", text="t", activation=0.8, salience=0.8,
+                decay_rate_per_hour=rate, created_at=now, last_activated_at=now,
+                enrichment_status=EnrichmentStatus.ENRICHED,
+            ))
+            st.memory.insert_embedding("emb_src", "mem_src", "m", [1.0, 0.0, 0.0], now)
+            st.memory.insert_topic(Topic(
+                id="topic_c", summary="s", activation=0.8, importance=0.8, decay_rate_per_hour=rate,
+                created_at=now, last_activated_at=now, source_memory_id="mem_src",
+            ))
+            speak("topic_c")
+
+        metrics = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
+        assert metrics["dominance_total"] == 2  # topic_c skipped: no summary vector, no fallback
+        assert metrics["dominance_cluster"] == 2
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_semantic_dominance_never_clusters_across_models(tmp_path):
     # Drift-safety: identical vectors under different embedding models must NOT cluster, but both
     # still count in the denominator (the embeddable set).
