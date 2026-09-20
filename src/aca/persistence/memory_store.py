@@ -104,6 +104,27 @@ class MemoryStore:
         )
         return {r["provisional_memory_id"]: (r["model_version"], loads(r["vector"], [])) for r in rows}
 
+    def insert_topic_embedding(
+        self, topic_id: str, model_version: str, vector: list[float], at
+    ) -> None:
+        """Store (or replace) the embedding of a topic's summary."""
+        self._db.execute(
+            """INSERT OR REPLACE INTO topic_embeddings (topic_id, model_version, vector, created_at)
+            VALUES (?,?,?,?)""",
+            (topic_id, model_version, dumps(vector), txt(at)),
+        )
+
+    def topic_embeddings_by_id(self, topic_ids: list[str]) -> dict[str, tuple[str, list[float]]]:
+        """Map each topic id to its summary ``(model_version, vector)`` (absent if not embedded)."""
+        if not topic_ids:
+            return {}
+        placeholders = ",".join("?" for _ in topic_ids)
+        rows = self._db.query_all(
+            f"SELECT topic_id, model_version, vector FROM topic_embeddings WHERE topic_id IN ({placeholders})",
+            tuple(topic_ids),
+        )
+        return {r["topic_id"]: (r["model_version"], loads(r["vector"], [])) for r in rows}
+
     # --- topics --------------------------------------------------------------------------
     def insert_topic(self, t: Topic) -> None:
         self._db.execute(

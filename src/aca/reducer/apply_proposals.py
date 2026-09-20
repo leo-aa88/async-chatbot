@@ -19,6 +19,7 @@ from ..domain.enums import EnrichmentStatus
 from ..domain.proposals import Proposal
 from ..domain.state import DeferredIntent, ProvisionalMemory, Topic
 from .context import ReducerContext
+from .workitems import create_topic_embedding_work
 
 _DEFERRED_INTENT_TTL_HOURS = 48.0
 
@@ -81,9 +82,10 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
         )
         return True
     rate = half_life_to_rate_per_hour(ctx.config.memory.default_decay_half_life_hours)
+    topic_id = ids.new_id(ids.TOPIC)
     ctx.stores.memory.insert_topic(
         Topic(
-            id=ids.new_id(ids.TOPIC),
+            id=topic_id,
             summary=summary,
             tags=tuple(proposal.fields.get("tags", ())),
             activation=memory.activation,
@@ -98,6 +100,13 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
             unfinished=False,
             source="provisional_memory",
             source_memory_id=memory.id,
+        )
+    )
+    # Embed the summary asynchronously (stage 1: populate only — nothing consumes it yet). The
+    # reducer dispatches this deferred job; later stages use it for semantic dedup/dominance.
+    ctx.deferred_work_ids.append(
+        create_topic_embedding_work(
+            ctx, topic_id=topic_id, summary=summary, source_event_id=memory.event_id, now=now
         )
     )
     return True

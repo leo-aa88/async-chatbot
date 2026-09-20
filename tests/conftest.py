@@ -84,10 +84,12 @@ class Harness:
         """Run a single pending work item's worker and reduce the result."""
         work = self.stores.work.get_work(work_id)
         if work.kind is WorkKind.EMBEDDING:
-            out = asyncio.run(self.embedding.embed(work.snapshot["text"]))
+            snap = work.snapshot
+            out = asyncio.run(self.embedding.embed(snap.get("text", "")))
             event = EmbeddingResult(
                 event_id=ids.new_id(ids.EVENT), timestamp=self.clock.now_utc(), source="w",
-                work_id=work_id, provisional_memory_id=work.snapshot["provisional_memory_id"],
+                work_id=work_id, provisional_memory_id=snap.get("provisional_memory_id", ""),
+                topic_id=snap.get("topic_id", ""),
                 embedding_id=ids.new_id(ids.EMBEDDING), model_version=out.model_version, vector=out.vector,
             )
         else:

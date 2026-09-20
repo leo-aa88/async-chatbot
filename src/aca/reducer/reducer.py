@@ -70,6 +70,7 @@ class Reducer:
 
         now = self._ctx.clock.now_utc()
         stores = self._ctx.stores
+        self._ctx.deferred_work_ids.clear()  # fresh per event; no leakage across reductions
         with stores.db.transaction():
             stores.events.accept(event, now)  # idempotent; client events already accepted
             basis = stores.state.state_revision()
@@ -78,9 +79,13 @@ class Reducer:
             self._persist_trace(outcome, basis, revision)
             stores.events.mark_reduced(event.event_id, now)
 
+        # Work created inside proposal application (persisted PENDING in the same transaction) is
+        # dispatched alongside the handler's own work ids.
+        deferred = list(self._ctx.deferred_work_ids)
+        self._ctx.deferred_work_ids.clear()
         return ReduceResult(
             revision=revision,
-            dispatch_work_ids=list(outcome.dispatch_work_ids),
+            dispatch_work_ids=list(outcome.dispatch_work_ids) + deferred,
             reschedule=outcome.reschedule,
             deliver=outcome.deliver,
             note=outcome.note,

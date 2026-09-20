@@ -96,6 +96,7 @@ class EmbeddingResult(Event):
     TYPE: ClassVar[str] = "EmbeddingResult"
     work_id: str = ""
     provisional_memory_id: str = ""
+    topic_id: str = ""  # set instead of provisional_memory_id when embedding a topic summary
     embedding_id: str = ""
     model_version: str = ""
     vector: list[float] = field(default_factory=list)

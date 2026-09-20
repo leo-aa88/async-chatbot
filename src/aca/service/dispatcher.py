@@ -119,6 +119,7 @@ class Dispatcher:
             source="embedding_worker",
             work_id=work.work_id,
             provisional_memory_id=str(work.snapshot.get("provisional_memory_id", "")),
+            topic_id=str(work.snapshot.get("topic_id", "")),
             embedding_id=ids.new_id(ids.EMBEDDING),
             model_version=output.model_version,
             vector=output.vector,

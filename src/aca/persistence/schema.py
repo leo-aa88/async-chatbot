@@ -8,7 +8,7 @@ delivery by ``delivery_key`` (invariant 38).
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -98,6 +98,16 @@ CREATE TABLE IF NOT EXISTS topics (
     evidence_count INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     last_activated_at TEXT NOT NULL
+);
+
+-- Embedding of a topic's *summary* (not its source memory's raw text): the summary is what carries
+-- the deduplicable meaning (DESIGN 12.3). Kept in its own table so a Topic stays lean on the hot
+-- selection path; vectors are fetched on demand for dedup/dominance.
+CREATE TABLE IF NOT EXISTS topic_embeddings (
+    topic_id TEXT PRIMARY KEY,
+    model_version TEXT NOT NULL,
+    vector TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS deferred_intents (
