@@ -186,8 +186,9 @@ def format_metrics(m: dict) -> list[str]:
     spoke, silent = m.get("spoke", 0), m.get("silent", 0)
     return [
         f"cognition cycles: {m.get('total', 0)}",
-        f"proactive initiation:  {_pct(m.get('proactive_spoke', 0), m.get('proactive_dispatched', 0))}"
-        "  (spoke / reached-model)",
+        f"proactive initiation:  {_pct(m.get('proactive_spoke', 0), m.get('proactive_dispatched', 0))} reached-model"
+        f"  |  {_pct(m.get('proactive_spoke', 0), m.get('proactive_total', 0))} all-cycle"
+        "  (spoke / reached-model | spoke / all proactive cycles)",
         f"proactive blocked:     {m.get('proactive_blocked', 0)}  (budget/mode/quiet — never reached model)",
         f"proactive frequency (last {_hours(m.get('repeated_window_seconds', 0))}): "
         f"{m.get('proactive_spoke_recent', 0)} spontaneous messages  (blunt count; says nothing about value or theme)",
