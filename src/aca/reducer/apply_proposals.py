@@ -13,7 +13,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 from .. import ids
-from ..cognition import textsim
+from ..cognition import textsim, vectors
 from ..cognition.activation import half_life_to_rate_per_hour, reinforced
 from ..domain.enums import EnrichmentStatus
 from ..domain.proposals import Proposal
@@ -66,7 +66,7 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
         replace(memory, enrichment_status=EnrichmentStatus.ENRICHED, last_activated_at=now)
     )
     summary = proposal.fields.get("topic_summary") or memory.text[:200]
-    existing = _find_similar_topic(ctx, summary)
+    existing = _find_similar_topic(ctx, summary, memory)
     if existing is not None:
         # Near-duplicate of an existing topic: reinforce it instead of spawning a parallel topic
         # (DESIGN 12.3). Keep the stronger activation/importance and count the added evidence.
@@ -103,24 +103,47 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
     return True
 
 
-def _find_similar_topic(ctx: ReducerContext, summary: str):
-    """The most similar existing topic at/above the merge threshold, or None (DESIGN 12.3).
-
-    Deterministic lexical comparison over recent topics. A threshold of 0 disables merging.
-    """
-    threshold = ctx.config.memory.topic_merge_similarity
-    if threshold <= 0.0:
+def _memory_embedding(ctx: ReducerContext, memory_id: str | None):
+    """A memory's ``(model_version, vector)`` or None (topics inherit their source memory's)."""
+    if not memory_id:
         return None
+    pairs = ctx.stores.memory.embeddings_for_memories([memory_id])
+    return pairs[0] if pairs else None
+
+
+def _find_similar_topic(ctx: ReducerContext, summary: str, memory):
+    """The best existing topic to merge this enrichment into, or None (DESIGN 12.3).
+
+    Two independent, deterministic signals, each subject to a polarity veto so a reversal never
+    merges into the thing it reverses:
+    - lexical: summary text overlap >= ``topic_merge_similarity`` (catches near-identical wording).
+    - semantic: cosine between this memory's embedding and the topic's (inherited from its source
+      memory) >= ``topic_dedup_cosine`` (catches paraphrases). The cosine threshold is deliberately
+      very high so related-but-distinct topics don't merge, and only same-model vectors compare.
+    A threshold of 0 disables that signal; both 0 => no merging.
+    """
+    lex_threshold = ctx.config.memory.topic_merge_similarity
+    dedup_cos = ctx.config.memory.topic_dedup_cosine
+    if lex_threshold <= 0.0 and dedup_cos <= 0.0:
+        return None
+    new_emb = _memory_embedding(ctx, memory.id) if dedup_cos > 0.0 else None
+
     best, best_score = None, 0.0
     for topic in ctx.stores.memory.all_topics(limit=50):
-        score = textsim.similarity(summary, topic.summary)
-        if score < threshold or score <= best_score:
-            continue
-        # Veto a high lexical match that flips polarity ("add X" vs "remove X"): merging a reversal
-        # would wrongly reinforce the original as if it were confirming evidence (DESIGN 12.3).
         if textsim.polarity_conflict(summary, topic.summary):
-            continue
-        best, best_score = topic, score
+            continue  # a polarity flip is never a duplicate, by either signal
+        lexical = textsim.similarity(summary, topic.summary) if lex_threshold > 0.0 else 0.0
+        semantic = 0.0
+        if new_emb is not None and topic.source_memory_id:
+            topic_emb = _memory_embedding(ctx, topic.source_memory_id)
+            if topic_emb is not None and topic_emb[0] == new_emb[0]:  # same model (drift-safe)
+                semantic = vectors.cosine(new_emb[1], topic_emb[1])
+        qualifies = (lex_threshold > 0.0 and lexical >= lex_threshold) or (
+            dedup_cos > 0.0 and semantic >= dedup_cos
+        )
+        score = max(lexical, semantic)
+        if qualifies and score > best_score:
+            best, best_score = topic, score
     return best
 
 

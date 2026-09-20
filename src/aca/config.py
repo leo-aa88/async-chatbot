@@ -153,6 +153,11 @@ class Memory:
     # roughly the same thing — used by the observational topic-dominance metric (and, later, semantic
     # repeated-topic). Deliberately looser than topic_merge_similarity: "same subject", not "duplicate".
     semantic_neighbor_threshold: float = 0.78
+    # Semantic de-dup threshold (cosine, 0..1): a new enrichment whose embedding is at least this
+    # close to an existing topic's is treated as a near-duplicate and merged, catching paraphrases
+    # the lexical check misses. Deliberately VERY high (> semantic_neighbor_threshold) so related-
+    # but-distinct topics ("robot embodiment" vs "robot safety") are not merged. 0 disables. τ_dedup.
+    topic_dedup_cosine: float = 0.94
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Memory:
@@ -181,6 +186,10 @@ class Memory:
             semantic_neighbor_threshold=_fraction(
                 "memory.semantic_neighbor_threshold",
                 data.get("semantic_neighbor_threshold", 0.78),
+            ),
+            topic_dedup_cosine=_fraction(
+                "memory.topic_dedup_cosine",
+                data.get("topic_dedup_cosine", 0.94),
             ),
         )
 
