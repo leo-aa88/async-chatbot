@@ -102,8 +102,9 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
             source_memory_id=memory.id,
         )
     )
-    # Embed the summary asynchronously (stage 1: populate only — nothing consumes it yet). The
-    # reducer dispatches this deferred job; later stages use it for semantic dedup/dominance.
+    # Embed the summary asynchronously; the reducer dispatches this deferred job. When it lands,
+    # embedding_result uses the summary vector for semantic dedup (merge) and the dominance/
+    # advance-rate metrics read it too.
     ctx.deferred_work_ids.append(
         create_topic_embedding_work(
             ctx, topic_id=topic_id, summary=summary, source_event_id=memory.event_id, now=now

@@ -101,6 +101,18 @@ def test_merged_topic_absorbs_deferred_intents(tmp_path, clock):
     h.close()
 
 
+def test_topic_dedup_cosine_zero_disables_post_embedding_merge(tmp_path, clock):
+    # The semantic merge is off when the threshold is 0, even for identical summary vectors.
+    h = Harness(tmp_path, Config.from_mapping(
+        {"rng_seed": 1, "memory": {"topic_dedup_cosine": 0}}), clock)
+    _topic(h, "t1", "Plan to put the runtime on a robot")
+    _topic(h, "t2", "Deploy the agent onto physical hardware")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0])
+    _land_embedding(h, "t2", [1.0, 0.0, 0.0])
+    assert len(h.stores.memory.all_topics()) == 2  # merging disabled
+    h.close()
+
+
 def test_enrich_time_lexical_path_still_merges(tmp_path, clock):
     # Near-identical wording still merges synchronously at enrichment, no embedding needed.
     h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
