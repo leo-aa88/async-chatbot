@@ -109,6 +109,12 @@ def test_topic_merge_similarity_is_configurable_and_bounded():
         Config.from_mapping({"memory": {"topic_merge_similarity": 2.0}})
 
 
+def test_semantic_neighbor_threshold_configurable():
+    assert Config().memory.semantic_neighbor_threshold == 0.78
+    cfg = Config.from_mapping({"memory": {"semantic_neighbor_threshold": 0.7}})
+    assert cfg.memory.semantic_neighbor_threshold == 0.7
+
+
 def test_conversation_windows_are_configurable():
     cfg = Config.from_mapping({"conversation": {"active_within": "10s", "idle_within": "5m"}})
     assert cfg.conversation.active_within_seconds == 10

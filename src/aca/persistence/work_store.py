@@ -243,6 +243,25 @@ class WorkStore:
         metrics["proactive_repeated"] = spoke_c - distinct_c
         return metrics
 
+    def proactive_spoken_candidates(self, *, since: datetime | None = None) -> list[tuple[str, str]]:
+        """``(candidate_kind, candidate_id)`` of proactive SPEAK cycles, oldest first.
+
+        Feeds the semantic-dominance metric. Returns the kind too because a spoken candidate is
+        usually a TOPIC or DEFERRED_INTENT, not a raw memory (build_candidates drops enriched
+        memories), so the caller must resolve each kind to an embedding differently. Order is stable
+        (created_at) so downstream clustering is deterministic.
+        """
+        clause, params = "", ()
+        if since is not None:
+            clause, params = " AND created_at >= ?", (txt(since),)
+        rows = self._db.query_all(
+            "SELECT candidate_kind, candidate_id FROM cognition_traces "
+            "WHERE trigger='StochasticWake' AND action='speak' AND candidate_id IS NOT NULL"
+            + clause + " ORDER BY created_at ASC",
+            params,
+        )
+        return [(r["candidate_kind"], r["candidate_id"]) for r in rows]
+
     # --- mappers -------------------------------------------------------------------------
     @staticmethod
     def _to_work(row: sqlite3.Row) -> WorkItem:

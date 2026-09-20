@@ -149,6 +149,10 @@ class Memory:
     # existing topic, reinforce that topic instead of creating a near-duplicate (DESIGN 12.3). Set
     # to 0 to disable merging (always create a new topic). Conservative default — near-identical only.
     topic_merge_similarity: float = 0.8
+    # Semantic-neighborhood threshold (cosine, 0..1) for grouping distinct utterances that mean
+    # roughly the same thing — used by the observational topic-dominance metric (and, later, semantic
+    # repeated-topic). Deliberately looser than topic_merge_similarity: "same subject", not "duplicate".
+    semantic_neighbor_threshold: float = 0.78
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Memory:
@@ -173,6 +177,10 @@ class Memory:
             topic_merge_similarity=_fraction(
                 "memory.topic_merge_similarity",
                 data.get("topic_merge_similarity", 0.8),
+            ),
+            semantic_neighbor_threshold=_fraction(
+                "memory.semantic_neighbor_threshold",
+                data.get("semantic_neighbor_threshold", 0.78),
             ),
         )
 

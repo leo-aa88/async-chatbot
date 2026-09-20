@@ -86,6 +86,24 @@ class MemoryStore:
         row = self._db.query_one("SELECT vector FROM embeddings WHERE id=?", (embedding_id,))
         return None if row is None else loads(row["vector"], [])
 
+    def embeddings_by_memory(self, memory_ids: list[str]) -> dict[str, tuple[str, list[float]]]:
+        """Map each given memory id to its ``(model_version, vector)`` (absent if not embedded).
+
+        Id-keyed so callers can look them up in a caller-defined order (clustering and comparison
+        are order-sensitive). Ids without an embedding (a topic candidate, or a memory not yet
+        embedded) are simply absent. Callers must only compare same-model vectors — cosine across
+        models is meaningless (drift).
+        """
+        if not memory_ids:
+            return {}
+        placeholders = ",".join("?" for _ in memory_ids)
+        rows = self._db.query_all(
+            "SELECT provisional_memory_id, model_version, vector FROM embeddings "
+            f"WHERE provisional_memory_id IN ({placeholders})",
+            tuple(memory_ids),
+        )
+        return {r["provisional_memory_id"]: (r["model_version"], loads(r["vector"], [])) for r in rows}
+
     # --- topics --------------------------------------------------------------------------
     def insert_topic(self, t: Topic) -> None:
         self._db.execute(
