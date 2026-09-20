@@ -17,7 +17,7 @@ from ..cognition import textsim, vectors
 from ..cognition.activation import half_life_to_rate_per_hour, reinforced
 from ..domain.enums import EnrichmentStatus
 from ..domain.proposals import Proposal
-from ..domain.state import DeferredIntent, Topic
+from ..domain.state import DeferredIntent, ProvisionalMemory, Topic
 from .context import ReducerContext
 
 _DEFERRED_INTENT_TTL_HOURS = 48.0
@@ -103,18 +103,10 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
     return True
 
 
-def _memory_embedding(ctx: ReducerContext, memory_id: str | None):
-    """A memory's ``(model_version, vector)`` or None (topics inherit their source memory's)."""
-    if not memory_id:
-        return None
-    return ctx.stores.memory.embeddings_by_memory([memory_id]).get(memory_id)
-
-
-def _find_similar_topic(ctx: ReducerContext, summary: str, memory):
+def _find_similar_topic(ctx: ReducerContext, summary: str, memory: ProvisionalMemory):
     """The best existing topic to merge this enrichment into, or None (DESIGN 12.3).
 
-    Two independent, deterministic signals, each subject to a polarity veto so a reversal never
-    merges into the thing it reverses:
+    Two independent, deterministic signals, each subject to a polarity veto:
     - lexical: summary text overlap >= ``topic_merge_similarity`` (catches near-identical wording).
     - semantic: cosine between this memory's embedding and the topic's (inherited from its source
       memory) >= ``topic_dedup_cosine`` (catches paraphrases). The cosine threshold is deliberately
@@ -122,24 +114,33 @@ def _find_similar_topic(ctx: ReducerContext, summary: str, memory):
     A threshold of 0 disables that signal; both 0 => no merging.
 
     Limitation: the polarity veto is computed on the *summaries*, while the semantic signal is on
-    the *memory* embeddings. A reversal expressed only in memory text but not surfaced in either
-    summary could therefore slip through the semantic path; embedding-level polarity would be needed
-    to close that fully. The very high cosine threshold keeps the blast radius small in practice.
+    the *memory* embeddings, so a reversal surfaced in a summary never merges, but one expressed
+    only in memory text (not in either summary) could slip through the semantic path; embedding-
+    level polarity would be needed to close that fully. The very high cosine threshold keeps the
+    blast radius small in practice.
     """
     lex_threshold = ctx.config.memory.topic_merge_similarity
     dedup_cos = ctx.config.memory.topic_dedup_cosine
     if lex_threshold <= 0.0 and dedup_cos <= 0.0:
         return None
-    new_emb = _memory_embedding(ctx, memory.id) if dedup_cos > 0.0 else None
+    topics = ctx.stores.memory.all_topics(limit=50)
+    # Batch every embedding this call needs in one query (new memory + each topic's source memory),
+    # rather than an N+1 lookup per topic.
+    embeddings: dict[str, tuple[str, list[float]]] = {}
+    new_emb = None
+    if dedup_cos > 0.0:
+        wanted = [memory.id, *(t.source_memory_id for t in topics if t.source_memory_id)]
+        embeddings = ctx.stores.memory.embeddings_by_memory(wanted)
+        new_emb = embeddings.get(memory.id)
 
     best, best_score = None, 0.0
-    for topic in ctx.stores.memory.all_topics(limit=50):
+    for topic in topics:
         if textsim.polarity_conflict(summary, topic.summary):
-            continue  # a polarity flip is never a duplicate, by either signal
+            continue  # a summary-level polarity flip is never a duplicate, by either signal
         lexical = textsim.similarity(summary, topic.summary) if lex_threshold > 0.0 else 0.0
         semantic = 0.0
         if new_emb is not None and topic.source_memory_id:
-            topic_emb = _memory_embedding(ctx, topic.source_memory_id)
+            topic_emb = embeddings.get(topic.source_memory_id)
             if topic_emb is not None and topic_emb[0] == new_emb[0]:  # same model (drift-safe)
                 semantic = vectors.cosine(new_emb[1], topic_emb[1])
         qualifies = (lex_threshold > 0.0 and lexical >= lex_threshold) or (
