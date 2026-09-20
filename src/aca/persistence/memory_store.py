@@ -89,8 +89,10 @@ class MemoryStore:
     def embeddings_by_memory(self, memory_ids: list[str]) -> dict[str, tuple[str, list[float]]]:
         """Map each given memory id to its ``(model_version, vector)`` (absent if not embedded).
 
-        Id-keyed so callers can look up in a caller-defined order (clustering is order-sensitive);
-        ``embeddings_for_memories`` returns the same data as an unordered list.
+        Id-keyed so callers can look them up in a caller-defined order (clustering and comparison
+        are order-sensitive). Ids without an embedding (a topic candidate, or a memory not yet
+        embedded) are simply absent. Callers must only compare same-model vectors — cosine across
+        models is meaningless (drift).
         """
         if not memory_ids:
             return {}
@@ -101,22 +103,6 @@ class MemoryStore:
             tuple(memory_ids),
         )
         return {r["provisional_memory_id"]: (r["model_version"], loads(r["vector"], [])) for r in rows}
-
-    def embeddings_for_memories(self, memory_ids: list[str]) -> list[tuple[str, list[float]]]:
-        """Return ``(model_version, vector)`` for each given memory that has an embedding.
-
-        Ids without an embedding (e.g. topic candidates, or a memory not yet embedded) are simply
-        absent. Callers must group by model_version before comparing — cosine across models is
-        meaningless (drift).
-        """
-        if not memory_ids:
-            return []
-        placeholders = ",".join("?" for _ in memory_ids)
-        rows = self._db.query_all(
-            f"SELECT model_version, vector FROM embeddings WHERE provisional_memory_id IN ({placeholders})",
-            tuple(memory_ids),
-        )
-        return [(r["model_version"], loads(r["vector"], [])) for r in rows]
 
     # --- topics --------------------------------------------------------------------------
     def insert_topic(self, t: Topic) -> None:

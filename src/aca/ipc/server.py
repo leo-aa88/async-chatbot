@@ -151,14 +151,16 @@ class IpcServer:
         return metrics
 
     def _semantic_dominance(self, since, threshold: float) -> tuple[int, int]:
-        """Largest semantic cluster among recently self-voiced (embeddable) candidates.
+        """Largest semantic cluster / embeddable set among recently self-voiced candidates.
 
         Observational only — never fed back into activation (that would be a self-reinforcing
         obsession loop). A spoken candidate is usually a TOPIC (enriched memories are dropped from
         candidacy), so a topic is resolved to its source memory's embedding; a raw memory candidate
         resolves directly; a deferred intent has no embedding and is skipped. Vectors are kept in
-        candidate order (clustering is order-sensitive) and grouped by embedding model before
-        comparing (cosine across models is meaningless).
+        candidate order (clustering is order-sensitive). Clustering stays within one embedding model
+        (cosine across models is meaningless), but the denominator is the whole embeddable set.
+        Returns ``(0, 0)`` when fewer than two candidates are embeddable — dominance is undefined
+        for a single message (the CLI renders it as ``—``).
         """
         from ..cognition.vectors import dominant_cluster_fraction
 
@@ -177,7 +179,7 @@ class IpcServer:
         embeddings = mem.embeddings_by_memory(memory_ids)
         ordered = [embeddings[mid] for mid in memory_ids if mid in embeddings]  # preserve order
         if len(ordered) < 2:
-            return (0, len(ordered))
+            return (0, 0)  # dominance is undefined for fewer than two messages -> rendered as "—"
         # Cluster within each embedding model (cosine across models is meaningless), but count the
         # denominator as the whole embeddable set. The largest single-model cluster is the numerator.
         by_model: dict[str, list] = {}
