@@ -81,6 +81,9 @@ class IpcServer:
             await p.write_message(writer, p.ok({"traces": self._logs()}))
         elif op == p.OP_METRICS:
             await p.write_message(writer, p.ok({"metrics": self._metrics()}))
+        elif op == p.OP_RECONCILE:
+            await self._service.reconcile_embeddings()
+            await p.write_message(writer, p.ok({"reconcile": "requested"}))
         elif op == p.OP_SHUTDOWN:
             await p.write_message(writer, p.ok({"shutting_down": True}))
             self._closed.set()

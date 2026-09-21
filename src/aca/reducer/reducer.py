@@ -22,6 +22,7 @@ from ..domain.events import (
     Event,
     HumanMessage,
     LLMResult,
+    ReconcileEmbeddings,
     RuntimeInterruptionDetected,
     StochasticWake,
     event_type_name,
@@ -38,6 +39,7 @@ from .handlers.lifecycle import (
     handle_runtime_interruption,
 )
 from .handlers.llm_result import handle_llm_result
+from .handlers.reconcile import handle_reconcile_embeddings
 from .handlers.wake import handle_stochastic_wake
 
 
@@ -56,6 +58,7 @@ class Reducer:
             AgentSuspending: handle_agent_suspending,
             AgentResumed: handle_agent_resumed,
             RuntimeInterruptionDetected: handle_runtime_interruption,
+            ReconcileEmbeddings: handle_reconcile_embeddings,
         }
 
     @property

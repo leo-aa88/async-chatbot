@@ -261,6 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("memories", help="recent provisional memories")
     sub.add_parser("topics", help="enriched topics")
     sub.add_parser("metrics", help="mechanical cognition metrics from the trace log")
+    sub.add_parser(
+        "reconcile-embeddings", help="backfill summary embeddings for topics missing one"
+    )
     return parser
 
 
@@ -280,6 +283,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_list(args, "topics", "topics", _fmt_topic)
         if args.command == "metrics":
             return _cmd_metrics(args)
+        if args.command == "reconcile-embeddings":
+            return _cmd_simple(args, "reconcile_embeddings")
         return _cmd_simple(args, args.command)
     except AcaError as exc:
         print(f"error: {exc}", file=sys.stderr)

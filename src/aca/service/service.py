@@ -23,6 +23,7 @@ from ..domain.events import (
     AgentSuspending,
     Event,
     HumanMessage,
+    ReconcileEmbeddings,
     RuntimeInterruptionDetected,
     StochasticWake,
 )
@@ -117,6 +118,10 @@ class AgentService:
         for work_id in plan.dispatch_work_ids:
             self._dispatcher.dispatch(work_id)
 
+        # Backfill summary embeddings for any topic missing one (e.g. created before the pipeline
+        # existed), so semantic dedup/dominance/continuity see the full history (DESIGN 12.3).
+        await self._process(ReconcileEmbeddings(ids.new_id(ids.EVENT), now, "service"))
+
         self._schedule_wake()
         self._loop_task = asyncio.ensure_future(self._reducer_loop())
         self._heartbeat_task = asyncio.ensure_future(self._heartbeat_loop())
@@ -158,6 +163,10 @@ class AgentService:
     # --- delivery sink wiring ------------------------------------------------------------
     def set_sink(self, sink: ClientSink) -> None:
         self._sink = sink
+
+    async def reconcile_embeddings(self) -> None:
+        """Trigger a topic-embedding backfill on the running service (idempotent, on-demand)."""
+        self._enqueue(ReconcileEmbeddings(ids.new_id(ids.EVENT), self._clock.now_utc(), "cli"))
 
     async def notify_client_connected(self) -> None:
         """On (re)connect, attempt delivery: mandatory first, one revalidated proactive."""

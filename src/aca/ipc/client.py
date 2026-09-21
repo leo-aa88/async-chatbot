@@ -62,6 +62,9 @@ class IpcClient:
     async def shutdown(self) -> dict:
         return await self.request_once(p.OP_SHUTDOWN)
 
+    async def reconcile_embeddings(self) -> dict:
+        return await self.request_once(p.OP_RECONCILE)
+
     async def subscribe(self, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
         """Open a subscription and stream delivered messages to ``handler`` until closed."""
         reader, writer = await self._open()
