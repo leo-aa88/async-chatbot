@@ -367,7 +367,7 @@ DORMANT
 
 Mode is inferred from recent cadence and turn structure, not only one timeout. A proactive message must not switch an unrelated `ACTIVE` conversation to another topic merely because an old memory became salient.
 
-Mode is a coarse, cadence-based signal. It says *whether* a conversation is live, not *what it is about*. The v0.7 extension (§34) adds a **memory-anchored discourse focus** to conversation state — the identifier of the provisional memory of the current focus-setting turn, plus when it was set — so the finer promise above ("don't switch an unrelated live conversation to another topic") can be enforced against a subject, not just a timeout. It is anchored to a *memory*, not a topic, because the memory exists synchronously while topic enrichment is asynchronous (see §34.3).
+Mode is a coarse, cadence-based signal. It says *whether* a conversation is live, not *what it is about*. The v0.7 extension (§34) adds a **memory-anchored discourse focus** to conversation state — the id of the provisional memory of the current focus-setting turn — and, while mode is `IDLE`, enforces that a proactive message be compatible with that subject. So the finer promise above ("don't switch an unrelated live conversation to another topic") is enforced against a subject, not just a timeout. It is anchored to a *memory*, not a topic, because the memory exists synchronously while topic enrichment is asynchronous (see §34.3).
 
 ### 7.5 Identity and lifecycle state
 
@@ -765,12 +765,12 @@ proactive cooldown clear?
 conversation mode permits this initiative?
 outside configured user quiet hours?
 result not superseded by newer state?
-compatible with the current discourse focus?  (v0.7, §34 — active only while focus is warm)
+compatible with the current discourse focus?  (v0.7, §34 — active only while mode is IDLE)
 ```
 
 A hard proactive gate never suppresses an explicit user task merely because the autonomous/proactive budget is exhausted.
 
-The discourse-focus gate (§34) is conditional: it applies only while a conversational focus is *warm* and gates outward proactive **speech**, never candidacy — an unrelated thought is still had and retained, it just isn't voiced into the wrong conversation. It is inactive during dormancy, so autonomous resurfacing is preserved.
+The discourse-focus gate (§34) is conditional: it applies only while conversation mode is `IDLE` and gates outward proactive **speech**, never candidacy — an unrelated thought remains a selectable candidate, it just isn't voiced into the wrong conversation. It is inactive during `DORMANT`, so autonomous resurfacing is preserved.
 
 ### 11.2 Proactive cooldown
 
@@ -1664,7 +1664,7 @@ Checks include:
 - no newer human event superseded the candidate;
 - the intent has not already been expressed/resolved;
 - capability/policy still permits output;
-- the candidate is still discourse-compatible with the *current* focus while that focus is warm (v0.7, §34.6) — a candidate that was output-eligible at dispatch (or dispatched fail-open before the focus was embedded) but is now an `ORPHAN` is dropped here, exactly as a semantic near-repeat is.
+- the candidate is still discourse-compatible with the *current* focus while mode is `IDLE` (v0.7, §34.6) — a candidate that was output-eligible at dispatch (or dispatched fail-open before the focus was embedded) but is now an `ORPHAN` is dropped here, exactly as a semantic near-repeat is; the delayed-delivery re-check adds a new discourse pass in the proactive delivery path (§34.6 checkpoint 3).
 
 If any pre-outbox check fails, the reducer drops or defers the message. If a delivery-time check fails, the pending proactive item expires, is superseded, or is coalesced. Neither path regenerates inline.
 
@@ -2468,7 +2468,7 @@ These rules remain hard-coded outside the LLM:
 38. **Outbound delivery is idempotency-aware and time-sensitive.** Delivery keys suppress supported duplicates; proactive items have TTL/coalescing and cannot dogpile on reconnect.
 39. **Heavy local inference is off the reducer/event loop.** CPU-bound embedding/perception work runs in a process pool or a native runtime known not to block the Python event loop.
 40. **Hard real-time robot control is outside ACA.** Future embodiment delegates stabilization/safety loops to deterministic lower-level controllers.
-41. **Discourse-focus gating is proactive-only, expression-only, and warm-scoped (v0.7).** It may suppress outward *proactive* speech unrelated to the current conversational focus *while that focus is warm* (`focus_set_at + warm_window`, `active_within ≤ warm_window < idle_within`); it runs only on proactive cycles and is revalidated at the same checkpoints as any proactive SPEAK (before dispatch, pre-outbox, and before delivery — invariant 9). It never removes a thought from candidacy, never blocks reactive or mandatory responses, is computed from stored embeddings by code (no LLM authority) using its own thresholds distinct from the observational advance-rate/dominance cuts, and is inactive when no warm focus (or focus vector) exists — so autonomous resurfacing during dormancy is preserved.
+41. **Discourse-focus gating is proactive-only, expression-only, and `IDLE`-scoped (v0.7).** It may suppress outward *proactive* speech unrelated to the current conversational focus **only while conversation mode is `IDLE`** (`ACTIVE` is already fully suppressed; `DORMANT` is left open so autonomous resurfacing is preserved). It runs only on proactive cycles and is revalidated before outbox and before delivery like any proactive SPEAK (invariant 9). It never removes a thought from candidacy, never blocks reactive or mandatory responses, is computed from stored embeddings by code (no LLM authority) using its own thresholds distinct from the observational advance-rate/dominance cuts, and is inactive when mode is not `IDLE` or no focus vector exists.
 
 ## 31. Open questions
 
@@ -2534,7 +2534,7 @@ What shape should `f_observed-silence` use once there is real interaction data? 
 
 ### 31.15 Discourse-focus calibration (v0.7)
 
-The warm-window *duration* is **structural**, not a free tuning knob: §34.7 pins it to the prototype's own cadence (`warm_window ≥ active_within` and `< idle_within`, default `10m`) so the gate always covers the warm-but-`IDLE` zone where orphans occur and never bleeds into `DORMANT` resurfacing. What remains genuinely empirical is: the exact value inside that bracket; the **affinity thresholds** separating `CONTINUE` / `BRIDGE` / `ORPHAN` (which must be their own config keys, independent of the observational cuts — §34.5); and the **backchannel** rule deciding which human turns are too contentless to move the focus. The relation classifier is cosine-only in v0.7 by design; whether an LLM-proposed relation (deterministically gated, per invariant 5) later improves `BRIDGE`/`REOPEN` judgment is deferred until the cosine version's failure modes are measured.
+When the gate is active is **structural, not a tuning knob**: §34.7 ties it to `mode == IDLE`, so it always covers the `IDLE` orphan zone and never reaches `DORMANT`, for every accepted cadence config (the `IDLE` band is defined by the operator's existing `active_within`/`idle_within`). What remains genuinely empirical is: the **affinity thresholds** separating `CONTINUE` / `BRIDGE` / `ORPHAN` (which must be their own config keys, independent of the observational cuts — §34.5); and the **backchannel** rule deciding which human turns are too contentless to move the focus subject. The relation classifier is cosine-only in v0.7 by design; whether an LLM-proposed relation (deterministically gated, per invariant 5) later improves `BRIDGE`/`REOPEN` judgment is deferred until the cosine version's failure modes are measured.
 
 ## 32. Future directions
 
@@ -2620,23 +2620,24 @@ The global candidate pool (`build_candidates`, §12.7) compounds this: every act
 
 ### 34.3 Discourse focus state
 
-Conversation state (§7.4 mode; §7.6 temporal state) gains a **discourse focus**:
+Conversation state (§7.4 mode; §7.6 temporal state) gains one **discourse focus** field:
 
 | Field | Meaning |
 |---|---|
-| discourse focus id | the id of the provisional **memory** of the current focus-setting human turn (or none) |
-| focus set-at | the UTC wall time it was set (drives the warm window, §34.7) |
+| discourse focus id | the id of the provisional **memory** of the current focus-setting human turn (the conversation's *subject*), or none |
+
+The focus records only the *subject* ("what is this conversation about"). **Whether** the conversation is warm enough to enforce it is not a second timestamp — it is the existing conversation `mode` (§34.7). This is deliberate: keeping warmth on the one cadence signal `infer_mode` already computes avoids a second clock that can diverge from it.
 
 The focus is anchored to the **provisional memory**, not a topic, deliberately: the memory of a human turn exists synchronously when the turn is reduced, whereas topic enrichment (§12.3) and its summary embedding are asynchronous and may not exist for seconds. The memory is the earliest durable, embeddable representation of "what the human just made this conversation about." (`ConversationState` is the implementing type; this schema is the DESIGN-level contract.)
 
-An optional monotonic `discourse_epoch` may accompany these fields for tracing, but it is not load-bearing in v0.7: the human-turn-after-cycle-start transition it would guard is already covered by supersession (§34.2).
+An optional monotonic `discourse_epoch` may accompany this field for tracing, but it is not load-bearing in v0.7: the human-turn-after-cycle-start transition it would guard is already covered by supersession (§34.2).
 
 ### 34.4 Focus lifecycle
 
 The focus is set by the reducer (single writer, invariant 2) inside the human-message handler, and only there. It moves on a **focus-setting** turn and is left unchanged by a **backchannel**:
 
 - **focus-setting** — any substantive human turn, *including short topic-shifting questions* ("what about a coma?"). Shortness is not contentlessness; a brief question can assert a whole new subject.
-- **backchannel** — contentless acknowledgements ("ok", "noted", "alright", "lol") that continue rather than redirect. These already surface as low-salience / `DO_NOT_ENRICH` memories (§12.8), must not move the focus, and (per §34.7) must not extend the warm window.
+- **backchannel** — contentless acknowledgements ("ok", "noted", "alright", "lol") that continue rather than redirect. These already surface as low-salience / `DO_NOT_ENRICH` memories (§12.8) and must not move the focus *subject*. They do, like any human turn, refresh the cadence `infer_mode` reads — which is exactly what keeps warmth and subject consistent (§34.7): an ack train keeps the conversation warm *and still about the last substantive subject*, and when the whole conversation lapses the mode itself goes cold. There is no separate warm clock for a backchannel to desynchronize.
 
 Two edge cases are specified rather than left implicit:
 
@@ -2671,65 +2672,68 @@ Consequence to state plainly: the motivating live orphan is a **topic** candidat
 
 The relation is a per-decision structural signal computed from vectors — never the observational advance-rate or topic-dominance metric.
 
-### 34.6 Where the gate sits: thought ≠ message, and three checkpoints
+### 34.6 Where the gate sits: thought ≠ message, and its checkpoints
 
-The gate changes expression, not cognition. Candidacy is untouched — the agent keeps thinking associatively, and an off-topic thought is still generated, activated, and retained. It is **proactive-only**: it runs on `CYCLE_PROACTIVE` and is never consulted on a mandatory or optional-reactive cycle (invariants 11–13). It compares the **candidate vector** to the **focus vector** — an output-*eligibility* decision, not a judgment of a drafted sentence — so it can run before the generative call is spent.
+The gate changes expression, not cognition. "Candidacy untouched" means the off-topic thought **stays a candidate** — it is not removed from the pool and remains selectable on a later wake; it does **not** mean this cycle reinforces or generates it. It is **proactive-only**: it runs on `CYCLE_PROACTIVE` and is never consulted on a mandatory or optional-reactive cycle (invariants 11–13). It compares the **candidate vector** to the **focus vector** — an output-*eligibility* decision, not a judgment of a drafted sentence — so it can run before the generative call is spent.
 
-Because a proactive `SPEAK` must be revalidated before outbox and again before delivery (invariant 9), the gate runs at the **same three checkpoints as the semantic-repeat mute**, not just at selection:
+A muted `ORPHAN` winner takes the **same path the continuity mute already takes** in `wake.py`, which is not uniform:
+
+- if the candidate is **enrichment-eligible** (a RAW, salient provisional memory): it is dispatched **enrichment-only** (`output_eligible=false`, `LLM_ENRICHMENT`) — the memory is enriched but nothing is voiced;
+- otherwise (a `TOPIC`, or a memory that fails the enrichment quality gate): `wake.py` returns **before** `_materialize_selected` and before creating work — the cycle ends at silence, **no activation is reinforced and no generative call is made**. The candidate simply remains stored for a future wake.
+
+So the earlier phrasing "the thought is applied to state" holds only on the enrichment path; the topic-orphan path is plain silence. Both outcomes preserve the core distinction (§33): a thought is not a message.
+
+Because a proactive `SPEAK` must be revalidated before outbox and again before delivery (invariant 9), the gate runs at more than selection. The semantic-repeat mute today implements **two** such checkpoints — wake pre-dispatch and `llm_result` pre-outbox; there is **no** existing delivery-time semantic check to mirror (`DeliveryPump` calls only the candidate-agnostic `evaluate_proactive`). The discourse gate matches those two and **adds new delivery-time plumbing**:
 
 ```text
-1. wake.py         set output_eligible BEFORE dispatch      (don't spend the LLM call to draft an orphan)
-2. llm_result.py   re-check vs CURRENT focus + vectors       BEFORE create_outbound  (pre-outbox)
-3. delivery time   re-check before transport                 (delayed proactive item)
+1. wake.py                      set output_eligible BEFORE dispatch   (mirrors is_semantic_repeat)
+2. llm_result.py pre-outbox     re-check vs CURRENT focus + vectors    (mirrors is_semantic_repeat)
+3. DeliveryPump (NEW plumbing)  re-check the persisted outbound item's candidate_kind/candidate_id
+                                against the current focus + vectors, before transport
 ```
 
-Checkpoint 2 is not optional: the §34.5 fail-open *creates* the in-flight case — a wake with no focus vector yet dispatches output-eligible, the focus embedding lands, and by the time `LLMResult` arrives the candidate is now `ORPHAN`. Without the pre-outbox re-check the orphan is spoken after a slow LLM. (§22.2's checklist is updated accordingly.) Because this is a proactive-only expression check, it belongs beside `is_semantic_repeat`, **not** inside the candidate-agnostic `evaluate_proactive` and **not** in any shared helper the reactive path also calls.
+Checkpoint 2 is not optional: the §34.5 fail-open *creates* the in-flight case — a wake with no focus vector yet dispatches output-eligible, the focus embedding lands, and by the time `LLMResult` arrives the candidate is now `ORPHAN`. Without the pre-outbox re-check the orphan is spoken after a slow LLM. Checkpoint 3 is genuinely new code (not a placement beside an existing check) and covers a proactive item that was on-topic at decision time but is delivered late, after the conversation moved on; it reads the outbound row's persisted `candidate_kind`/`candidate_id` (§23.7) rather than a live candidate object. Because all three are proactive-only expression checks, they belong beside `is_semantic_repeat` and in the proactive delivery path — **not** inside the candidate-agnostic `evaluate_proactive` and **not** in any shared helper the reactive path also calls. (§22.2's checklist is updated accordingly.)
 
 ```text
 candidate selected              (unchanged; global pool)
     ↓
 hard gates + semantic-repeat    (§11.1 — unchanged)
     ↓
-discourse-focus gate            (§34 — new, warm-scoped, checkpoints 1–3)
+discourse-focus gate            (§34 — new, IDLE-scoped, checkpoints 1–3)
     ↓
 speak / enrichment-only / silence
 ```
 
-`CONTINUE`/`BRIDGE` are expression-eligible; `ORPHAN` degrades to enrichment-only or silence exactly as the continuity mute does for a near-repeat (the thought is applied to state, not voiced). This preserves the core distinction (§33): a thought is not a message.
-
 **Accepted v0.7 silence consequence.** Because candidacy is untouched and parking is deferred (§34.8), when the global-pool winner is an `ORPHAN` in a warm conversation the cycle says **nothing** — it does *not* fall back to an on-topic runner-up that lost the sample. A hot off-topic topic that keeps winning softmax is muted on every warm wake while on-topic candidates go unspoken; the human can see silence in a warm conversation. This is a new, deliberate silence mode for v0.7. Removing it would require a bounded re-sample of the pool for an on-topic candidate — which *is* a candidacy change — and is therefore explicitly out of MVP scope.
 
-### 34.7 The warm window (the load-bearing rule)
+### 34.7 When the gate is active (the load-bearing rule)
 
-The discourse-focus gate is **active only while the focus is warm** — within `focus_set_at + warm_window`, measured in UTC wall time (durable chronology, invariant 33). Outside it, the gate is inactive and expression falls back to the v0.6 gates unchanged.
+The discourse-focus gate is **active exactly while conversation mode is `IDLE`**. There is no separate `warm_window` parameter: warmth *is* `IDLE`, read from the mode `infer_mode` already computes. Outside `IDLE` the gate is inactive and expression falls back to the v0.6 gates unchanged.
 
-This scoping is not an optimization; it is what keeps the extension from amputating a core behavior. During genuine dormancy there is no live conversation to be "compatible" with, and resurfacing an older thread hours later — "I've been thinking about the robot architecture from earlier…" — is precisely the autonomous behavior the whole project is built to produce (§12.7, §16). A gate that suppressed low-affinity candidates unconditionally would turn every idle resurfacing into an `ORPHAN` and silence it.
+Reusing mode is what makes the contract satisfiable and un-desynchronizable, which a separate window was not:
 
-**The duration is structural, not a free knob.** The gate must cover the zone where orphans actually occur — `IDLE` wakes after the `ACTIVE` cadence has lapsed but while the human's subject is still live — and must *not* reach into `DORMANT`, where resurfacing is the point. So it is pinned to the prototype's own cadence:
+- **`ACTIVE`** (`gap ≤ active_within`): the mode gate already suppresses *all* unsolicited speech (`proactive_allowed_in_mode` requires `mode is not ACTIVE`), so the discourse gate is moot here.
+- **`IDLE`** (`active_within < gap ≤ idle_within`): mode permits initiative; the discourse gate enforces affinity against the current focus subject — `CONTINUE`/`BRIDGE` may speak, `ORPHAN` is suppressed. **This is the orphan zone**, and it is exactly where the live-trace failure occurred (the prototype's `active_within` is short — 20s in the running config — so a proactive wake ~28s after a turn is already `IDLE`).
+- **`DORMANT`** (`gap > idle_within`): gate inactive; autonomous resurfacing — "I've been thinking about the robot architecture from earlier…" — proceeds under the existing gates. This is the behavior the whole project exists to produce (§12.7, §16); a gate that reached into `DORMANT` would silence it, which is why the gate stops at the `IDLE`/`DORMANT` boundary.
 
-```text
-warm_window  >=  conversation.active_within   (so a warm-but-IDLE enforcement zone exists at all)
-warm_window  <   conversation.idle_within     (so it never gags DORMANT resurfacing)
-default: 10m   (with active_within = 3m, idle_within = 30m)
-```
+`gap` is `now − last_human_message_at`, the single cadence signal mode already uses (UTC wall time, invariant 33). Because warmth and mode read the same signal, the two-clock divergence a separate window suffered from cannot occur:
 
-- **`ACTIVE`** (cadence still live): the mode gate already suppresses *all* unsolicited speech, so the discourse gate is moot here.
-- **warm ∧ `IDLE`** (`active_within` … `warm_window` since focus): mode permits initiative; the discourse gate enforces affinity — `CONTINUE`/`BRIDGE` may speak, `ORPHAN` is suppressed. **This is the orphan zone.**
-- **cold / `DORMANT`** (past `warm_window`, or focus stale): gate inactive; autonomous resurfacing proceeds under the existing gates.
+- A **backchannel** refreshes `last_human_message_at` (so it keeps the conversation `ACTIVE`/`IDLE`, warm) but does **not** move the focus *subject* (§34.4). The gate therefore keeps enforcing affinity to the last *substantive* subject through an acknowledgement train — the case a `focus_set_at`-anchored window got wrong (there, focus went cold while the conversation was still live, re-admitting orphans).
+- When the whole conversation lapses (no human turn for `idle_within`), mode itself becomes `DORMANT` and the gate turns off — the correct point to allow resurfacing again. Agent downtime that elapses `idle_within` likewise yields `DORMANT`, which is correct (invariant 31).
 
-A window shorter than `active_within` would expire before `IDLE` even begins and never cover its zone; a window of hours would gag idle resurfacing. Backchannels keep a conversation `ACTIVE` but do **not** refresh `focus_set_at`, so warm cannot be indefinitely extended by an acknowledgement train (and while such a train keeps the conversation `ACTIVE`, mode covers it regardless). Agent downtime naturally pushes a focus past `warm_window` into cold, which is the correct outcome — after a long gap, resurfacing should be allowed (invariant 31).
+**Degenerate cadence configs are well-defined, not broken.** If an operator sets `idle_within == active_within` there is no `IDLE` band at all (mode steps straight from `ACTIVE` to `DORMANT`); the gate then simply has no zone in which it is active. That is a valid operator choice — the gate is off — not an unsatisfiable spec. (`config.py` already forbids `idle_within < active_within`.)
 
-**Fail-open on a missing focus vector** (per §34.5 rule 1): when `focus_memory_id` has no vector yet, the gate does not fire for that wake; the orphan it might have let through is caught at checkpoint 2 (§34.6) once the focus vector lands.
+**Fail-open on a missing focus vector** (per §34.5 rule 1): while `IDLE`, when `focus_memory_id` has no vector yet, the gate does not fire for that wake; the orphan it might have let through is caught at checkpoint 2 (§34.6) once the focus vector lands.
 
 ### 34.8 Parked insights and REOPEN (deferred)
 
 A thought that is cognitively strong but conversationally unfit now should not simply be discarded — it should become sayable *later*, when its subject is live again. The v0.6 `DeferredIntent` (§16) is the natural home: a high-salience `ORPHAN` may be parked as a deferred intent anchored to its own topic, and become expression-eligible when a future focus makes it `CONTINUE`/`BRIDGE`. When it does resurface it should be spoken as a *deliberate* return ("going back to something from earlier…"), which is the `REOPEN` relation.
 
-Both parking and `REOPEN` are **deferred past the v0.7 MVP** on purpose: `REOPEN` is a new generative behavior with its own threshold and phrasing, and adding it before the basic on-topic gate is stable would compound two unproven mechanisms. v0.7 ships the warm-window `CONTINUE`/`BRIDGE`/`ORPHAN` gate; parking and `REOPEN` follow once its failure modes are measured.
+Both parking and `REOPEN` are **deferred past the v0.7 MVP** on purpose: `REOPEN` is a new generative behavior with its own threshold and phrasing, and adding it before the basic on-topic gate is stable would compound two unproven mechanisms. v0.7 ships the `IDLE`-scoped `CONTINUE`/`BRIDGE`/`ORPHAN` gate; parking and `REOPEN` follow once its failure modes are measured.
 
 ### 34.9 Determinism, boundaries, and scope
 
-- **Determinism / single writer.** `focus_memory_id`/`focus_set_at` are written only by the reducer in the human-message handler. Affinity is a pure function of stored vectors, so the decision replays under a recorded clock and stored embeddings (invariant 28). No new clock/RNG reads.
+- **Determinism / single writer.** The discourse focus (`focus_memory_id`) is written only by the reducer in the human-message handler. Warmth is derived from mode (a function of `last_human_message_at`), and affinity is a pure function of stored vectors, so the decision replays under a recorded clock and stored embeddings (invariant 28). No new clock/RNG reads.
 - **LLM is not authority (invariant 5).** v0.7's relation is computed from embeddings by code. Should an LLM later *propose* a relation (§31.15), it remains a proposal the deterministic gate may accept or reject — never the gate itself.
 - **Cognitive vs conversational salience.** This section introduces a second, distinct notion of salience: a thought's intrinsic worth (its candidate score) is separate from its fitness for the current discourse (its affinity). "Remember it" and "say it now" are different decisions; §34 governs only the second.
 - **Dependency.** Focus→memory affinity works today (provisional-memory embeddings are eager). Focus→**topic** affinity requires topic-summary vectors to be populated, so the gate is only fully effective once the summary-embedding backfill (topic-embedding reconcile) has run.
@@ -2738,10 +2742,11 @@ Both parking and `REOPEN` are **deferred past the v0.7 MVP** on purpose: `REOPEN
 
 These pin the intended behavior and belong in the adversarial/counterfactual harness (§26, §27.2):
 
-1. **Orphan suppressed while warm.** In a warm `IDLE` conversation whose focus is personal-identity/continuity, an embedding-adapter topic candidate (with its summary embedding present) is `ORPHAN` → stored, not spoken. (The live-trace failure.)
-2. **Idle resurfacing preserved.** In a cold/`DORMANT` state, a low-affinity candidate still speaks — the warm-window rule must not silence autonomous resurfacing. *This is the guard on the extension itself: it fails if the gate is ever made unconditional.*
-3. **Tasks are never gated.** A `DIRECT_TASK` / re-prompt (mandatory) is answered while warm even if its content is `ORPHAN` to the focus (invariants 11–13).
-4. **Optional-reactive untouched.** An optional social reply is unaffected by the discourse gate (proactive-only).
-5. **Threshold independence.** A candidate whose affinity falls in the observational "switch" band is **not** automatically `ORPHAN` unless `discourse_bridge_cosine` independently places it there.
-6. **Pre-outbox catch after fail-open.** Focus vector absent at wake ⇒ dispatched output-eligible; the focus embedding lands mid-flight; at `LLMResult` the candidate is now `ORPHAN` ⇒ dropped pre-outbox, not spoken (§34.6 checkpoint 2).
-7. **Backfill dependency.** Before `topic_embeddings` is populated, a topic candidate has no vector ⇒ not `ORPHAN` (§34.5 rule 2); the gate only bites once the backfill has run.
+1. **Orphan suppressed while `IDLE`.** In an `IDLE` conversation whose focus is personal-identity/continuity, an embedding-adapter topic candidate (with its summary embedding present) is `ORPHAN` → stored, not spoken. (The live-trace failure.)
+2. **Dormant resurfacing preserved.** In `DORMANT`, a low-affinity candidate still speaks — the `IDLE`-scoping must not silence autonomous resurfacing. *This is the guard on the extension itself: it fails if the gate is ever made unconditional.*
+3. **Backchannel train keeps the gate on the substantive subject.** Substantive turn about X at t0; an `ok` backchannel at t1 refreshes cadence but not the focus subject; a later `IDLE` wake with an unrelated candidate is still `ORPHAN` against X (not re-admitted). This is the sequence a `focus_set_at`-anchored window got wrong.
+4. **Tasks are never gated.** A `DIRECT_TASK` / re-prompt (mandatory) is answered while `IDLE` even if its content is `ORPHAN` to the focus (invariants 11–13).
+5. **Optional-reactive untouched.** An optional social reply is unaffected by the discourse gate (proactive-only).
+6. **Threshold independence.** A candidate whose affinity falls in the observational "switch" band is **not** automatically `ORPHAN` unless `discourse_bridge_cosine` independently places it there.
+7. **Pre-outbox catch after fail-open.** Focus vector absent at wake ⇒ dispatched output-eligible; the focus embedding lands mid-flight; at `LLMResult` the candidate is now `ORPHAN` ⇒ dropped pre-outbox, not spoken (§34.6 checkpoint 2).
+8. **Backfill dependency.** Before `topic_embeddings` is populated, a topic candidate has no vector ⇒ not `ORPHAN` (§34.5 rule 2); the gate only bites once the backfill has run.
