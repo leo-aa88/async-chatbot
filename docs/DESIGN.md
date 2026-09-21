@@ -2634,17 +2634,18 @@ An optional monotonic `discourse_epoch` may accompany this field for tracing, bu
 
 ### 34.4 Focus lifecycle
 
-The focus is set by the reducer (single writer, invariant 2) inside the human-message handler, and only there. It moves on a **focus-setting** turn and is left unchanged by a **backchannel**:
+The focus is set by the reducer (single writer, invariant 2) inside the human-message handler, and only there. Every human turn is one of two kinds, and the transition depends on the kind **and the pre-turn mode** (evaluated before the handler updates `last_human_message_at`):
 
-- **focus-setting** — any substantive human turn, *including short topic-shifting questions* ("what about a coma?"). Shortness is not contentlessness; a brief question can assert a whole new subject.
-- **backchannel** — contentless acknowledgements ("ok", "noted", "alright", "lol") that continue rather than redirect. These already surface as low-salience / `DO_NOT_ENRICH` memories (§12.8) and must not move the focus *subject*. They do, like any human turn, refresh the cadence `infer_mode` reads — which is exactly what keeps warmth and subject consistent (§34.7): an ack train keeps the conversation warm *and still about the last substantive subject*, and when the whole conversation lapses the mode itself goes cold. There is no separate warm clock for a backchannel to desynchronize.
+- **focus-setting** — any substantive human turn, *including short topic-shifting questions* ("what about a coma?"). Shortness is not contentlessness; a brief question can assert a whole new subject. Focus ⇒ this turn's provisional memory id. (If a focus-setting turn somehow creates no memory, keep the previous focus.)
+- **backchannel** — a contentless continuation ("ok", "noted", "alright", "lol"), whether or not it creates a memory. It never sets the focus to itself. What it does to the *existing* focus depends on the pre-turn mode:
+  - **pre-turn `ACTIVE`/`IDLE`** (a live conversation): **keep** the focus. This is the acknowledgement-train case — the conversation is still about the last substantive subject, and holding it is what keeps warmth (the refreshed cadence) and subject consistent through the train.
+  - **pre-turn `DORMANT`** (the conversation had lapsed): **clear** the focus (→ none). A contentless turn after dormancy signals presence, not a subject; it must **not** revive yesterday's stale subject. With no focus, the gate is inactive (§34.5 rule 1) until a substantive turn sets a new one — so dormancy's restoration of autonomous resurfacing is not undone by an `ok`.
 
-Two edge cases are specified rather than left implicit:
+This retirement rule is why warmth-follows-mode (§34.7) is safe: mode says *whether* we are in a conversation, and the focus says *what it is about*; a backchannel refreshes the former but the latter is only revived by substance, never by a bare acknowledgement across a dormancy gap.
 
-- **A focus-setting turn that creates no provisional memory** (e.g. a trivial/empty turn that is nonetheless not a recognized backchannel) has no id to store; the previous focus is **kept** rather than cleared.
-- **Agent speech does not move the focus** in v0.7. A voiced `BRIDGE` becomes, informally, the new thing the agent just made the conversation about, but the next wake is still scored against the last human focus memory. Letting agent output advance the focus is a deliberate later refinement, not part of the MVP.
+**Backchannel vs focus-setting is its own small, conservative classification — not the existing task/social class or memory status.** The current ingress signals are insufficient and must not be reused as-is: `ok`/`lol` are trivial and create *no* provisional memory, while `noted`/`alright` are classified `STATEMENT` (salience 0.5, a `RAW` memory) — none are `DO_NOT_ENRICH`. An implementation that keyed "backchannel" off memory status or the ack-token set would let `noted`/`alright` become the focus and score the next `IDLE` wake against "noted" instead of the real subject. The v0.7 predicate is a dedicated conservative check; erring toward "focus-setting" is safe (it keeps the gate anchored to a real subject), and the tokens above are explicit regression cases (§34.10).
 
-The classifier is the cheap, conservative kind already used for task/social routing (§20); the open calibration question is §31.15. Erring toward "focus-setting" is safe: it keeps the gate anchored to the most recent real subject.
+**Agent speech does not move the focus** in v0.7. A voiced `BRIDGE` becomes, informally, the new thing the agent just made the conversation about, but the next wake is still scored against the last human focus memory. Letting agent output advance the focus is a deliberate later refinement, not part of the MVP.
 
 ### 34.5 Discourse relations and thresholds
 
@@ -2744,9 +2745,11 @@ These pin the intended behavior and belong in the adversarial/counterfactual har
 
 1. **Orphan suppressed while `IDLE`.** In an `IDLE` conversation whose focus is personal-identity/continuity, an embedding-adapter topic candidate (with its summary embedding present) is `ORPHAN` → stored, not spoken. (The live-trace failure.)
 2. **Dormant resurfacing preserved.** In `DORMANT`, a low-affinity candidate still speaks — the `IDLE`-scoping must not silence autonomous resurfacing. *This is the guard on the extension itself: it fails if the gate is ever made unconditional.*
-3. **Backchannel train keeps the gate on the substantive subject.** Substantive turn about X at t0; an `ok` backchannel at t1 refreshes cadence but not the focus subject; a later `IDLE` wake with an unrelated candidate is still `ORPHAN` against X (not re-admitted). This is the sequence a `focus_set_at`-anchored window got wrong.
-4. **Tasks are never gated.** A `DIRECT_TASK` / re-prompt (mandatory) is answered while `IDLE` even if its content is `ORPHAN` to the focus (invariants 11–13).
-5. **Optional-reactive untouched.** An optional social reply is unaffected by the discourse gate (proactive-only).
-6. **Threshold independence.** A candidate whose affinity falls in the observational "switch" band is **not** automatically `ORPHAN` unless `discourse_bridge_cosine` independently places it there.
-7. **Pre-outbox catch after fail-open.** Focus vector absent at wake ⇒ dispatched output-eligible; the focus embedding lands mid-flight; at `LLMResult` the candidate is now `ORPHAN` ⇒ dropped pre-outbox, not spoken (§34.6 checkpoint 2).
-8. **Backfill dependency.** Before `topic_embeddings` is populated, a topic candidate has no vector ⇒ not `ORPHAN` (§34.5 rule 2); the gate only bites once the backfill has run.
+3. **Backchannel train keeps the gate on the substantive subject.** Substantive turn about X at t0; an `ok` backchannel at t1 (pre-turn `IDLE`) refreshes cadence but not the focus subject; a later `IDLE` wake with an unrelated candidate is still `ORPHAN` against X (not re-admitted). This is the sequence a `focus_set_at`-anchored window got wrong.
+4. **Backchannel after dormancy retires the subject.** Focus X set long ago; the conversation is `DORMANT`; a bare `ok` (or empty turn) arrives. Pre-turn mode was `DORMANT`, so the focus is **cleared** — a subsequent `IDLE` wake about an unrelated Y **speaks** (gate inactive, no focus), not suppressed against yesterday's X.
+5. **`noted`/`alright` are backchannels, not subjects.** Despite being `STATEMENT`/`RAW` at ingress, `noted` and `alright` do **not** become the focus; the next `IDLE` wake is scored against the prior substantive subject, not the acknowledgement text.
+6. **Tasks are never gated.** A `DIRECT_TASK` / re-prompt (mandatory) is answered while `IDLE` even if its content is `ORPHAN` to the focus (invariants 11–13).
+7. **Optional-reactive untouched.** An optional social reply is unaffected by the discourse gate (proactive-only).
+8. **Threshold independence.** A candidate whose affinity falls in the observational "switch" band is **not** automatically `ORPHAN` unless `discourse_bridge_cosine` independently places it there.
+9. **Pre-outbox catch after fail-open.** Focus vector absent at wake ⇒ dispatched output-eligible; the focus embedding lands mid-flight; at `LLMResult` the candidate is now `ORPHAN` ⇒ dropped pre-outbox, not spoken (§34.6 checkpoint 2).
+10. **Backfill dependency.** Before `topic_embeddings` is populated, a topic candidate has no vector ⇒ not `ORPHAN` (§34.5 rule 2); the gate only bites once the backfill has run.
