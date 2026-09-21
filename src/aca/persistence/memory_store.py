@@ -142,10 +142,12 @@ class MemoryStore:
     def update_topic(self, t: Topic) -> None:
         self._db.execute(
             """UPDATE topics SET summary=?, tags=?, activation=?, importance=?, unfinished=?,
-                decay_rate_per_hour=?, evidence_count=?, last_activated_at=? WHERE id=?""",
+                decay_rate_per_hour=?, evidence_count=?, source_memory_id=?, last_activated_at=?
+                WHERE id=?""",
             (
                 t.summary, dumps(list(t.tags)), t.activation, t.importance, int(t.unfinished),
-                t.decay_rate_per_hour, t.evidence_count, txt(t.last_activated_at), t.id,
+                t.decay_rate_per_hour, t.evidence_count, t.source_memory_id,
+                txt(t.last_activated_at), t.id,
             ),
         )
 
@@ -154,15 +156,38 @@ class MemoryStore:
         return None if row is None else self._to_topic(row)
 
     def delete_topic(self, topic_id: str) -> None:
-        """Remove a topic and its summary embedding (used when merging a duplicate away)."""
+        """Remove a topic and its summary embedding (used when merging a duplicate away).
+
+        Also drops any expression-suppression row still keyed to the dead id so it can't orphan
+        (no FK). ``merge_expression`` should run first to carry the timestamp to the survivor.
+        """
         self._db.execute("DELETE FROM topics WHERE id=?", (topic_id,))
         self._db.execute("DELETE FROM topic_embeddings WHERE topic_id=?", (topic_id,))
+        self._db.execute(
+            "DELETE FROM expressions WHERE candidate_kind='TOPIC' AND candidate_id=?", (topic_id,)
+        )
 
     def reassign_topic_for_intents(self, from_topic_id: str, to_topic_id: str) -> None:
         """Repoint deferred intents from a merged-away topic to the surviving one."""
         self._db.execute(
             "UPDATE deferred_intents SET topic_id=? WHERE topic_id=?", (to_topic_id, from_topic_id)
         )
+
+    def all_topic_embeddings(
+        self, model_version: str, *, exclude_topic_id: str
+    ) -> list[tuple[str, list[float]]]:
+        """Every topic (except one) with a summary embedding under ``model_version``.
+
+        The post-embedding dedup scan uses this instead of the 50-hottest-topics cap: dedup is
+        identity maintenance, not hot-path selection, so a paraphrase of a *cold* topic must still
+        be caught. Bounded by the embedded-topic set for one model; drift across models never
+        compares (DESIGN 12.3).
+        """
+        rows = self._db.query_all(
+            "SELECT topic_id, vector FROM topic_embeddings WHERE model_version=? AND topic_id != ?",
+            (model_version, exclude_topic_id),
+        )
+        return [(r["topic_id"], loads(r["vector"], [])) for r in rows]
 
     def all_topics(self, limit: int = 50) -> list[Topic]:
         rows = self._db.query_all(
@@ -226,6 +251,31 @@ class MemoryStore:
             VALUES (?,?,?)
             ON CONFLICT(candidate_kind, candidate_id) DO UPDATE SET expressed_at=excluded.expressed_at""",
             (kind, candidate_id, txt(at)),
+        )
+
+    def merge_expression(self, from_kind: str, from_id: str, to_kind: str, to_id: str) -> None:
+        """Carry a merged-away candidate's expression onto the survivor, keeping the later time.
+
+        So suppression follows identity through a topic merge: the consolidated topic inherits the
+        "recently voiced" status of the duplicate and doesn't immediately re-nag (DESIGN 6, 11.3).
+        The dead row is removed. No-op if the duplicate was never expressed.
+        """
+        row = self._db.query_one(
+            "SELECT expressed_at FROM expressions WHERE candidate_kind=? AND candidate_id=?",
+            (from_kind, from_id),
+        )
+        if row is None:
+            return
+        self._db.execute(
+            """INSERT INTO expressions (candidate_kind, candidate_id, expressed_at)
+            VALUES (?,?,?)
+            ON CONFLICT(candidate_kind, candidate_id)
+            DO UPDATE SET expressed_at=MAX(expressed_at, excluded.expressed_at)""",
+            (to_kind, to_id, row["expressed_at"]),
+        )
+        self._db.execute(
+            "DELETE FROM expressions WHERE candidate_kind=? AND candidate_id=?",
+            (from_kind, from_id),
         )
 
     def last_expressed_at(self, kind: str, candidate_id: str):

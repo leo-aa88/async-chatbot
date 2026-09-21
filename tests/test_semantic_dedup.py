@@ -13,11 +13,13 @@ from conftest import Harness
 from aca import ids
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus
+from aca.domain.enums import EnrichmentStatus, OutboundKind, OutboundStatus, WorkStatus
 from aca.domain.events import EmbeddingResult
 from aca.domain.proposals import parse_decision
+from aca.domain.runtime import OutboundMessage
 from aca.domain.state import ProvisionalMemory, Topic
 from aca.reducer.apply_proposals import apply_proposals
+from aca.workers.base import EmbeddingOutput
 
 _RATE = half_life_to_rate_per_hour(24.0)
 
@@ -110,6 +112,88 @@ def test_topic_dedup_cosine_zero_disables_post_embedding_merge(tmp_path, clock):
     _land_embedding(h, "t1", [1.0, 0.0, 0.0])
     _land_embedding(h, "t2", [1.0, 0.0, 0.0])
     assert len(h.stores.memory.all_topics()) == 2  # merging disabled
+    h.close()
+
+
+def _inflight_proactive(h: Harness, candidate_id: str) -> None:
+    """An undelivered proactive outbound naming a candidate topic (in-flight suppression)."""
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        h.stores.outbox.insert_message(OutboundMessage(
+            message_id=ids.new_id(ids.OUTBOUND), delivery_key=ids.new_delivery_key(),
+            action_id="a", kind=OutboundKind.PROACTIVE, channel="cli", payload="hi",
+            status=OutboundStatus.PENDING_DELIVERY, created_at=now,
+            candidate_kind="TOPIC", candidate_id=candidate_id,
+        ))
+
+
+def test_suppression_follows_the_merge(tmp_path, clock):
+    # A merge must not let the consolidated identity re-nag: both suppression signals on the
+    # merged-away topic (its expression record and its in-flight proactive item) must move to the
+    # survivor, and the dead id must be left clean (DESIGN 6, 11.3, 12.7).
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _topic(h, "t1", "Plan to put the runtime on a robot")
+    _topic(h, "t2", "Deploy the agent onto physical hardware")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0])
+    with h.stores.db.transaction():
+        h.stores.memory.record_expression("TOPIC", "t2", h.clock.now_utc())  # t2 was just voiced
+    _inflight_proactive(h, "t2")  # and still has an item in flight
+    _land_embedding(h, "t2", [1.0, 0.0, 0.0])  # merges t2 -> t1
+
+    assert h.stores.memory.get_topic("t2") is None
+    # t1 was never expressed on its own, so a non-None expression proves the transfer; t2 is clean.
+    assert h.stores.memory.last_expressed_at("TOPIC", "t1") is not None
+    assert h.stores.memory.last_expressed_at("TOPIC", "t2") is None
+    assert h.stores.outbox.in_flight_proactive_candidates() == {("TOPIC", "t1")}
+    h.close()
+
+
+class _ConstantEmbeddingWorker:
+    """Returns one fixed vector for any text, so two distinct-wording paraphrases collide at 1.0."""
+
+    model_version = "const-v1"
+
+    async def embed(self, text: str) -> EmbeddingOutput:
+        return EmbeddingOutput(vector=[1.0, 0.0, 0.0], model_version="const-v1")
+
+
+def _enrich_memory_to_topic(h: Harness, summary: str) -> None:
+    """Insert a salient RAW memory and enrich it, which enqueues its summary-embedding work."""
+    now = h.clock.now_utc()
+    mid = ids.new_id(ids.PROVISIONAL_MEMORY)
+    with h.stores.db.transaction():
+        h.stores.memory.insert_memory(ProvisionalMemory(
+            id=mid, event_id="e", text=summary, activation=0.9, salience=0.9,
+            decay_rate_per_hour=_RATE, created_at=now, last_activated_at=now,
+            enrichment_status=EnrichmentStatus.RAW,
+        ))
+    decision = parse_decision({"action": "silence", "proposals": [
+        {"type": "ENRICH_PROVISIONAL_MEMORY", "provisional_memory_id": mid,
+         "topic_summary": summary}]})
+    with h.stores.db.transaction():
+        apply_proposals(h.ctx, decision.proposals, now)
+
+
+def test_paraphrase_merges_through_the_real_embedding_pipeline(tmp_path, clock):
+    # End-to-end: enrich -> deferred EMBEDDING work -> EmbeddingResult with the REAL work_id -> merge.
+    # A constant embedder collides two low-lexical-overlap paraphrases. Proves the drain path (not a
+    # planted EmbeddingResult) feeds _merge_duplicate_topic, exercising the get_work/complete guard.
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock,
+                embedding=_ConstantEmbeddingWorker())
+    _enrich_memory_to_topic(h, "Plan to put the runtime on a robot")
+    _enrich_memory_to_topic(h, "Deploy the agent onto physical hardware")
+    assert len(h.stores.memory.all_topics()) == 2  # the lexical path kept them separate
+
+    pending = [w for w in h.pending_work() if w.kind.value == "EMBEDDING"]
+    assert len(pending) == 2  # one real embedding job per topic
+    h.run_all_pending()  # drains both; the second landing merges into the first
+
+    topics = h.stores.memory.all_topics()
+    assert len(topics) == 1
+    assert topics[0].evidence_count == 2
+    assert all(  # the work items actually completed via the real get_work path
+        h.stores.work.get_work(w.work_id).status is WorkStatus.COMPLETED for w in pending
+    )
     h.close()
 
 
