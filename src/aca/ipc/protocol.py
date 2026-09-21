@@ -21,6 +21,7 @@ OP_LOGS = "logs"
 OP_METRICS = "metrics"
 OP_SUBSCRIBE = "subscribe"  # register this connection to receive delivered agent messages
 OP_SHUTDOWN = "shutdown"
+OP_RECONCILE = "reconcile"  # backfill missing topic-summary embeddings
 
 # Service -> client push message kinds.
 PUSH_MESSAGE = "message"    # {kind, text, channel, delivery_key, message_id}

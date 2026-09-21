@@ -130,6 +130,18 @@ class AgentActionFeedback(Event):
     classification: str = ""
 
 
+# --- maintenance events ------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class ReconcileEmbeddings(Event):
+    """Backfill trigger: enqueue summary-embedding work for topics that have none (DESIGN 12.3).
+
+    Carries no payload — the handler derives the work set from current state. Idempotent, so it is
+    safe to fire at every startup and on demand.
+    """
+
+    TYPE: ClassVar[str] = "ReconcileEmbeddings"
+
+
 _REGISTRY: dict[str, type[Event]] = {
     cls.TYPE: cls
     for cls in (
@@ -144,6 +156,7 @@ _REGISTRY: dict[str, type[Event]] = {
         LLMResult,
         DeliveryResult,
         AgentActionFeedback,
+        ReconcileEmbeddings,
     )
 }
 

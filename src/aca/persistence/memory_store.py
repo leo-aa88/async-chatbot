@@ -173,6 +173,21 @@ class MemoryStore:
             "UPDATE deferred_intents SET topic_id=? WHERE topic_id=?", (to_topic_id, from_topic_id)
         )
 
+    def topics_without_embedding(self, limit: int = 500) -> list[tuple[str, str]]:
+        """``(topic_id, summary)`` for topics that have no summary embedding yet.
+
+        Backfill candidates: topics created before the summary-embedding pipeline existed (or before
+        a daemon carrying it ran) never enqueued embedding work, so the semantic layer can't see
+        them. Most-recently-active first. (DESIGN 12.3)
+        """
+        rows = self._db.query_all(
+            "SELECT t.id, t.summary FROM topics t "
+            "LEFT JOIN topic_embeddings e ON e.topic_id = t.id "
+            "WHERE e.topic_id IS NULL ORDER BY t.last_activated_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [(r["id"], r["summary"]) for r in rows]
+
     def all_topic_embeddings(
         self, model_version: str, *, exclude_topic_id: str
     ) -> list[tuple[str, list[float]]]:
