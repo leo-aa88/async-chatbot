@@ -80,6 +80,25 @@ class WorkStore:
         )
         return [self._to_work(r) for r in rows]
 
+    def active_embedding_topic_ids(self) -> set[str]:
+        """Topic ids of unfinished topic-summary embedding work (PENDING or RUNNING).
+
+        For backfill dedup: a leased (RUNNING) job is still in flight, so ``pending()`` alone would
+        miss it and let a restart or on-demand reconcile enqueue a duplicate. FAILED_TERMINAL is
+        excluded so a permanently failed job stays eligible for a fresh attempt; COMPLETED is
+        irrelevant (the topic then has an embedding and is no longer a backfill candidate).
+        """
+        rows = self._db.query_all(
+            "SELECT snapshot FROM work_items WHERE kind=? AND status IN (?, ?)",
+            (WorkKind.EMBEDDING.value, WorkStatus.PENDING.value, WorkStatus.RUNNING.value),
+        )
+        ids: set[str] = set()
+        for r in rows:
+            topic_id = loads(r["snapshot"], {}).get("topic_id")
+            if topic_id:
+                ids.add(topic_id)
+        return ids
+
     def expired_running(self, now: datetime) -> list[WorkItem]:
         rows = self._db.query_all(
             "SELECT * FROM work_items WHERE status=? AND lease_until IS NOT NULL "
