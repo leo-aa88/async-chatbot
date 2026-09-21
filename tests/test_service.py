@@ -22,9 +22,40 @@ class RaisingLLM:
 
 @pytest.mark.asyncio
 async def test_metrics_reports_semantic_dominance(tmp_path):
-    # Real path: proactive speaks carry TOPIC ids (enriched memories are dropped from candidacy),
-    # so dominance must resolve each topic to its source memory's embedding. 3 topics share one
-    # neighborhood, 1 is distinct -> largest cluster 3 of 4.
+    # Real path: proactive speaks carry TOPIC ids, resolved to each topic's SUMMARY embedding.
+    # 3 topics share one neighborhood, 1 is distinct -> largest cluster 3 of 4.
+    from aca.domain.runtime import CognitionTrace
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        st = service.stores
+        now = service.clock.now_utc()
+        vectors = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        for i, vec in enumerate(vectors):
+            tid = f"topic_{i}"
+            with st.db.transaction():
+                st.memory.insert_topic_embedding(tid, "m", vec, now)
+                st.work.insert_trace(CognitionTrace(
+                    cycle_id=f"c{i}", created_at=now, trigger="StochasticWake",
+                    cycle_type="proactive", action="speak", candidate_kind="TOPIC", candidate_id=tid,
+                ))
+        metrics = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
+        assert metrics["dominance_total"] == 4  # all four topic summaries resolved to an embedding
+        assert metrics["dominance_cluster"] == 3
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_dominance_skips_topic_with_only_source_memory_embedding(tmp_path):
+    # Stage-3 guard: a TOPIC candidate is resolved to its SUMMARY embedding only. A topic that has
+    # a source-memory embedding but no topic_embeddings row must be *skipped*, not silently resolved
+    # via the old (wrong) source-memory path — live cosine proved source fragments diverge from the
+    # summary (DESIGN 12.3). Two summary-embedded topics cluster; the source-only one is excluded.
     from aca.cognition.activation import half_life_to_rate_per_hour
     from aca.domain.enums import EnrichmentStatus
     from aca.domain.runtime import CognitionTrace
@@ -38,29 +69,35 @@ async def test_metrics_reports_semantic_dominance(tmp_path):
         st = service.stores
         now = service.clock.now_utc()
         rate = half_life_to_rate_per_hour(24.0)
-        vectors = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-        for i, vec in enumerate(vectors):
-            mid, tid = f"mem_{i}", f"topic_{i}"
-            with st.db.transaction():
-                st.memory.insert_memory(ProvisionalMemory(
-                    id=mid, event_id="e", text="t", activation=0.8, salience=0.8,
-                    decay_rate_per_hour=rate, created_at=now, last_activated_at=now,
-                    enrichment_status=EnrichmentStatus.ENRICHED,
-                ))
-                st.memory.insert_embedding(f"emb_{i}", mid, "m", vec, now)
-                st.memory.insert_topic(Topic(
-                    id=tid, summary=f"topic {i}", activation=0.8, importance=0.8,
-                    decay_rate_per_hour=rate, created_at=now, last_activated_at=now,
-                    source_memory_id=mid,
-                ))
-                # The self-voiced candidate is the TOPIC, not the (now-enriched) memory.
-                st.work.insert_trace(CognitionTrace(
-                    cycle_id=f"c{i}", created_at=now, trigger="StochasticWake",
-                    cycle_type="proactive", action="speak", candidate_kind="TOPIC", candidate_id=tid,
-                ))
+
+        def speak(tid: str) -> None:
+            st.work.insert_trace(CognitionTrace(
+                cycle_id=f"c_{tid}", created_at=now, trigger="StochasticWake",
+                cycle_type="proactive", action="speak", candidate_kind="TOPIC", candidate_id=tid,
+            ))
+
+        with st.db.transaction():
+            # Two topics with SUMMARY embeddings in the same neighborhood.
+            for tid in ("topic_a", "topic_b"):
+                st.memory.insert_topic_embedding(tid, "m", [1.0, 0.0, 0.0], now)
+                speak(tid)
+            # topic_c has NO summary embedding, only a source memory that *is* embedded. If the
+            # resolver ever fell back to the source vector, topic_c would be counted (and cluster).
+            st.memory.insert_memory(ProvisionalMemory(
+                id="mem_src", event_id="e", text="t", activation=0.8, salience=0.8,
+                decay_rate_per_hour=rate, created_at=now, last_activated_at=now,
+                enrichment_status=EnrichmentStatus.ENRICHED,
+            ))
+            st.memory.insert_embedding("emb_src", "mem_src", "m", [1.0, 0.0, 0.0], now)
+            st.memory.insert_topic(Topic(
+                id="topic_c", summary="s", activation=0.8, importance=0.8, decay_rate_per_hour=rate,
+                created_at=now, last_activated_at=now, source_memory_id="mem_src",
+            ))
+            speak("topic_c")
+
         metrics = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
-        assert metrics["dominance_total"] == 4  # all four topics resolved to an embedding
-        assert metrics["dominance_cluster"] == 3
+        assert metrics["dominance_total"] == 2  # topic_c skipped: no summary vector, no fallback
+        assert metrics["dominance_cluster"] == 2
     finally:
         await server.close()
         await service.stop()
@@ -131,6 +168,40 @@ async def test_advance_rate_classifies_consecutive_messages(tmp_path):
         assert m["repetition_count"] == 1   # v0->v1 cosine 1.0
         assert m["advance_count"] == 1      # v1->v2 cosine 0.90
         assert m["switch_count"] == 1       # v2->v3 cosine ~0.44
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_advance_rate_does_not_glue_across_an_unembeddable_speak(tmp_path):
+    # Adjacency rule: a speak with no comparable vector (a DEFERRED_INTENT, or a cross-model speak)
+    # breaks the consecutive-speak chain. A(v0) then DEFERRED_INTENT then C(v1) must NOT be
+    # classified as an A->C transition; likewise a cross-model B between them isn't glued over.
+    from aca.domain.runtime import CognitionTrace
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        st = service.stores
+        now = service.clock.now_utc()
+        # speak order: topic A (m), deferred intent (no vector), topic C (m). Only A and C are
+        # embeddable; if the hole glued them it would score one switch (cosine 0).
+        with st.db.transaction():
+            st.memory.insert_topic_embedding("t_a", "m", [1.0, 0.0, 0.0], now)
+            st.memory.insert_topic_embedding("t_c", "m", [0.0, 1.0, 0.0], now)
+            for i, (kind, cid) in enumerate(
+                [("TOPIC", "t_a"), ("DEFERRED_INTENT", "i_b"), ("TOPIC", "t_c")]
+            ):
+                st.work.insert_trace(CognitionTrace(
+                    cycle_id=f"c{i}", created_at=now, trigger="StochasticWake",
+                    cycle_type="proactive", action="speak", candidate_kind=kind, candidate_id=cid,
+                ))
+        m = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
+        assert m["advance_transitions"] == 0  # both pairs touch the hole -> nothing classified
+        assert m["dominance_total"] == 2  # dominance still counts the two embeddable speaks
     finally:
         await server.close()
         await service.stop()

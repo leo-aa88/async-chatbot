@@ -157,38 +157,47 @@ class IpcServer:
         metrics["advance_transitions"] = trans
         return metrics
 
+    def _spoken_candidate_slots(self, since) -> list[tuple[str, list[float]] | None]:
+        """One ordered slot per recently self-voiced proactive candidate, time-ordered.
+
+        Each slot is the candidate's ``(model_version, vector)`` — a TOPIC via its *summary*
+        embedding (the semantic unit, DESIGN 12.3), a raw memory via its own — or ``None`` when the
+        candidate has no comparable vector: a ``DEFERRED_INTENT``, or a topic/memory not yet
+        embedded. A TOPIC resolves *only* through ``topic_embeddings``, never a fallback to its
+        source-memory vector (which diverges from the summary).
+
+        Holes are preserved rather than dropped so each caller applies its own adjacency rule:
+        dominance clusters the non-``None`` vectors as an order-insensitive set, while advance-rate
+        treats a ``None`` as a break in the consecutive-speak chain — an un-embeddable speak between
+        A and C must not glue A to C as if they were adjacent."""
+        mem = self._service.stores.memory
+        candidates = self._service.stores.work.proactive_spoken_candidates(since=since)
+        topic_emb = mem.topic_embeddings_by_id([c for k, c in candidates if k == "TOPIC"])
+        mem_emb = mem.embeddings_by_memory([c for k, c in candidates if k == "PROVISIONAL_MEMORY"])
+        slots: list[tuple[str, list[float]] | None] = []
+        for kind, cid in candidates:
+            if kind == "TOPIC":
+                slots.append(topic_emb.get(cid))
+            elif kind == "PROVISIONAL_MEMORY":
+                slots.append(mem_emb.get(cid))
+            else:
+                slots.append(None)  # deferred intent / other: no comparable vector
+        return slots
+
     def _semantic_dominance(self, since, threshold: float) -> tuple[int, int]:
         """Largest semantic cluster / embeddable set among recently self-voiced candidates.
 
         Observational only — never fed back into activation (that would be a self-reinforcing
-        obsession loop). A spoken candidate is usually a TOPIC (enriched memories are dropped from
-        candidacy), so a topic is resolved to its source memory's embedding; a raw memory candidate
-        resolves directly; a deferred intent has no embedding and is skipped. Vectors are kept in
-        candidate order (clustering is order-sensitive). Clustering stays within one embedding model
-        (cosine across models is meaningless), but the denominator is the whole embeddable set.
-        Returns ``(0, 0)`` when fewer than two candidates are embeddable — dominance is undefined
-        for a single message (the CLI renders it as ``—``).
+        obsession loop). Clusters the summary/memory vectors within one embedding model (cosine
+        across models is meaningless), with the denominator the whole embeddable set. Order is
+        irrelevant here, so the un-embeddable holes are simply dropped. Returns ``(0, 0)`` when
+        fewer than two candidates are embeddable (CLI renders ``—``).
         """
         from ..cognition.vectors import dominant_cluster_fraction
 
-        mem = self._service.stores.memory
-        candidates = self._service.stores.work.proactive_spoken_candidates(since=since)
-        # Resolve each spoken candidate to the memory whose embedding represents it, in order.
-        memory_ids: list[str] = []
-        for kind, cid in candidates:
-            if kind == "PROVISIONAL_MEMORY":
-                memory_ids.append(cid)
-            elif kind == "TOPIC":
-                topic = mem.get_topic(cid)
-                if topic is not None and topic.source_memory_id:
-                    memory_ids.append(topic.source_memory_id)
-            # DEFERRED_INTENT / NOTHING: no embedding to cluster
-        embeddings = mem.embeddings_by_memory(memory_ids)
-        ordered = [embeddings[mid] for mid in memory_ids if mid in embeddings]  # preserve order
+        ordered = [s for s in self._spoken_candidate_slots(since) if s is not None]
         if len(ordered) < 2:
-            return (0, 0)  # dominance is undefined for fewer than two messages -> rendered as "—"
-        # Cluster within each embedding model (cosine across models is meaningless), but count the
-        # denominator as the whole embeddable set. The largest single-model cluster is the numerator.
+            return (0, 0)
         by_model: dict[str, list] = {}
         for model_version, vector in ordered:
             by_model.setdefault(model_version, []).append(vector)
@@ -196,7 +205,7 @@ class IpcServer:
         return (largest, len(ordered))
 
     def _advance_rate(self, since, neighbor: float, dedup: float) -> tuple[int, int, int, int]:
-        """Classify each consecutive self-voiced message vs the previous one (DESIGN 6, 16).
+        """Classify each pair of *consecutive, comparable* self-voiced speaks (DESIGN 6, 16).
 
         The "it's thinking" signal is *progressive elaboration*: same topic, new implication. Using
         the summary embedding for a topic candidate (its raw source memory is a fragment, DESIGN
@@ -204,21 +213,19 @@ class IpcServer:
           repetition : cosine >= dedup      (near-paraphrase)
           advance    : neighbor <= cosine < dedup  (same subject, new content — the good one)
           switch     : cosine < neighbor    (new thread)
-        Observational only. Returns ``(advances, repetitions, switches, transitions)``.
+        A pair is only classified when both speaks are comparable: an un-embeddable speak (a hole)
+        or a cross-model boundary breaks the chain and is skipped, so neither is counted and the
+        speaks on either side are never glued into a spurious adjacency. Observational only. Returns
+        ``(advances, repetitions, switches, transitions)``.
         """
         from ..cognition.vectors import cosine
 
-        mem = self._service.stores.memory
-        candidates = self._service.stores.work.proactive_spoken_candidates(since=since)
-        topic_emb = mem.topic_embeddings_by_id([c for k, c in candidates if k == "TOPIC"])
-        mem_emb = mem.embeddings_by_memory([c for k, c in candidates if k == "PROVISIONAL_MEMORY"])
-        seq = []  # (model_version, vector) per resolvable message, in time order
-        for kind, cid in candidates:
-            e = topic_emb.get(cid) if kind == "TOPIC" else mem_emb.get(cid)
-            if e is not None:
-                seq.append(e)
+        seq = self._spoken_candidate_slots(since)  # per-speak slots (or None), time order
         advances = repetitions = switches = 0
-        for (m0, v0), (m1, v1) in zip(seq, seq[1:], strict=False):
+        for a, b in zip(seq, seq[1:], strict=False):
+            if a is None or b is None:
+                continue  # a speak we can't place breaks the chain — no classification across it
+            (m0, v0), (m1, v1) = a, b
             if m0 != m1:
                 continue  # cross-model transition is not comparable (drift); skip
             c = cosine(v0, v1)
