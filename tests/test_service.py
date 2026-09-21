@@ -174,6 +174,40 @@ async def test_advance_rate_classifies_consecutive_messages(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_advance_rate_does_not_glue_across_an_unembeddable_speak(tmp_path):
+    # Adjacency rule: a speak with no comparable vector (a DEFERRED_INTENT, or a cross-model speak)
+    # breaks the consecutive-speak chain. A(v0) then DEFERRED_INTENT then C(v1) must NOT be
+    # classified as an A->C transition; likewise a cross-model B between them isn't glued over.
+    from aca.domain.runtime import CognitionTrace
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    server = IpcServer(service, tmp_path / "aca.sock")
+    await service.start()
+    await server.start()
+    try:
+        st = service.stores
+        now = service.clock.now_utc()
+        # speak order: topic A (m), deferred intent (no vector), topic C (m). Only A and C are
+        # embeddable; if the hole glued them it would score one switch (cosine 0).
+        with st.db.transaction():
+            st.memory.insert_topic_embedding("t_a", "m", [1.0, 0.0, 0.0], now)
+            st.memory.insert_topic_embedding("t_c", "m", [0.0, 1.0, 0.0], now)
+            for i, (kind, cid) in enumerate(
+                [("TOPIC", "t_a"), ("DEFERRED_INTENT", "i_b"), ("TOPIC", "t_c")]
+            ):
+                st.work.insert_trace(CognitionTrace(
+                    cycle_id=f"c{i}", created_at=now, trigger="StochasticWake",
+                    cycle_type="proactive", action="speak", candidate_kind=kind, candidate_id=cid,
+                ))
+        m = (await IpcClient(tmp_path / "aca.sock").metrics())["metrics"]
+        assert m["advance_transitions"] == 0  # both pairs touch the hole -> nothing classified
+        assert m["dominance_total"] == 2  # dominance still counts the two embeddable speaks
+    finally:
+        await server.close()
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_semantic_dominance_undefined_for_single_candidate(tmp_path):
     # Dominance needs >= 2 embeddable candidates; with one, it reports (0, 0) so the CLI renders "—"
     # rather than a misleading 100%.

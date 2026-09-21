@@ -157,39 +157,45 @@ class IpcServer:
         metrics["advance_transitions"] = trans
         return metrics
 
-    def _spoken_candidate_vectors(self, since) -> list[tuple[str, list[float]]]:
-        """Ordered ``(model_version, vector)`` for each recently self-voiced candidate with an
-        embedding — a TOPIC via its *summary* embedding (the semantic unit, DESIGN 12.3), a raw
-        memory via its own; deferred intents and un-embedded candidates are skipped. Order is the
-        time order of the speaks (clustering/adjacency are order-sensitive). Shared by dominance
-        and advance-rate.
+    def _spoken_candidate_slots(self, since) -> list[tuple[str, list[float]] | None]:
+        """One ordered slot per recently self-voiced proactive candidate, time-ordered.
 
-        The skip rule is deliberately identical for both callers: a TOPIC resolves *only* through
-        ``topic_embeddings`` — never a fallback to its source-memory vector, which diverges from the
-        summary — so a topic whose summary hasn't been embedded yet is dropped from both the
-        dominance denominator and the advance-rate sequence rather than counted on a wrong vector."""
+        Each slot is the candidate's ``(model_version, vector)`` — a TOPIC via its *summary*
+        embedding (the semantic unit, DESIGN 12.3), a raw memory via its own — or ``None`` when the
+        candidate has no comparable vector: a ``DEFERRED_INTENT``, or a topic/memory not yet
+        embedded. A TOPIC resolves *only* through ``topic_embeddings``, never a fallback to its
+        source-memory vector (which diverges from the summary).
+
+        Holes are preserved rather than dropped so each caller applies its own adjacency rule:
+        dominance clusters the non-``None`` vectors as an order-insensitive set, while advance-rate
+        treats a ``None`` as a break in the consecutive-speak chain — an un-embeddable speak between
+        A and C must not glue A to C as if they were adjacent."""
         mem = self._service.stores.memory
         candidates = self._service.stores.work.proactive_spoken_candidates(since=since)
         topic_emb = mem.topic_embeddings_by_id([c for k, c in candidates if k == "TOPIC"])
         mem_emb = mem.embeddings_by_memory([c for k, c in candidates if k == "PROVISIONAL_MEMORY"])
-        out = []
+        slots: list[tuple[str, list[float]] | None] = []
         for kind, cid in candidates:
-            e = topic_emb.get(cid) if kind == "TOPIC" else mem_emb.get(cid)
-            if e is not None:
-                out.append(e)
-        return out
+            if kind == "TOPIC":
+                slots.append(topic_emb.get(cid))
+            elif kind == "PROVISIONAL_MEMORY":
+                slots.append(mem_emb.get(cid))
+            else:
+                slots.append(None)  # deferred intent / other: no comparable vector
+        return slots
 
     def _semantic_dominance(self, since, threshold: float) -> tuple[int, int]:
         """Largest semantic cluster / embeddable set among recently self-voiced candidates.
 
         Observational only — never fed back into activation (that would be a self-reinforcing
         obsession loop). Clusters the summary/memory vectors within one embedding model (cosine
-        across models is meaningless), with the denominator the whole embeddable set. Returns
-        ``(0, 0)`` when fewer than two candidates are embeddable (CLI renders ``—``).
+        across models is meaningless), with the denominator the whole embeddable set. Order is
+        irrelevant here, so the un-embeddable holes are simply dropped. Returns ``(0, 0)`` when
+        fewer than two candidates are embeddable (CLI renders ``—``).
         """
         from ..cognition.vectors import dominant_cluster_fraction
 
-        ordered = self._spoken_candidate_vectors(since)
+        ordered = [s for s in self._spoken_candidate_slots(since) if s is not None]
         if len(ordered) < 2:
             return (0, 0)
         by_model: dict[str, list] = {}
@@ -199,7 +205,7 @@ class IpcServer:
         return (largest, len(ordered))
 
     def _advance_rate(self, since, neighbor: float, dedup: float) -> tuple[int, int, int, int]:
-        """Classify each consecutive self-voiced message vs the previous one (DESIGN 6, 16).
+        """Classify each pair of *consecutive, comparable* self-voiced speaks (DESIGN 6, 16).
 
         The "it's thinking" signal is *progressive elaboration*: same topic, new implication. Using
         the summary embedding for a topic candidate (its raw source memory is a fragment, DESIGN
@@ -207,13 +213,19 @@ class IpcServer:
           repetition : cosine >= dedup      (near-paraphrase)
           advance    : neighbor <= cosine < dedup  (same subject, new content — the good one)
           switch     : cosine < neighbor    (new thread)
-        Observational only. Returns ``(advances, repetitions, switches, transitions)``.
+        A pair is only classified when both speaks are comparable: an un-embeddable speak (a hole)
+        or a cross-model boundary breaks the chain and is skipped, so neither is counted and the
+        speaks on either side are never glued into a spurious adjacency. Observational only. Returns
+        ``(advances, repetitions, switches, transitions)``.
         """
         from ..cognition.vectors import cosine
 
-        seq = self._spoken_candidate_vectors(since)  # (model_version, vector), time order
+        seq = self._spoken_candidate_slots(since)  # per-speak slots (or None), time order
         advances = repetitions = switches = 0
-        for (m0, v0), (m1, v1) in zip(seq, seq[1:], strict=False):
+        for a, b in zip(seq, seq[1:], strict=False):
+            if a is None or b is None:
+                continue  # a speak we can't place breaks the chain — no classification across it
+            (m0, v0), (m1, v1) = a, b
             if m0 != m1:
                 continue  # cross-model transition is not comparable (drift); skip
             c = cosine(v0, v1)
