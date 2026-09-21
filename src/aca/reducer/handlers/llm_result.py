@@ -34,6 +34,7 @@ from ...domain.runtime import WorkItem
 from ...errors import ValidationError
 from ..apply_proposals import apply_proposals
 from ..context import ReducerContext
+from ..continuity import is_semantic_repeat
 from ..gates import evaluate_proactive
 from ..outbound import create_outbound
 from ..revalidation import is_superseded
@@ -200,6 +201,8 @@ def _release_enrichment_claim(ctx, work: WorkItem, now) -> None:
 def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) -> HandlerOutcome:
     useful = apply_proposals(ctx, decision.proposals, now)
     _release_enrichment_claim(ctx, work, now)
+    source = work.snapshot.get("context", {}).get("source", {})
+    candidate = source.get("candidate") or {}
     if decision.action is not ActionKind.SPEAK or not decision.message:
         ctx.stores.work.finalize_trace(
             event.cycle_id, action="silence", useful_enrichment=useful,
@@ -207,8 +210,19 @@ def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
         )
         return HandlerOutcome(reschedule=True, note="proactive_silence_enrich" if useful else "proactive_silence")
 
-    # Pre-outbox revalidation against CURRENT state: generic hard gates AND candidate-specific
-    # supersession (DESIGN 16.2, 22.2, invariant 9). A superseded result is dropped, not regenerated.
+    # Invariant 2: the worker's speak is data, not authority. A cycle dispatched enrichment-only
+    # (``output_eligible`` False — e.g. the candidate was a continuity near-repeat at wake time) must
+    # not produce an outbound even if the worker returns speak. Proposals are still applied above.
+    if not source.get("output_eligible", True):
+        ctx.stores.work.finalize_trace(
+            event.cycle_id, action="silence", useful_enrichment=useful,
+            pre_outbox_invalidated=True, note="enrichment_only",
+        )
+        return HandlerOutcome(reschedule=True, note="enrichment_only")
+
+    # Pre-outbox revalidation against CURRENT state: generic hard gates, candidate-specific
+    # supersession (DESIGN 16.2, 22.2, invariant 9), AND a continuity re-check — a near-repeat may
+    # have been expressed or gone in-flight since dispatch. A dropped result is never regenerated.
     superseded, reason = is_superseded(ctx, work, now)
     gate = evaluate_proactive(ctx, now, superseded=superseded)
     if not gate.allowed:
@@ -218,9 +232,14 @@ def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
             pre_outbox_invalidated=True, note=f"pre_outbox:{detail}",
         )
         return HandlerOutcome(reschedule=True, note=f"pre_outbox_invalidated:{detail}")
+    if candidate.get("id") and is_semantic_repeat(ctx, candidate.get("kind"), candidate["id"], now):
+        ctx.stores.work.finalize_trace(
+            event.cycle_id, action="silence", useful_enrichment=useful,
+            pre_outbox_invalidated=True, note="pre_outbox:continuity_repeat",
+        )
+        return HandlerOutcome(reschedule=True, note="pre_outbox_invalidated:continuity_repeat")
 
     charge_proactive_message(ctx, now)
-    candidate = work.snapshot.get("context", {}).get("source", {}).get("candidate") or {}
     create_outbound(
         ctx, kind=OutboundKind.PROACTIVE, channel=_channel(work), text=decision.message,
         cycle_id=event.cycle_id, source_event_id=None, now=now,

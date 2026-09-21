@@ -17,6 +17,7 @@ from ...domain.enums import CandidateKind, EnrichmentStatus, LifecycleState, Wor
 from ...domain.events import StochasticWake
 from ...domain.runtime import CognitionTrace
 from ..context import ReducerContext
+from ..continuity import is_semantic_repeat
 from ..gates import evaluate_proactive
 from ..support import build_candidates, read_proactive_usage
 from ..workitems import create_llm_work
@@ -70,8 +71,18 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
 
     gate = evaluate_proactive(ctx, now)
     needs_enrichment = _needs_enrichment(ctx, candidate)
-    if not gate.allowed and not needs_enrichment:
-        note = _silence_note(ctx, candidate, gate)
+    # Continuity gate: don't re-voice, in reworded form, a thought just voiced. A speak is eligible
+    # only if the mode gate allows it AND the candidate isn't a semantic near-repeat of a recently
+    # expressed one. Advances (same subject, new content) score below the dedup threshold and pass.
+    # This is a post-selection *mute*, not pool exclusion: a near-repeat can still win a wake and be
+    # dispatched enrichment-only. That's the v1 "suppress, never force" choice (a hot paraphrase may
+    # keep winning as a silent no-op rather than a genuine advance being forced up); the reducer's
+    # pre-outbox re-check (llm_result) is the authority that actually blocks the outbound.
+    speak_eligible = gate.allowed and not is_semantic_repeat(
+        ctx, candidate.kind.value, candidate.id, now
+    )
+    if not speak_eligible and not needs_enrichment:
+        note = "continuity_repeat" if gate.allowed else _silence_note(ctx, candidate, gate)
         return HandlerOutcome(
             reschedule=True,
             trace=_trace(cycle_id, now, candidate=candidate, action="silence", note=note),
@@ -91,10 +102,10 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
             "response_required": False,
             "cycle_type": CYCLE_PROACTIVE,
             "channel": "cli",
-            "output_eligible": gate.allowed,
+            "output_eligible": speak_eligible,
             "candidate": _candidate_context(ctx, candidate),
         },
-        kind=WorkKind.LLM_COGNITION if gate.allowed else WorkKind.LLM_ENRICHMENT,
+        kind=WorkKind.LLM_COGNITION if speak_eligible else WorkKind.LLM_ENRICHMENT,
         now=now,
     )
     return HandlerOutcome(
