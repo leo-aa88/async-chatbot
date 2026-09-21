@@ -1,8 +1,9 @@
-"""Semantic topic de-duplication at enrichment (embedding arc, PR 3).
+"""Semantic topic de-duplication on summary vectors (embedding arc, stage 2).
 
-Catches paraphrases the lexical check (#25) misses, via cosine between the new memory's embedding
-and an existing topic's inherited (source-memory) embedding — while keeping the polarity veto and a
-very high threshold so related-but-distinct topics do NOT merge.
+Paraphrase dedup runs POST-embedding: when a topic's summary vector lands, it merges into a
+near-duplicate existing topic (summary cosine >= topic_dedup_cosine), vetoing polarity flips and
+comparing only same-model vectors. The enrich-time lexical path still catches near-identical
+wording synchronously.
 """
 
 from __future__ import annotations
@@ -12,117 +13,210 @@ from conftest import Harness
 from aca import ids
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus
+from aca.domain.enums import EnrichmentStatus, OutboundKind, OutboundStatus, WorkStatus
+from aca.domain.events import EmbeddingResult
 from aca.domain.proposals import parse_decision
-from aca.domain.state import ProvisionalMemory
+from aca.domain.runtime import OutboundMessage
+from aca.domain.state import ProvisionalMemory, Topic
 from aca.reducer.apply_proposals import apply_proposals
+from aca.workers.base import EmbeddingOutput
+
+_RATE = half_life_to_rate_per_hour(24.0)
 
 
-def _seed_memory(h: Harness, text: str, vector: list[float], *, model="m", salience=0.9) -> str:
+def _topic(h: Harness, tid: str, summary: str) -> None:
     now = h.clock.now_utc()
-    mid = ids.new_id(ids.PROVISIONAL_MEMORY)
     with h.stores.db.transaction():
-        h.stores.memory.insert_memory(ProvisionalMemory(
-            id=mid, event_id="e", text=text, activation=0.9, salience=salience,
-            decay_rate_per_hour=half_life_to_rate_per_hour(24.0),
-            created_at=now, last_activated_at=now, enrichment_status=EnrichmentStatus.RAW,
+        h.stores.memory.insert_topic(Topic(
+            id=tid, summary=summary, activation=0.8, importance=0.8, decay_rate_per_hour=_RATE,
+            created_at=now, last_activated_at=now, source_memory_id=None,
         ))
-        h.stores.memory.insert_embedding(ids.new_id(ids.EMBEDDING), mid, model, vector, now)
-    return mid
 
 
-def _enrich(h: Harness, mid: str, summary: str) -> None:
-    decision = parse_decision({"action": "silence", "proposals": [
-        {"type": "ENRICH_PROVISIONAL_MEMORY", "provisional_memory_id": mid, "topic_summary": summary}]})
-    with h.stores.db.transaction():
-        apply_proposals(h.ctx, decision.proposals, h.clock.now_utc())
+def _land_embedding(h: Harness, tid: str, vector: list[float], model: str = "m") -> None:
+    """Simulate the topic's summary embedding arriving (triggers the post-embedding merge)."""
+    h.reduce(EmbeddingResult(
+        event_id=ids.new_id(ids.EVENT), timestamp=h.clock.now_utc(), source="w",
+        work_id=ids.new_id(ids.WORK_ITEM), topic_id=tid,
+        embedding_id=ids.new_id(ids.EMBEDDING), model_version=model, vector=vector,
+    ))
 
 
-def _cfg():
-    # Disable the lexical path so these tests isolate the semantic one.
-    return Config.from_mapping({"rng_seed": 1, "memory": {"topic_merge_similarity": 0}})
-
-
-def test_paraphrase_merges_semantically(tmp_path, clock):
-    h = Harness(tmp_path, _cfg(), clock)
-    # Same embedding (cosine 1.0 >= 0.94), lexically distinct summaries -> merge, not duplicate.
-    _enrich(h, _seed_memory(h, "a", [1.0, 0.0, 0.0]), "Plan to put the runtime on a robot")
-    _enrich(h, _seed_memory(h, "b", [1.0, 0.0, 0.0]), "Deploy the agent onto physical hardware")
+def test_paraphrase_merges_on_summary_vectors(tmp_path, clock):
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _topic(h, "t1", "Plan to put the runtime on a robot")
+    _topic(h, "t2", "Deploy the agent onto physical hardware")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0])
+    _land_embedding(h, "t2", [1.0, 0.0, 0.0])  # cosine 1.0 >= 0.94 -> t2 merges into t1
     topics = h.stores.memory.all_topics()
-    assert len(topics) == 1
+    assert [t.id for t in topics] == ["t1"]
     assert topics[0].evidence_count == 2
+    assert h.stores.memory.get_topic("t2") is None  # duplicate deleted
     h.close()
 
 
 def test_related_but_distinct_do_not_merge(tmp_path, clock):
-    h = Harness(tmp_path, _cfg(), clock)
-    # cosine ~0.80 (related neighborhood) is below the 0.94 dedup threshold -> stay separate.
-    _enrich(h, _seed_memory(h, "a", [1.0, 0.0, 0.0]), "Robot embodiment plans")
-    _enrich(h, _seed_memory(h, "b", [0.8, 0.6, 0.0]), "Robot safety constraints")
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _topic(h, "t1", "Robot embodiment plans")
+    _topic(h, "t2", "Robot safety constraints")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0])
+    _land_embedding(h, "t2", [0.8, 0.6, 0.0])  # cosine 0.8 < 0.94 -> stay separate
     assert len(h.stores.memory.all_topics()) == 2
     h.close()
 
 
 def test_polarity_flip_never_merges_even_at_cosine_one(tmp_path, clock):
-    h = Harness(tmp_path, _cfg(), clock)
-    _enrich(h, _seed_memory(h, "a", [1.0, 0.0, 0.0]), "User wants to add dark mode")
-    _enrich(h, _seed_memory(h, "b", [1.0, 0.0, 0.0]), "User wants to remove dark mode")
-    assert len(h.stores.memory.all_topics()) == 2  # identical vectors, but opposite meaning
-    h.close()
-
-
-def test_different_embedding_model_is_not_compared(tmp_path, clock):
-    h = Harness(tmp_path, _cfg(), clock)
-    # Same vector but different model_version -> not comparable (drift), so no semantic merge.
-    _enrich(h, _seed_memory(h, "a", [1.0, 0.0, 0.0], model="m1"), "Runtime on a robot")
-    _enrich(h, _seed_memory(h, "b", [1.0, 0.0, 0.0], model="m2"), "Agent on hardware")
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _topic(h, "t1", "User wants to add dark mode")
+    _topic(h, "t2", "User wants to remove dark mode")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0])
+    _land_embedding(h, "t2", [1.0, 0.0, 0.0])  # identical vectors, opposite meaning
     assert len(h.stores.memory.all_topics()) == 2
     h.close()
 
 
-def test_semantic_merge_preserves_source_memory_id(tmp_path, clock):
-    # A merge reinforces the existing topic in place — it must not change which memory the topic
-    # traces back to (source_memory_id stays the first memory's).
-    h = Harness(tmp_path, _cfg(), clock)
-    first = _seed_memory(h, "a", [1.0, 0.0, 0.0])
-    _enrich(h, first, "Plan to put the runtime on a robot")
-    _enrich(h, _seed_memory(h, "b", [1.0, 0.0, 0.0]), "Deploy the agent onto physical hardware")
-    topics = h.stores.memory.all_topics()
-    assert len(topics) == 1
-    assert topics[0].source_memory_id == first  # unchanged by the merge
+def test_different_embedding_model_not_compared(tmp_path, clock):
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _topic(h, "t1", "Runtime on a robot")
+    _topic(h, "t2", "Agent on hardware")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0], model="m1")
+    _land_embedding(h, "t2", [1.0, 0.0, 0.0], model="m2")  # same vector, different model -> no merge
+    assert len(h.stores.memory.all_topics()) == 2
     h.close()
 
 
-def test_lexical_only_fallback_when_no_embedding(tmp_path, clock):
-    # A memory with no embedding can't use the semantic path; the lexical path still merges
-    # near-identical summaries (default config, semantic present but this memory lacks a vector).
-    now_cfg = Config.from_mapping({"rng_seed": 1})  # default lexical 0.8 + semantic 0.94
-    h = Harness(tmp_path, now_cfg, clock)
+def test_merged_topic_absorbs_deferred_intents(tmp_path, clock):
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _topic(h, "t1", "Ship the runtime to a robot")
+    _topic(h, "t2", "Move the agent onto hardware")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0])
+    # An intent points at t2 before it merges away; it must be repointed to t1.
+    decision = parse_decision({"action": "silence", "proposals": [
+        {"type": "CREATE_DEFERRED_INTENT", "intent": "follow up", "topic_id": "t2"}]})
+    with h.stores.db.transaction():
+        apply_proposals(h.ctx, decision.proposals, h.clock.now_utc())
+    _land_embedding(h, "t2", [1.0, 0.0, 0.0])  # t2 merges into t1
+    assert h.stores.memory.get_topic("t2") is None
+    intents = h.stores.memory.pending_intents()
+    assert intents and all(i.topic_id == "t1" for i in intents)  # repointed
+    assert h.stores.memory.get_topic("t1").unfinished is True  # open thread carried over
+    h.close()
 
-    def seed_no_embedding(text, salience=0.9):
+
+def test_topic_dedup_cosine_zero_disables_post_embedding_merge(tmp_path, clock):
+    # The semantic merge is off when the threshold is 0, even for identical summary vectors.
+    h = Harness(tmp_path, Config.from_mapping(
+        {"rng_seed": 1, "memory": {"topic_dedup_cosine": 0}}), clock)
+    _topic(h, "t1", "Plan to put the runtime on a robot")
+    _topic(h, "t2", "Deploy the agent onto physical hardware")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0])
+    _land_embedding(h, "t2", [1.0, 0.0, 0.0])
+    assert len(h.stores.memory.all_topics()) == 2  # merging disabled
+    h.close()
+
+
+def _inflight_proactive(h: Harness, candidate_id: str) -> None:
+    """An undelivered proactive outbound naming a candidate topic (in-flight suppression)."""
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        h.stores.outbox.insert_message(OutboundMessage(
+            message_id=ids.new_id(ids.OUTBOUND), delivery_key=ids.new_delivery_key(),
+            action_id="a", kind=OutboundKind.PROACTIVE, channel="cli", payload="hi",
+            status=OutboundStatus.PENDING_DELIVERY, created_at=now,
+            candidate_kind="TOPIC", candidate_id=candidate_id,
+        ))
+
+
+def test_suppression_follows_the_merge(tmp_path, clock):
+    # A merge must not let the consolidated identity re-nag: both suppression signals on the
+    # merged-away topic (its expression record and its in-flight proactive item) must move to the
+    # survivor, and the dead id must be left clean (DESIGN 6, 11.3, 12.7).
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _topic(h, "t1", "Plan to put the runtime on a robot")
+    _topic(h, "t2", "Deploy the agent onto physical hardware")
+    _land_embedding(h, "t1", [1.0, 0.0, 0.0])
+    with h.stores.db.transaction():
+        h.stores.memory.record_expression("TOPIC", "t2", h.clock.now_utc())  # t2 was just voiced
+    _inflight_proactive(h, "t2")  # and still has an item in flight
+    _land_embedding(h, "t2", [1.0, 0.0, 0.0])  # merges t2 -> t1
+
+    assert h.stores.memory.get_topic("t2") is None
+    # t1 was never expressed on its own, so a non-None expression proves the transfer; t2 is clean.
+    assert h.stores.memory.last_expressed_at("TOPIC", "t1") is not None
+    assert h.stores.memory.last_expressed_at("TOPIC", "t2") is None
+    assert h.stores.outbox.in_flight_proactive_candidates() == {("TOPIC", "t1")}
+    h.close()
+
+
+class _ConstantEmbeddingWorker:
+    """Returns one fixed vector for any text, so two distinct-wording paraphrases collide at 1.0."""
+
+    model_version = "const-v1"
+
+    async def embed(self, text: str) -> EmbeddingOutput:
+        return EmbeddingOutput(vector=[1.0, 0.0, 0.0], model_version="const-v1")
+
+
+def _enrich_memory_to_topic(h: Harness, summary: str) -> None:
+    """Insert a salient RAW memory and enrich it, which enqueues its summary-embedding work."""
+    now = h.clock.now_utc()
+    mid = ids.new_id(ids.PROVISIONAL_MEMORY)
+    with h.stores.db.transaction():
+        h.stores.memory.insert_memory(ProvisionalMemory(
+            id=mid, event_id="e", text=summary, activation=0.9, salience=0.9,
+            decay_rate_per_hour=_RATE, created_at=now, last_activated_at=now,
+            enrichment_status=EnrichmentStatus.RAW,
+        ))
+    decision = parse_decision({"action": "silence", "proposals": [
+        {"type": "ENRICH_PROVISIONAL_MEMORY", "provisional_memory_id": mid,
+         "topic_summary": summary}]})
+    with h.stores.db.transaction():
+        apply_proposals(h.ctx, decision.proposals, now)
+
+
+def test_paraphrase_merges_through_the_real_embedding_pipeline(tmp_path, clock):
+    # End-to-end: enrich -> deferred EMBEDDING work -> EmbeddingResult with the REAL work_id -> merge.
+    # A constant embedder collides two low-lexical-overlap paraphrases. Proves the drain path (not a
+    # planted EmbeddingResult) feeds _merge_duplicate_topic, exercising the get_work/complete guard.
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock,
+                embedding=_ConstantEmbeddingWorker())
+    _enrich_memory_to_topic(h, "Plan to put the runtime on a robot")
+    _enrich_memory_to_topic(h, "Deploy the agent onto physical hardware")
+    assert len(h.stores.memory.all_topics()) == 2  # the lexical path kept them separate
+
+    pending = [w for w in h.pending_work() if w.kind.value == "EMBEDDING"]
+    assert len(pending) == 2  # one real embedding job per topic
+    h.run_all_pending()  # drains both; the second landing merges into the first
+
+    topics = h.stores.memory.all_topics()
+    assert len(topics) == 1
+    assert topics[0].evidence_count == 2
+    assert all(  # the work items actually completed via the real get_work path
+        h.stores.work.get_work(w.work_id).status is WorkStatus.COMPLETED for w in pending
+    )
+    h.close()
+
+
+def test_enrich_time_lexical_path_still_merges(tmp_path, clock):
+    # Near-identical wording still merges synchronously at enrichment, no embedding needed.
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+
+    def enrich(summary: str) -> None:
         now = h.clock.now_utc()
         mid = ids.new_id(ids.PROVISIONAL_MEMORY)
         with h.stores.db.transaction():
             h.stores.memory.insert_memory(ProvisionalMemory(
-                id=mid, event_id="e", text=text, activation=0.9, salience=salience,
-                decay_rate_per_hour=half_life_to_rate_per_hour(24.0),
-                created_at=now, last_activated_at=now, enrichment_status=EnrichmentStatus.RAW,
+                id=mid, event_id="e", text="t", activation=0.9, salience=0.9,
+                decay_rate_per_hour=_RATE, created_at=now, last_activated_at=now,
+                enrichment_status=EnrichmentStatus.RAW,
             ))
-        return mid
+        decision = parse_decision({"action": "silence", "proposals": [
+            {"type": "ENRICH_PROVISIONAL_MEMORY", "provisional_memory_id": mid,
+             "topic_summary": summary}]})
+        with h.stores.db.transaction():
+            apply_proposals(h.ctx, decision.proposals, now)
 
-    _enrich(h, seed_no_embedding("x"), "Robot safety constraints and limits")
-    _enrich(h, seed_no_embedding("y"), "Robot safety constraints and limits")  # identical summary
-    assert len(h.stores.memory.all_topics()) == 1  # merged lexically, no embedding needed
-    h.close()
-
-
-def test_both_thresholds_zero_disables_all_merging(tmp_path, clock):
-    # topic_merge_similarity=0 alone no longer disables merging once embeddings exist (semantic
-    # still runs); only zeroing BOTH disables it.
-    both_off = Config.from_mapping(
-        {"rng_seed": 1, "memory": {"topic_merge_similarity": 0, "topic_dedup_cosine": 0}})
-    h = Harness(tmp_path, both_off, clock)
-    _enrich(h, _seed_memory(h, "a", [1.0, 0.0, 0.0]), "identical summary")
-    _enrich(h, _seed_memory(h, "b", [1.0, 0.0, 0.0]), "identical summary")
-    assert len(h.stores.memory.all_topics()) == 2  # nothing merges
+    enrich("Robot safety constraints and limits")
+    enrich("Robot safety constraints and limits")
+    assert len(h.stores.memory.all_topics()) == 1
     h.close()

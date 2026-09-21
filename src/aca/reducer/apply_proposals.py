@@ -13,11 +13,11 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 from .. import ids
-from ..cognition import textsim, vectors
+from ..cognition import textsim
 from ..cognition.activation import half_life_to_rate_per_hour, reinforced
 from ..domain.enums import EnrichmentStatus
 from ..domain.proposals import Proposal
-from ..domain.state import DeferredIntent, ProvisionalMemory, Topic
+from ..domain.state import DeferredIntent, Topic
 from .context import ReducerContext
 from .workitems import create_topic_embedding_work
 
@@ -67,7 +67,7 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
         replace(memory, enrichment_status=EnrichmentStatus.ENRICHED, last_activated_at=now)
     )
     summary = proposal.fields.get("topic_summary") or memory.text[:200]
-    existing = _find_similar_topic(ctx, summary, memory)
+    existing = _find_similar_topic(ctx, summary)
     if existing is not None:
         # Near-duplicate of an existing topic: reinforce it instead of spawning a parallel topic
         # (DESIGN 12.3). Keep the stronger activation/importance and count the added evidence.
@@ -102,8 +102,9 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
             source_memory_id=memory.id,
         )
     )
-    # Embed the summary asynchronously (stage 1: populate only — nothing consumes it yet). The
-    # reducer dispatches this deferred job; later stages use it for semantic dedup/dominance.
+    # Embed the summary asynchronously; the reducer dispatches this deferred job. When it lands,
+    # embedding_result uses the summary vector for semantic dedup (merge) and the dominance/
+    # advance-rate metrics read it too.
     ctx.deferred_work_ids.append(
         create_topic_embedding_work(
             ctx, topic_id=topic_id, summary=summary, source_event_id=memory.event_id, now=now
@@ -112,52 +113,26 @@ def _enrich_memory(ctx: ReducerContext, proposal: Proposal, now: datetime) -> bo
     return True
 
 
-def _find_similar_topic(ctx: ReducerContext, summary: str, memory: ProvisionalMemory):
-    """The best existing topic to merge this enrichment into, or None (DESIGN 12.3).
+def _find_similar_topic(ctx: ReducerContext, summary: str):
+    """The best existing topic to merge this enrichment into by LEXICAL overlap, or None.
 
-    Two independent, deterministic signals, each subject to a polarity veto:
-    - lexical: summary text overlap >= ``topic_merge_similarity`` (catches near-identical wording).
-    - semantic: cosine between this memory's embedding and the topic's (inherited from its source
-      memory) >= ``topic_dedup_cosine`` (catches paraphrases). The cosine threshold is deliberately
-      very high so related-but-distinct topics don't merge, and only same-model vectors compare.
-    A threshold of 0 disables that signal; both 0 => no merging.
-
-    Limitation: the polarity veto is computed on the *summaries*, while the semantic signal is on
-    the *memory* embeddings, so a reversal surfaced in a summary never merges, but one expressed
-    only in memory text (not in either summary) could slip through the semantic path; embedding-
-    level polarity would be needed to close that fully. The very high cosine threshold keeps the
-    blast radius small in practice.
+    Fast, synchronous path at enrich time: near-identical summary wording >=
+    ``topic_merge_similarity``, with a polarity veto so a reversal never merges (DESIGN 12.3).
+    Paraphrases that share little wording are caught later by the post-embedding *semantic* merge
+    (``embedding_result``), once the summary's vector is available — the enrich-time step can't
+    embed synchronously. A threshold of 0 disables this lexical path.
     """
-    lex_threshold = ctx.config.memory.topic_merge_similarity
-    dedup_cos = ctx.config.memory.topic_dedup_cosine
-    if lex_threshold <= 0.0 and dedup_cos <= 0.0:
+    threshold = ctx.config.memory.topic_merge_similarity
+    if threshold <= 0.0:
         return None
-    topics = ctx.stores.memory.all_topics(limit=50)
-    # Batch every embedding this call needs in one query (new memory + each topic's source memory),
-    # rather than an N+1 lookup per topic.
-    embeddings: dict[str, tuple[str, list[float]]] = {}
-    new_emb = None
-    if dedup_cos > 0.0:
-        wanted = [memory.id, *(t.source_memory_id for t in topics if t.source_memory_id)]
-        embeddings = ctx.stores.memory.embeddings_by_memory(wanted)
-        new_emb = embeddings.get(memory.id)
-
     best, best_score = None, 0.0
-    for topic in topics:
+    for topic in ctx.stores.memory.all_topics(limit=50):
+        score = textsim.similarity(summary, topic.summary)
+        if score < threshold or score <= best_score:
+            continue
         if textsim.polarity_conflict(summary, topic.summary):
-            continue  # a summary-level polarity flip is never a duplicate, by either signal
-        lexical = textsim.similarity(summary, topic.summary) if lex_threshold > 0.0 else 0.0
-        semantic = 0.0
-        if new_emb is not None and topic.source_memory_id:
-            topic_emb = embeddings.get(topic.source_memory_id)
-            if topic_emb is not None and topic_emb[0] == new_emb[0]:  # same model (drift-safe)
-                semantic = vectors.cosine(new_emb[1], topic_emb[1])
-        qualifies = (lex_threshold > 0.0 and lexical >= lex_threshold) or (
-            dedup_cos > 0.0 and semantic >= dedup_cos
-        )
-        score = max(lexical, semantic)
-        if qualifies and score > best_score:
-            best, best_score = topic, score
+            continue  # a summary-level polarity flip is never a duplicate
+        best, best_score = topic, score
     return best
 
 

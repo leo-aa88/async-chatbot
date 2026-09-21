@@ -81,6 +81,24 @@ class OutboxStore:
         )
         return {(r["candidate_kind"], r["candidate_id"]) for r in rows}
 
+    def reassign_proactive_candidate(
+        self, from_kind: str, from_id: str, to_kind: str, to_id: str
+    ) -> None:
+        """Rewrite in-flight proactive items from a merged-away candidate to the survivor.
+
+        After a topic merge the duplicate id is deleted; without this, an undelivered proactive item
+        keeps naming the dead id, so ``in_flight_proactive_candidates`` no longer suppresses the
+        surviving topic and it can be re-selected while its own message is still in flight.
+        """
+        self._db.execute(
+            "UPDATE outbound_messages SET candidate_kind=?, candidate_id=? "
+            "WHERE kind=? AND candidate_kind=? AND candidate_id=? AND status IN (?, ?)",
+            (
+                to_kind, to_id, OutboundKind.PROACTIVE.value, from_kind, from_id,
+                OutboundStatus.PENDING_DELIVERY.value, OutboundStatus.DELIVERING.value,
+            ),
+        )
+
     def deliverable(self) -> list[OutboundMessage]:
         rows = self._db.query_all(
             "SELECT * FROM outbound_messages WHERE status=? ORDER BY created_at ASC",
