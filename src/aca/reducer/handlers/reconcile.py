@@ -13,7 +13,6 @@ predate the pipeline.
 
 from __future__ import annotations
 
-from ...domain.enums import WorkKind
 from ...domain.events import ReconcileEmbeddings
 from ..context import ReducerContext
 from ..workitems import create_topic_embedding_work
@@ -25,11 +24,9 @@ _MAX_PER_RECONCILE = 200
 
 
 def handle_reconcile_embeddings(ctx: ReducerContext, event: ReconcileEmbeddings) -> HandlerOutcome:
-    in_flight = {
-        w.snapshot.get("topic_id")
-        for w in ctx.stores.work.pending()
-        if w.kind is WorkKind.EMBEDDING and w.snapshot.get("topic_id")
-    }
+    # In-flight = PENDING *or* RUNNING (leased): a job dispatched by an earlier pass or recovered at
+    # startup is already RUNNING, so pending()-only would let a second job be enqueued per topic.
+    in_flight = ctx.stores.work.active_embedding_topic_ids()
     enqueued = 0
     for topic_id, summary in ctx.stores.memory.topics_without_embedding(limit=_MAX_PER_RECONCILE):
         if topic_id in in_flight:

@@ -8,7 +8,7 @@ the normal embedding path, and each landing fires the post-embedding merge.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from conftest import Harness
@@ -16,8 +16,9 @@ from conftest import Harness
 from aca import ids
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import WorkKind
+from aca.domain.enums import WorkKind, WorkStatus
 from aca.domain.events import ReconcileEmbeddings
+from aca.domain.runtime import WorkItem
 from aca.domain.state import Topic
 from aca.persistence.stores import Stores
 from aca.service.service import AgentService
@@ -69,13 +70,30 @@ def test_reconcile_enqueues_only_topics_missing_an_embedding(tmp_path, clock):
     h.close()
 
 
-def test_reconcile_is_idempotent_across_repeats(tmp_path, clock):
+def test_reconcile_skips_a_pending_backfill_job(tmp_path, clock):
     h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
     _topic(h, "t_missing", "Topic with no summary vector yet")
     _reconcile(h)
     assert _pending_topic_embed_ids(h) == ["t_missing"]
-    _reconcile(h)  # embedding still in flight, not yet landed
+    _reconcile(h)  # still PENDING, not yet landed
     assert _pending_topic_embed_ids(h) == ["t_missing"]  # not enqueued twice
+    h.close()
+
+
+def test_reconcile_skips_a_leased_running_backfill_job(tmp_path, clock):
+    # The real idempotency case the pending()-only guard missed: the first pass's job is dispatched
+    # (leased to RUNNING) before the next reconcile — a restart mid-backfill, or the on-demand CLI
+    # path racing running jobs. It must not enqueue a duplicate.
+    h = Harness(tmp_path, Config.from_mapping({"rng_seed": 1}), clock)
+    _topic(h, "t_missing", "Topic with no summary vector yet")
+    _reconcile(h)
+    (job,) = [w for w in h.pending_work() if w.kind is WorkKind.EMBEDDING]
+    h.stores.work.lease(job.work_id, h.clock.now_utc() + timedelta(minutes=5))  # PENDING -> RUNNING
+    assert _pending_topic_embed_ids(h) == []  # nothing pending; the job is in flight
+
+    _reconcile(h)  # must skip the RUNNING job, not enqueue a second one
+    assert _pending_topic_embed_ids(h) == []
+    assert h.stores.work.active_embedding_topic_ids() == {"t_missing"}  # exactly one in flight
     h.close()
 
 
@@ -120,5 +138,38 @@ async def test_service_startup_backfills_pre_existing_topics(tmp_path):
                 break
             await asyncio.sleep(0.02)
         assert service.stores.memory.topics_without_embedding() == []  # all backfilled at startup
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_skips_a_recovered_running_job(tmp_path):
+    # Crash mid-backfill: a topic-embedding job was left RUNNING (leased, not expired). On restart,
+    # the startup reconcile must not enqueue a second job for that topic.
+    now = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
+    stores = Stores.open(tmp_path / "agent.db")
+    with stores.db.transaction():
+        stores.memory.insert_topic(Topic(
+            id="t_running", summary="a topic whose embedding job is mid-flight", activation=0.8,
+            importance=0.8, decay_rate_per_hour=_RATE, created_at=now, last_activated_at=now,
+            source_memory_id=None,
+        ))
+        stores.work.insert_work(WorkItem(
+            work_id="w_running", kind=WorkKind.EMBEDDING, cycle_id="c", basis_revision=0,
+            source_event_id="e", status=WorkStatus.RUNNING, created_at=now,
+            lease_until=now + timedelta(hours=1),  # future lease -> not reclaimed as expired
+            snapshot={"topic_id": "t_running", "text": "a topic whose embedding job is mid-flight"},
+        ))
+    stores.close()
+
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    await service.start()
+    try:
+        await asyncio.sleep(0.05)  # let startup settle
+        rows = service.stores.db.query_all(
+            "SELECT COUNT(*) AS n FROM work_items WHERE kind='EMBEDDING' AND snapshot LIKE ?",
+            ("%t_running%",),
+        )
+        assert rows[0]["n"] == 1  # the recovered job only; reconcile added no duplicate
     finally:
         await service.stop()
