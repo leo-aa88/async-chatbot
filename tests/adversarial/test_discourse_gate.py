@@ -16,7 +16,7 @@ from aca import ids
 from aca.clock import ManualClock
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus, MessageClass, OutboundKind, OutboundStatus
+from aca.domain.enums import EnrichmentStatus, OutboundKind, OutboundStatus
 from aca.domain.runtime import OutboundMessage
 from aca.domain.state import ProvisionalMemory, Topic
 from aca.errors import ConfigError
@@ -176,6 +176,21 @@ def test_unlisted_acknowledgement_does_not_become_focus(tmp_path):
     h.close()
 
 
+def test_short_real_topic_shift_sets_focus(tmp_path):
+    # The inverse of the "I see" case, through the real path: a short STATEMENT that is a genuine
+    # subject shift ("Robots are next.") must replace the focus, not be dropped as uncertain.
+    h = _harness(tmp_path)
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        conv = h.stores.state.load_conversation()
+        h.stores.state.save_conversation(conv.__class__(
+            last_human_message_at=now - timedelta(seconds=60), focus_memory_id="subject_X"))
+    h.send_human("Robots are next.")
+    focus = h.stores.state.load_conversation().focus_memory_id
+    assert focus is not None and focus != "subject_X"  # replaced with the new subject's memory
+    h.close()
+
+
 def test_noted_is_a_backchannel_not_a_subject(tmp_path):
     h = _harness(tmp_path)
     now = h.clock.now_utc()
@@ -245,12 +260,23 @@ def test_inverted_thresholds_are_rejected():
         )
 
 
-def test_focus_predicate_separates_backchannels_from_subjects():
-    assert is_focus_setting("what about a coma?", MessageClass.SOCIAL_QUESTION) is True
-    assert is_focus_setting("Deploy the agent onto physical hardware.", MessageClass.STATEMENT) is True
-    # Backchannels and short/uncertain statements do not set a subject.
-    assert is_focus_setting("noted", MessageClass.STATEMENT) is False
-    assert is_focus_setting("alright", MessageClass.STATEMENT) is False
-    assert is_focus_setting("ok", MessageClass.ACKNOWLEDGEMENT) is False
-    assert is_focus_setting("I see", MessageClass.STATEMENT) is False        # unlisted, short
-    assert is_focus_setting("makes sense", MessageClass.STATEMENT) is False  # unlisted, short
+def _focus_setting(text: str) -> bool:
+    """Run the predicate through the REAL ingress classifier, not a hand-fed class."""
+    from aca.cognition.classifier import classify
+    return is_focus_setting(text, classify(text).message_class)
+
+
+def test_focus_predicate_is_independent_of_the_ingress_length_class():
+    # Subjects — including a SHORT real topic shift that ingress calls STATEMENT, and a longer one
+    # ingress calls HIGH_INFORMATION.
+    assert _focus_setting("Robots are next.") is True
+    assert _focus_setting("the AI layer will happen later on with raspberry pi") is True
+    assert _focus_setting("what about a coma?") is True
+    assert _focus_setting("Deploy the agent onto physical hardware.") is True
+    # Acknowledgements — including a LONG one ingress calls HIGH_INFORMATION, which must NOT become
+    # the subject, and short ones regardless of their ingress class.
+    assert _focus_setting("I see your point now.") is False
+    assert _focus_setting("yeah that makes sense") is False
+    assert _focus_setting("noted") is False
+    assert _focus_setting("alright") is False
+    assert _focus_setting("ok") is False

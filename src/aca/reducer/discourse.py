@@ -33,45 +33,62 @@ class DiscourseRelation(str, Enum):
     UNJUDGED = "unjudged"   # no comparable vector (missing/cross-model) — never suppressed
 
 
-# Turns that do not assert a subject even when ingress makes a RAW memory for them. The ingress
-# class is insufficient (``noted``/``alright`` are STATEMENT), so this is its own token set plus the
-# low-substance classes (§34.4). Conservative by design; calibration is DESIGN §31.15.
-_BACKCHANNEL_TOKENS = frozenset({
-    "ok", "okay", "k", "kk", "noted", "alright", "aight", "lol", "lmao", "sure", "yep", "yup",
-    "yeah", "nah", "cool", "fine", "right", "gotcha", "got it", "thanks", "thx", "ty", "np",
+# Structural signals from ingress that are *reliable* about subject-ness (not the length split):
+# a task/question/reprompt always asserts a subject; an acknowledgement/closer/low-info never does.
+_SUBJECT_CLASSES = frozenset({
+    MessageClass.DIRECT_TASK, MessageClass.TASK_QUESTION, MessageClass.REPROMPT,
+    MessageClass.SOCIAL_QUESTION,
 })
-_LOW_SUBSTANCE_CLASSES = frozenset({
+_NON_SUBJECT_CLASSES = frozenset({
     MessageClass.ACKNOWLEDGEMENT, MessageClass.CONVERSATION_CLOSER, MessageClass.LOW_INFORMATION,
 })
-# Classes that inherently assert a subject (a task, a question, a high-information turn).
-_SUBSTANTIVE_CLASSES = frozenset({
-    MessageClass.DIRECT_TASK, MessageClass.TASK_QUESTION, MessageClass.REPROMPT,
-    MessageClass.HIGH_INFORMATION, MessageClass.SOCIAL_QUESTION,
+
+# For the *plain-statement* bucket (HIGH_INFORMATION / STATEMENT — the same kind of turn split only
+# by length at ingress, so length is NOT a subject signal), decide independently: a turn is an
+# acknowledgement iff, after dropping function/filler words, it has no content beyond acknowledgement
+# words. This separates "I see your point now" (ack) from "Robots are next" (subject) without the
+# ingress length class. Deliberately imperfect; calibration is DESIGN §31.15.
+_ACK_WORDS = frozenset({
+    "ok", "okay", "k", "kk", "yeah", "yep", "yup", "no", "nope", "nah", "lol", "haha", "lmao",
+    "ty", "thx", "thanks", "nice", "cool", "fair", "sure", "great", "gotcha", "right", "makes",
+    "sense", "word", "see", "point", "agreed", "understood", "true", "correct", "exactly",
+    "totally", "indeed", "noted", "alright", "aight", "fine", "good", "got", "np",
 })
-# A STATEMENT shorter than this is treated as uncertain and does NOT set a subject (§34.4). The
-# threshold is a calibration knob (§31.15); it exists so an unlisted acknowledgement like "I see"
-# defaults to no focus change rather than being installed as the subject.
-_MIN_STATEMENT_WORDS = 4
+_FILLER_WORDS = frozenset({
+    "i", "you", "your", "my", "we", "they", "it", "the", "a", "an", "that", "this", "these",
+    "those", "is", "are", "was", "were", "now", "then", "so", "well", "oh", "ah", "to", "of",
+    "and", "but", "do", "me", "us", "am",
+})
+
+
+def _is_acknowledgement(text: str) -> bool:
+    """Independent (non-length) check: does this plain statement carry no subject beyond ack words?
+
+    True when every content token (after removing function/filler words) is an acknowledgement
+    word — or there is no content at all. False as soon as a genuinely new content word appears.
+    """
+    tokens = [t for t in text.strip().lower().replace("'", " ").split() if t.isalpha()]
+    content = [t for t in tokens if t not in _FILLER_WORDS]
+    if not content:
+        return True
+    return all(t in _ACK_WORDS for t in content)
 
 
 def is_focus_setting(text: str, message_class: MessageClass) -> bool:
     """Whether a human turn asserts a new conversational subject (DESIGN §34.4).
 
-    Affirmative, not blacklist-only: a subject is asserted by a clearly-substantive class, or a
-    STATEMENT with enough content to clear a small bar. Everything else — low-substance classes,
-    known backchannel tokens, and *short/uncertain* statements — defaults to **not** focus-setting,
-    so a guessed subject is never installed (the transition then defers to mode; §34.4).
+    Its own discourse decision, not the ingress length class: structural task/question classes
+    assert a subject; acknowledgement/closer/low-info never do; and a *plain statement* asserts a
+    subject only if it is not an acknowledgement by content (`_is_acknowledgement`). Uncertainty in
+    the plain-statement bucket resolves toward the content check, so an acknowledgement phrased as a
+    long statement ("I see your point now") does not become the focus while a short real shift
+    ("Robots are next") does.
     """
-    if message_class in _LOW_SUBSTANCE_CLASSES:
+    if message_class in _NON_SUBJECT_CLASSES:
         return False
-    normalized = text.strip().lower().rstrip(".!?").strip()
-    if normalized in _BACKCHANNEL_TOKENS:
-        return False
-    if message_class in _SUBSTANTIVE_CLASSES:
+    if message_class in _SUBJECT_CLASSES:
         return True
-    # STATEMENT (or any other class): substantive only if it clears the content bar; below it the
-    # turn is treated as uncertain and does not change the subject.
-    return len(normalized.split()) >= _MIN_STATEMENT_WORDS
+    return not _is_acknowledgement(text)
 
 
 def _focus_vector(ctx: ReducerContext):
