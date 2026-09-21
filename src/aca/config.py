@@ -169,6 +169,15 @@ class Memory:
     discourse_continue_cosine: float = 0.75
     discourse_bridge_cosine: float = 0.55
 
+    def __post_init__(self) -> None:
+        # The ORPHAN boundary is discourse_bridge_cosine and must sit at or below the CONTINUE
+        # boundary, or the bands are inverted and the advertised gate boundary is meaningless.
+        # Enforced here so a *direct* Memory(...) construction can't bypass it either (DESIGN 34.5).
+        if self.discourse_bridge_cosine > self.discourse_continue_cosine:
+            raise ConfigError(
+                "memory.discourse_bridge_cosine must be <= memory.discourse_continue_cosine"
+            )
+
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Memory:
         half_life = float(data.get("default_decay_half_life_hours", 24.0))

@@ -43,19 +43,35 @@ _BACKCHANNEL_TOKENS = frozenset({
 _LOW_SUBSTANCE_CLASSES = frozenset({
     MessageClass.ACKNOWLEDGEMENT, MessageClass.CONVERSATION_CLOSER, MessageClass.LOW_INFORMATION,
 })
+# Classes that inherently assert a subject (a task, a question, a high-information turn).
+_SUBSTANTIVE_CLASSES = frozenset({
+    MessageClass.DIRECT_TASK, MessageClass.TASK_QUESTION, MessageClass.REPROMPT,
+    MessageClass.HIGH_INFORMATION, MessageClass.SOCIAL_QUESTION,
+})
+# A STATEMENT shorter than this is treated as uncertain and does NOT set a subject (§34.4). The
+# threshold is a calibration knob (§31.15); it exists so an unlisted acknowledgement like "I see"
+# defaults to no focus change rather than being installed as the subject.
+_MIN_STATEMENT_WORDS = 4
 
 
 def is_focus_setting(text: str, message_class: MessageClass) -> bool:
     """Whether a human turn asserts a new conversational subject (DESIGN §34.4).
 
-    Its own conservative predicate — a low-substance class, or a turn whose whole content is a
-    backchannel token, does not set the focus. Uncertainty biases toward *not* focus-setting so a
-    guessed subject is never installed (the transition then defers to mode; §34.4).
+    Affirmative, not blacklist-only: a subject is asserted by a clearly-substantive class, or a
+    STATEMENT with enough content to clear a small bar. Everything else — low-substance classes,
+    known backchannel tokens, and *short/uncertain* statements — defaults to **not** focus-setting,
+    so a guessed subject is never installed (the transition then defers to mode; §34.4).
     """
     if message_class in _LOW_SUBSTANCE_CLASSES:
         return False
-    normalized = text.strip().lower().rstrip(".!").strip()
-    return normalized not in _BACKCHANNEL_TOKENS
+    normalized = text.strip().lower().rstrip(".!?").strip()
+    if normalized in _BACKCHANNEL_TOKENS:
+        return False
+    if message_class in _SUBSTANTIVE_CLASSES:
+        return True
+    # STATEMENT (or any other class): substantive only if it clears the content bar; below it the
+    # turn is treated as uncertain and does not change the subject.
+    return len(normalized.split()) >= _MIN_STATEMENT_WORDS
 
 
 def _focus_vector(ctx: ReducerContext):
@@ -85,11 +101,14 @@ def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelati
     if focus is None or cand is None or focus[0] != cand[0]:
         return DiscourseRelation.UNJUDGED
     affinity = vectors.cosine(focus[1], cand[1])
+    # Check the ORPHAN boundary (bridge) FIRST so the suppression cut is exactly discourse_bridge_
+    # cosine regardless of the CONTINUE threshold — the label can't silently move the gate (§34.5).
+    # (Config also enforces bridge <= continue, so this ordering and that invariant agree.)
+    if affinity < bridge:
+        return DiscourseRelation.ORPHAN
     if affinity >= ctx.config.memory.discourse_continue_cosine:
         return DiscourseRelation.CONTINUE
-    if affinity >= bridge:
-        return DiscourseRelation.BRIDGE
-    return DiscourseRelation.ORPHAN
+    return DiscourseRelation.BRIDGE
 
 
 def is_discourse_orphan(ctx: ReducerContext, kind: str, candidate_id: str, now) -> bool:

@@ -9,14 +9,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from conftest import Harness
 
+from aca import ids
 from aca.clock import ManualClock
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus, MessageClass
+from aca.domain.enums import EnrichmentStatus, MessageClass, OutboundKind, OutboundStatus
+from aca.domain.runtime import OutboundMessage
 from aca.domain.state import ProvisionalMemory, Topic
+from aca.errors import ConfigError
 from aca.reducer.discourse import is_focus_setting
+from aca.service.delivery import DeliveryPump
 
 _RATE = half_life_to_rate_per_hour(24.0)
 
@@ -156,6 +161,21 @@ def test_substantive_turn_sets_focus(tmp_path):
     h.close()
 
 
+def test_unlisted_acknowledgement_does_not_become_focus(tmp_path):
+    # "I see" is a STATEMENT at ingress (creates a RAW memory) but is not in the token blacklist.
+    # The affirmative predicate (short STATEMENT -> uncertain -> not focus-setting) must keep the
+    # real subject rather than installing the acknowledgement.
+    h = _harness(tmp_path)
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        conv = h.stores.state.load_conversation()
+        h.stores.state.save_conversation(conv.__class__(
+            last_human_message_at=now - timedelta(seconds=60), focus_memory_id="subject_X"))
+    h.send_human("I see")
+    assert h.stores.state.load_conversation().focus_memory_id == "subject_X"
+    h.close()
+
+
 def test_noted_is_a_backchannel_not_a_subject(tmp_path):
     h = _harness(tmp_path)
     now = h.clock.now_utc()
@@ -182,13 +202,55 @@ def test_backchannel_after_dormancy_retires_the_subject(tmp_path):
     h.close()
 
 
-# --- the focus predicate -----------------------------------------------------------------------
+# --- delivery-time checkpoint (§34.6 checkpoint 3) ---------------------------------------------
+
+@pytest.mark.asyncio
+async def test_delivery_time_recheck_drops_a_now_orphan(tmp_path):
+    # An on-topic proactive item sits pending (no client); the IDLE focus changes to an unrelated
+    # subject; on the next pump the delivery-time check must reject it (no transport), reporting
+    # revalidation:discourse_orphan — the only protection once an item is in the outbox.
+    h = _harness(tmp_path)
+    _set_focus(h, [1.0, 0.0, 0.0], gap_seconds=60)   # IDLE, focus [1,0,0]
+    _candidate_topic(h, "t_off", [0.0, 1.0, 0.0])    # the outbound item's candidate is an orphan
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        h.stores.outbox.insert_message(OutboundMessage(
+            message_id="m1", delivery_key=ids.new_delivery_key(), action_id="a",
+            kind=OutboundKind.PROACTIVE, channel="cli", payload="hi",
+            status=OutboundStatus.PENDING_DELIVERY, created_at=now,
+            candidate_kind="TOPIC", candidate_id="t_off"))
+
+    sink_calls: list[str] = []
+    results = []
+
+    async def sink(channel, payload, key, mid):
+        sink_calls.append(mid)
+        return True
+
+    pump = DeliveryPump(h.stores, h.clock, h.config, h.ctx, sink, results.append)
+    await pump.pump()
+
+    assert sink_calls == []  # no transport
+    assert any(r.error == "revalidation:discourse_orphan" and not r.delivered for r in results)
+    h.close()
+
+
+# --- config + predicate ------------------------------------------------------------------------
+
+def test_inverted_thresholds_are_rejected():
+    # A valid-looking config must not silently disable the gate by inverting the bands.
+    with pytest.raises(ConfigError):
+        Config.from_mapping(
+            {"memory": {"discourse_continue_cosine": 0.2, "discourse_bridge_cosine": 0.8}}
+        )
+
 
 def test_focus_predicate_separates_backchannels_from_subjects():
     assert is_focus_setting("what about a coma?", MessageClass.SOCIAL_QUESTION) is True
-    assert is_focus_setting("Deploy the agent onto the robot.", MessageClass.STATEMENT) is True
-    # Backchannels, including STATEMENT-classified ones, do not set a subject.
+    assert is_focus_setting("Deploy the agent onto physical hardware.", MessageClass.STATEMENT) is True
+    # Backchannels and short/uncertain statements do not set a subject.
     assert is_focus_setting("noted", MessageClass.STATEMENT) is False
     assert is_focus_setting("alright", MessageClass.STATEMENT) is False
     assert is_focus_setting("ok", MessageClass.ACKNOWLEDGEMENT) is False
-    assert is_focus_setting("cool.", MessageClass.STATEMENT) is False
+    assert is_focus_setting("I see", MessageClass.STATEMENT) is False        # unlisted, short
+    assert is_focus_setting("makes sense", MessageClass.STATEMENT) is False  # unlisted, short
