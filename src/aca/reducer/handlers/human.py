@@ -29,6 +29,7 @@ from ...domain.events import HumanMessage
 from ...domain.runtime import CognitionTrace, ResponseObligation
 from ...domain.state import ProvisionalMemory
 from ..context import ReducerContext
+from ..discourse import is_focus_setting
 from ..support import build_candidates, infer_mode_for
 from ..workitems import create_embedding_work, create_llm_work
 from .base import CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL, HandlerOutcome
@@ -78,7 +79,7 @@ def _previous_context(ctx: ReducerContext) -> ClassificationContext:
     )
 
 
-def _update_conversation(ctx: ReducerContext, now: datetime) -> None:
+def _update_conversation(ctx: ReducerContext, now: datetime, *, focus_memory_id: str | None) -> None:
     conversation = ctx.stores.state.load_conversation()
     recent = (*conversation.recent_human_turn_timestamps, now)[-_MAX_RECENT_TURNS:]
     updated = replace(
@@ -86,9 +87,27 @@ def _update_conversation(ctx: ReducerContext, now: datetime) -> None:
         last_human_message_at=now,
         active_observed_silence_seconds=0.0,  # a present human resets observed silence
         recent_human_turn_timestamps=recent,
+        focus_memory_id=focus_memory_id,
     )
     updated = replace(updated, mode=infer_mode_for(ctx, updated, now))
     ctx.stores.state.save_conversation(updated)
+
+
+def _next_focus(
+    current: str | None, *, focus_setting: bool, memory_id: str | None, pre_mode: ConversationMode
+) -> str | None:
+    """The discourse focus after this turn (DESIGN §34.4).
+
+    A subject survives a lapse into `DORMANT` only if a new substantive memory re-establishes one:
+    a focus-setting turn that produced a memory sets it; any other turn defers to the pre-turn mode
+    — keep the known-good subject while the conversation is live, clear it after dormancy so a bare
+    acknowledgement can't revive a stale subject.
+    """
+    if focus_setting and memory_id is not None:
+        return memory_id
+    if pre_mode is ConversationMode.DORMANT:
+        return None
+    return current
 
 
 def _create_memory(ctx: ReducerContext, event: HumanMessage, salience: float, now: datetime) -> str:
@@ -116,7 +135,11 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
     classification = classify(event.text, _previous_context(ctx))
 
     ctx.stores.outbox.add_human_turn(event.text, event.channel, event.event_id, now)
-    _update_conversation(ctx, now)
+
+    # The focus decision needs the PRE-turn mode (before cadence is refreshed) and this turn's new
+    # memory id, so compute both before updating conversation state (DESIGN §34.4).
+    pre_conversation = ctx.stores.state.load_conversation()
+    pre_mode = infer_mode_for(ctx, pre_conversation, now)
 
     dispatch: list[str] = []
     memory_id: str | None = None
@@ -129,6 +152,14 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
                 cycle_id=cycle_id, now=now,
             )
         )
+
+    focus = _next_focus(
+        pre_conversation.focus_memory_id,
+        focus_setting=is_focus_setting(event.text, classification.message_class),
+        memory_id=memory_id,
+        pre_mode=pre_mode,
+    )
+    _update_conversation(ctx, now, focus_memory_id=focus)
 
     if classification.possible_prior_miss:
         # Re-prompt is weak classification-quality evidence, zero adaptation weight (DESIGN 17.1).

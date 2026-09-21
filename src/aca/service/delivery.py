@@ -21,6 +21,7 @@ from ..domain.enums import OutboundKind
 from ..domain.events import DeliveryResult
 from ..persistence.stores import Stores
 from ..reducer.context import ReducerContext
+from ..reducer.discourse import is_discourse_orphan
 from ..reducer.gates import evaluate_proactive
 
 # A sink attempts transport and returns True iff a client on the channel accepted it.
@@ -76,6 +77,14 @@ class DeliveryPump:
             gate = evaluate_proactive(self._ctx, now)
             if not gate.allowed:
                 self._report(message, delivered=False, error=f"revalidation:{gate.reason}")
+                continue
+            # Discourse re-check before transport (§34.6 checkpoint 3, invariant 9): a proactive
+            # item on-topic at decision time may be delivered late, after the conversation moved on.
+            # Uses the outbound row's persisted candidate (§23.7), not a live candidate object.
+            if message.candidate_id is not None and is_discourse_orphan(
+                self._ctx, message.candidate_kind, message.candidate_id, now
+            ):
+                self._report(message, delivered=False, error="revalidation:discourse_orphan")
                 continue
             if delivered_one or not burst_elapsed:
                 # Keep the rest pending rather than dogpiling; they retry on a later pump.
