@@ -131,6 +131,7 @@ def _start_voice(config, client: IpcClient, ui: ChatUI) -> tuple:
         build_segmenter,
         build_speech_detector,
         build_transcriber,
+        build_turn_assembler,
         resolve_transcriber_provider,
     )
     from ..voice.session import VoiceSession
@@ -150,7 +151,9 @@ def _start_voice(config, client: IpcClient, ui: ChatUI) -> tuple:
     segmenter = build_segmenter(voice)
     source = MicrophoneSource(sample_rate=voice.sample_rate, frame_seconds=voice.frame_seconds)
 
-    async def on_transcript(text: str) -> None:
+    async def on_turn(text: str) -> None:
+        # Called once per *committed* conversational turn (assembled from one or more utterances),
+        # never per raw VAD segment — so a mid-thought pause doesn't fire a premature turn (§36).
         ui.print_message(text, at=clock_time(datetime.now(UTC), tz), sender="you/voice")
         await client.chat_send(text, input_mode="voice")
 
@@ -158,7 +161,10 @@ def _start_voice(config, client: IpcClient, ui: ChatUI) -> tuple:
         # Surface the failure on the shared UI instead of dying silently in a background task.
         ui.print_message(f"{stage} error: {exc}", sender="voice")
 
-    session = VoiceSession(source, detector, segmenter, transcriber, on_transcript, on_error=on_error)
+    assembler = build_turn_assembler(voice, on_turn)
+    session = VoiceSession(
+        source, detector, segmenter, transcriber, on_turn, on_error=on_error, assembler=assembler
+    )
     return session, asyncio.ensure_future(session.run())
 
 

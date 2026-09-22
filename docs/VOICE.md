@@ -1,15 +1,17 @@
 # Voice input (`aca chat --voice`)
 
 Speak instead of (or as well as) typing. Voice is a **client-side perception adapter**: the CLI
-captures the microphone, a lightweight VAD carves the stream into conversational turns, a Whisper
-model transcribes each turn, and the text is injected through the **exact same durable ingress as
-typed input** — a `HumanMessage` tagged `input_mode="voice"`. To cognition, a spoken turn and a
-typed turn are both human utterances; **nothing in the reducer or cognition branches on
-`input_mode`**, so determinism and replay are untouched (invariant 2).
+captures the microphone, a lightweight VAD carves the stream into **acoustic utterances**, a Whisper
+model transcribes each, a **turn assembler** joins them into a conversational turn once you yield the
+floor, and only that committed turn is injected through the **exact same durable ingress as typed
+input** — a `HumanMessage` tagged `input_mode="voice"`. To cognition, a spoken turn and a typed turn
+are both human utterances; **nothing in the reducer or cognition branches on `input_mode`**, so
+determinism and replay are untouched (invariant 2).
 
 ```
-you speak → microphone → VAD (speech boundaries) → Whisper (small.en) → text
-         → same HumanMessage ingress as typing → Wolfy thinks → (maybe) speaks
+you speak → microphone → VAD (speech boundaries) → Whisper (small.en) → utterance text
+         → turn assembler (floor-yield) → one HumanMessage (same ingress as typing)
+         → Wolfy thinks → (maybe) speaks
 ```
 
 Voice is entirely optional and lives **alongside** typing — plain `aca chat` needs none of the
@@ -73,15 +75,28 @@ dry runs never touch a model or a microphone.
 | `language`         | `en`             | transcription language                                         |
 | `vad`              | `energy`         | `energy` (RMS gate, no deps) or `silero` (needs `voice-silero`)|
 | `vad_threshold`    | `0.02`           | energy-VAD speech threshold, normalized RMS in `[0,1]`         |
-| `silence`          | `0.6s`           | end-of-utterance silence (hangover) that closes a turn         |
+| `silence`          | `0.6s`           | end-of-utterance silence (hangover) that closes one *utterance* |
 | `min_utterance`    | `0.3s`           | shorter runs of speech are dropped as blips                    |
 | `max_utterance`    | `30s`            | force-cut so a stuck mic can't buffer without bound            |
+| `turn_gap`         | `1.3s`           | trailing silence that commits an ordinary *turn* (must be > `silence`) |
+| `continuation_gap` | `2.8s`           | longer grace when the turn looks syntactically unfinished      |
+| `max_turn`         | `120s`           | safety cap; forces a turn commit at the next silence boundary  |
+
+**Tuning turn-taking.** `silence` is when *one utterance* ends; `turn_gap` is when *your whole turn*
+ends. Raise `turn_gap` if Wolfy answers before you've finished a thought; lower it if replies feel
+sluggish. `continuation_gap` only applies when your last word looks unfinished (a trailing "and",
+"to", "uh", …), so a mid-thought pause waits longer than a finished sentence.
 
 ## Design notes
 
-- **Turns, not partial transcripts.** The [segmenter](../src/aca/voice/segmenter.py) waits for a
-  complete utterance (a run of speech bounded by silence) and transcribes it as one unit. We never
-  stream partial transcripts as messages.
+- **Utterances vs turns (DESIGN §36).** The [segmenter](../src/aca/voice/segmenter.py) answers
+  *"where did speech stop?"* — it yields an **acoustic utterance** (speech bounded by silence). The
+  [turn assembler](../src/aca/voice/turn_assembler.py) answers *"has the human yielded the floor?"* —
+  it joins utterances across thinking pauses and commits one `HumanMessage` per turn. A VAD boundary
+  is not a turn boundary, so a mid-thought pause never fires a premature turn. We never stream
+  partial transcripts as messages.
+- **Floor-yield is measured in acoustic time.** The commit waits on trailing silence counted from
+  the *frame stream*, not wall-clock after ASR — so Whisper latency is never mistaken for you pausing.
 - **The pure core is deterministic.** `audio`, `vad`, and `segmenter` are frame-based, clock-free,
   and dependency-free, so the boundary logic is exhaustively unit-tested with no audio backend.
   Real capture (`sounddevice`) and transcription (`faster-whisper`) are lazy optional imports.
