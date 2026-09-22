@@ -123,6 +123,17 @@ def test_zero_focus_vector_is_unjudged_not_orphan(tmp_path):
     h.close()
 
 
+def test_underflow_norm_vectors_are_unjudged_not_orphan(tmp_path):
+    # Identical but tiny-magnitude vectors: components are non-zero, yet their squares underflow, so
+    # cosine returns its 0.0 sentinel. The guard must match cosine (sum-of-squares norm) and treat
+    # this as UNJUDGED — an identical-vector comparison must never be suppressed as ORPHAN.
+    h = _harness(tmp_path)
+    _set_focus(h, [1e-300, 0.0, 0.0], gap_seconds=60)
+    _candidate_topic(h, "t_same", [1e-300, 0.0, 0.0])
+    assert _wake_note(h) == "proactive_dispatch"
+    h.close()
+
+
 def test_dimension_mismatch_is_unjudged_not_orphan(tmp_path):
     # Same-model vectors of different lengths are incomparable -> UNJUDGED, not ORPHAN.
     h = _harness(tmp_path)

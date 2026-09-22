@@ -80,13 +80,16 @@ def gate_active(ctx: ReducerContext, now) -> bool:
 
 
 def _usable(vec: list[float]) -> bool:
-    """A vector is comparable only if it is non-empty, all-finite, and has a non-zero norm.
+    """A vector is comparable only if it is non-empty, all-finite, and has a non-zero norm **as
+    ``vectors.cosine`` computes it** — ``sum(x*x) > 0``, not merely ``any(x != 0)``.
 
-    ``vectors.cosine`` returns 0.0 for an empty/zero vector or a length mismatch — a sentinel this
-    gate must NOT read as low affinity, or an unjudgeable comparison would suppress as an ORPHAN
-    (the exact fail-open violation §34.5 forbids). Such vectors are treated as UNJUDGED instead.
+    The two predicates differ: a tiny-magnitude vector like ``[1e-300, 0.0]`` has a non-zero
+    component but its squares underflow, so ``cosine`` returns its ``0.0`` sentinel. Matching
+    cosine's own norm here means every input for which cosine would return that sentinel (empty,
+    zero, underflowing, or — checked by the caller — mismatched length) is treated as UNJUDGED, not
+    read as low affinity and suppressed as an ORPHAN (the fail-open rule §34.5 requires).
     """
-    return bool(vec) and all(math.isfinite(x) for x in vec) and any(x != 0.0 for x in vec)
+    return bool(vec) and all(math.isfinite(x) for x in vec) and sum(x * x for x in vec) > 0.0
 
 
 def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelation:
