@@ -131,6 +131,7 @@ class StateStore:
                 "recent_human_turn_timestamps": [
                     txt(ts) for ts in c.recent_human_turn_timestamps
                 ],
+                "focus_memory_id": c.focus_memory_id,
             }
         )
 
@@ -147,4 +148,5 @@ class StateStore:
             recent_human_turn_timestamps=tuple(
                 dt(ts) for ts in d.get("recent_human_turn_timestamps", []) if ts
             ),
+            focus_memory_id=d.get("focus_memory_id"),
         )

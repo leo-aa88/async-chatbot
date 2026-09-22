@@ -35,6 +35,7 @@ from ...errors import ValidationError
 from ..apply_proposals import apply_proposals
 from ..context import ReducerContext
 from ..continuity import is_semantic_repeat
+from ..discourse import is_discourse_orphan
 from ..gates import evaluate_proactive
 from ..outbound import create_outbound
 from ..revalidation import is_superseded
@@ -238,6 +239,14 @@ def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
             pre_outbox_invalidated=True, note="pre_outbox:continuity_repeat",
         )
         return HandlerOutcome(reschedule=True, note="pre_outbox_invalidated:continuity_repeat")
+    # Discourse re-check (§34.6 checkpoint 2): the focus may have changed, or (fail-open) become
+    # available, since dispatch — an off-subject candidate is dropped rather than voiced late.
+    if candidate.get("id") and is_discourse_orphan(ctx, candidate.get("kind"), candidate["id"], now):
+        ctx.stores.work.finalize_trace(
+            event.cycle_id, action="silence", useful_enrichment=useful,
+            pre_outbox_invalidated=True, note="pre_outbox:discourse_orphan",
+        )
+        return HandlerOutcome(reschedule=True, note="pre_outbox_invalidated:discourse_orphan")
 
     charge_proactive_message(ctx, now)
     create_outbound(

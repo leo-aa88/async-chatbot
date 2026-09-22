@@ -106,3 +106,7 @@ class ConversationState:
     # Accumulated silence counted only while RUNNING (DESIGN 7.6). Stored in seconds.
     active_observed_silence_seconds: float = 0.0
     recent_human_turn_timestamps: tuple[datetime, ...] = field(default_factory=tuple)
+    # Discourse focus (DESIGN §34, v0.7): id of the provisional memory of the current
+    # focus-setting turn — the conversation's *subject*. The discourse gate scores a proactive
+    # candidate against this while mode is IDLE. Set/held/cleared by the human-message handler.
+    focus_memory_id: str | None = None
