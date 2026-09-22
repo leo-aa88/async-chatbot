@@ -262,6 +262,79 @@ class WorkStore:
         metrics["proactive_repeated"] = spoke_c - distinct_c
         return metrics
 
+    # Ordered proactive block-reason buckets (DESIGN 26): the point in the cognition pipeline where a
+    # proactive cycle that did NOT speak was stopped. Pipeline order — wake-time pre-filter, then the
+    # post-dispatch pre-outbox re-check (§34.6, §35.4), then the model's own silence. A single CASE
+    # assigns each *resolved* non-speaking StochasticWake row to exactly one bucket (no double
+    # counting), so the buckets partition the resolved-non-speaking proactive cycles exactly
+    # (``other`` catches the rest). ``model_silence`` is the dispatched cycle the model let lapse:
+    # the reducer overwrites its trace note with ``None`` (COALESCE keeps the ``proactive_dispatch``
+    # tag) and only flips the action to ``silence`` — so the tag survives, and within this query
+    # (which already requires a resolved silence/failure) a ``proactive_dispatch`` row *is* a model
+    # silence. In-flight cycles (action still NULL) are excluded, so a pending dispatch is not
+    # miscounted as a silence. ``failed`` captures a worker/parse failure on a proactive cycle:
+    # ``_on_worker_failure``/``_on_parse_failure`` finalize a non-mandatory failure as
+    # ``action='silence'`` with note ``worker_failure``/``parse_failure`` (only the mandatory branch
+    # sets ``action='failed'``), so an LLM outage during proactive cycles surfaces here instead of
+    # disappearing into ``other``.
+    _BLOCK_REASON_ORDER = (
+        "nothing", "low_worth", "budget", "cooldown", "quiet_hours", "mode_suppressed",
+        "enrichment_gated", "discourse_orphan_wake", "continuity_repeat_wake",
+        "discourse_orphan_recheck", "continuity_repeat_recheck", "advancement", "superseded",
+        "model_silence", "enrichment_only", "failed", "other",
+    )
+    # A priority-ordered CASE assigning each row exactly one bucket. Earlier WHENs win, so the
+    # specific post-dispatch tags (``pre_outbox:*``, ``advancement_*``, supersession) are matched
+    # before the keyword groups that would also match via LIKE. Both the wake-time ``blocked:{reason}``
+    # and the pre-outbox ``pre_outbox:{reason}`` prefixes carry the same hard-gate ``reason`` literals
+    # (``budget_exhausted``/``cooldown_active``/``mode_suppresses_initiative``/``quiet_hours``), plus
+    # ``llm_budget`` at wake, so the keyword matches deliberately span both prefixes.
+    _BLOCK_REASON_CASE = """CASE
+        WHEN notes LIKE '%advancement\\_%' ESCAPE '\\' THEN 'advancement'
+        WHEN notes LIKE '%superseded%' OR notes LIKE '%newer_human%'
+             OR notes LIKE '%candidate_resolved%' THEN 'superseded'
+        WHEN notes LIKE 'pre_outbox%discourse_orphan%' THEN 'discourse_orphan_recheck'
+        WHEN notes LIKE 'pre_outbox%continuity_repeat%' THEN 'continuity_repeat_recheck'
+        WHEN notes = 'discourse_orphan' THEN 'discourse_orphan_wake'
+        WHEN notes = 'continuity_repeat' THEN 'continuity_repeat_wake'
+        WHEN notes LIKE 'enrichment_gated%' THEN 'enrichment_gated'
+        WHEN notes LIKE '%budget%' THEN 'budget'
+        WHEN notes LIKE '%cooldown%' THEN 'cooldown'
+        WHEN notes LIKE '%quiet_hours%' THEN 'quiet_hours'
+        WHEN notes LIKE '%mode_suppresses%' OR notes LIKE '%capability_denied%' THEN 'mode_suppressed'
+        WHEN notes = 'low_worth' THEN 'low_worth'
+        WHEN notes = 'nothing' THEN 'nothing'
+        WHEN notes LIKE 'enrichment_only%' THEN 'enrichment_only'
+        WHEN notes = 'proactive_dispatch' THEN 'model_silence'
+        WHEN notes LIKE 'worker_failure%' OR notes LIKE 'parse_failure%'
+             OR COALESCE(action, '') = 'failed' THEN 'failed'
+        ELSE 'other'
+    END"""
+
+    def proactive_block_reasons(self, *, since: datetime | None = None) -> dict[str, int]:
+        """Why did proactive cycles NOT speak? Counts of non-speaking ``StochasticWake`` cycles,
+        bucketed by where in the pipeline each was stopped (observability, DESIGN 26).
+
+        Read-only decomposition over the trace ``notes`` the reducer already records — no model
+        calls, no state. Returns every bucket in pipeline order (zeros included) so the shape is
+        stable across runs. Scope is *resolved* non-speaking proactive cycles — those that reached a
+        ``silence``/``failed`` outcome — so an in-flight dispatch (action still NULL) is not counted;
+        the values therefore sum to ``proactive_total - proactive_spoke - (proactive still pending)``.
+        This is the foundation for the offline counterfactual gating eval: it says which gate is
+        doing the suppressing before asking whether that suppression was *right*.
+        """
+        clause, params = "", ()
+        if since is not None:
+            clause, params = " AND created_at >= ?", (txt(since),)
+        rows = self._db.query_all(
+            f"SELECT {self._BLOCK_REASON_CASE} AS bucket, COUNT(*) AS n FROM cognition_traces "
+            "WHERE trigger='StochasticWake' AND action IN ('silence', 'failed')" + clause
+            + " GROUP BY bucket",
+            params,
+        )
+        counts = {r["bucket"]: int(r["n"] or 0) for r in rows}
+        return {bucket: counts.get(bucket, 0) for bucket in self._BLOCK_REASON_ORDER}
+
     def proactive_spoken_candidates(self, *, since: datetime | None = None) -> list[tuple[str, str]]:
         """``(candidate_kind, candidate_id)`` of proactive SPEAK cycles, oldest first.
 
