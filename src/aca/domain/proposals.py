@@ -43,6 +43,14 @@ _ADVANCEMENT_RELATIONS = frozenset(
     {"ADVANCE", "EVIDENCE", "REVISE", "CLOSE", "REOPEN", "ORPHAN", "REPEAT"}
 )
 
+# Focus transition a human-turn result may propose for the conversation's *subject* (DESIGN §35.3).
+# Parsed here (validate + whitelist) only; the effect — an authoritative override of the §34.4
+# deterministic provisional focus — is applied by the reducer (invariant 42b). An absent or
+# unrecognized value parses to ``None`` and the reducer applies **no** override (the v0.7 provisional
+# focus stands), so the current worker is unaffected (§35.9 cases 3, 8).
+_FOCUS_TRANSITIONS = frozenset({"KEEP", "REPLACE", "CLEAR"})
+MAX_MEMORY_ID_CHARS = 128
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
@@ -74,6 +82,11 @@ class LLMDecision:
     # A proactive message's proposed relation to the current thread (§35.4); ``None`` when absent or
     # unrecognized. Advisory data the reducer gates on — never authority (invariant 42a).
     relation: str | None = None
+    # A human-turn result's proposed focus transition (§35.3); ``None`` when absent or unrecognized
+    # (⇒ no override, the deterministic provisional focus stands). ``focus_memory_id`` carries the
+    # REPLACE target — a *provisional-memory* id the reducer validates for existence (invariant 42b).
+    focus_transition: str | None = None
+    focus_memory_id: str | None = None
 
 
 def _clean_str(value: Any, limit: int) -> str:
@@ -164,10 +177,15 @@ def parse_decision(raw: Any) -> LLMDecision:
     )
     relation_raw = str(raw.get("relation", "")).strip().upper()
     relation = relation_raw if relation_raw in _ADVANCEMENT_RELATIONS else None
+    focus_raw = str(raw.get("focus", "")).strip().upper()
+    focus_transition = focus_raw if focus_raw in _FOCUS_TRANSITIONS else None
+    focus_memory_id = _clean_str(raw.get("focus_memory_id", ""), MAX_MEMORY_ID_CHARS) or None
     return LLMDecision(
         action=action,
         message=message,
         proposals=tuple(proposals),
         useful_enrichment=useful_enrichment or bool(raw.get("useful_enrichment", False)),
         relation=relation,
+        focus_transition=focus_transition,
+        focus_memory_id=focus_memory_id,
     )

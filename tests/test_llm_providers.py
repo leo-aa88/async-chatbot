@@ -71,6 +71,17 @@ def test_prompt_relation_guidance_preserves_dormant_resurfacing():
     assert "suppressed anyway" not in system            # the false claim must not return
 
 
+def test_prompt_focus_transition_guidance():
+    # Reply cycles carry the focus-transition instruction (§35.3): KEEP is the default (a check-in
+    # keeps the subject), REPLACE names a memory id for a genuinely new subject, CLEAR empties it.
+    system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
+    assert "Focus —" in system
+    assert '"KEEP"' in system and '"REPLACE"' in system and '"CLEAR"' in system
+    assert "when unsure, KEEP" in system                 # KEEP is the safe default
+    assert "does NOT start a new one" in system          # a check-in keeps the subject
+    assert "turn_memory_id" in system                    # where REPLACE sources its id
+
+
 def test_prompt_carries_plain_voice_guidance():
     # Guard the anti-"4o tic" voice guidance so the agent doesn't out itself as a chat assistant.
     system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))

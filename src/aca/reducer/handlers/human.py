@@ -166,7 +166,8 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
         ctx.stores.state.add_feedback(None, "reprompt_possible_miss", 0.0, now)
 
     if classification.response_required:
-        outcome = _mandatory_path(ctx, event, cycle_id, classification.message_class, now)
+        outcome = _mandatory_path(ctx, event, cycle_id, classification.message_class, now,
+                                  memory_id=memory_id, prior_focus=pre_conversation.focus_memory_id)
     elif classification.message_class in _LOW_SUBSTANCE_CLASSES:
         # Acknowledgements, closers, and low-information turns are persisted but earn no reactive
         # reply — silence is a valid, first-class action here (DESIGN 13.6, 15). This also stops a
@@ -175,14 +176,15 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
             trace=_trace(cycle_id, event, now, action="silence", note="silence_low_substance")
         )
     else:
-        outcome = _optional_path(ctx, event, cycle_id, memory_id, now)
+        outcome = _optional_path(ctx, event, cycle_id, memory_id, now,
+                                 prior_focus=pre_conversation.focus_memory_id)
 
     outcome.dispatch_work_ids = dispatch + outcome.dispatch_work_ids
     outcome.reschedule = True
     return outcome
 
 
-def _mandatory_path(ctx, event, cycle_id, message_class, now) -> HandlerOutcome:
+def _mandatory_path(ctx, event, cycle_id, message_class, now, *, memory_id, prior_focus) -> HandlerOutcome:
     obligation = ResponseObligation(
         id=ids.new_id(ids.OBLIGATION),
         source_event_id=event.event_id,
@@ -200,6 +202,10 @@ def _mandatory_path(ctx, event, cycle_id, message_class, now) -> HandlerOutcome:
             "response_required": True,
             "cycle_type": CYCLE_MANDATORY,
             "channel": event.channel,
+            # Focus-transition inputs (§35.3): this turn's memory (a REPLACE target) and the
+            # pre-turn focus (what KEEP reverts to). Read back by the llm_result handler.
+            "turn_memory_id": memory_id,
+            "prior_focus_memory_id": prior_focus,
         },
         kind=WorkKind.LLM_COGNITION,
         now=now,
@@ -211,7 +217,7 @@ def _mandatory_path(ctx, event, cycle_id, message_class, now) -> HandlerOutcome:
     return HandlerOutcome(dispatch_work_ids=[work_id], trace=trace)
 
 
-def _optional_path(ctx, event, cycle_id, memory_id, now) -> HandlerOutcome:
+def _optional_path(ctx, event, cycle_id, memory_id, now, *, prior_focus) -> HandlerOutcome:
     candidates = build_candidates(ctx, now)
     selection = select(
         candidates,
@@ -256,6 +262,10 @@ def _optional_path(ctx, event, cycle_id, memory_id, now) -> HandlerOutcome:
             "cycle_type": CYCLE_REACTIVE_OPTIONAL,
             "channel": event.channel,
             "candidate": _candidate_context(ctx, selection.candidate),
+            # Focus-transition inputs (§35.3): this turn's memory (a REPLACE target) and the
+            # pre-turn focus (what KEEP reverts to). Read back by the llm_result handler.
+            "turn_memory_id": memory_id,
+            "prior_focus_memory_id": prior_focus,
         },
         now=now,
     )

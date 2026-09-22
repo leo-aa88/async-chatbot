@@ -35,7 +35,7 @@ from ...errors import ValidationError
 from ..apply_proposals import apply_proposals
 from ..context import ReducerContext
 from ..continuity import is_semantic_repeat
-from ..discourse import advancement_suppresses, is_discourse_orphan
+from ..discourse import advancement_suppresses, is_discourse_orphan, resolve_focus_transition
 from ..gates import evaluate_proactive
 from ..outbound import create_outbound
 from ..revalidation import is_superseded
@@ -58,6 +58,11 @@ def _finalize(ctx, cycle_id, action, *, useful=False, invalidated=False, note=No
         cycle_id, action=action, useful_enrichment=useful,
         pre_outbox_invalidated=invalidated, note=note,
     )
+
+
+def _join_note(base: str, extra: str | None) -> str:
+    """Append an optional secondary note (e.g. a focus transition) to a handler outcome note."""
+    return f"{base}:{extra}" if extra else base
 
 
 def _cycle_type(work: WorkItem) -> str:
@@ -126,6 +131,25 @@ def _on_parse_failure(ctx, event, cycle_type, error, now) -> HandlerOutcome:
     return HandlerOutcome(note=f"parse_failure:{error}")
 
 
+def _apply_focus_transition(ctx, work: WorkItem, decision: LLMDecision) -> str | None:
+    """Apply a human-turn focus transition (§35.3, invariant 42b), overriding the §34.4 deterministic
+    provisional focus. A state write, not a suppression: it re-points/reverts/clears the focus
+    *subject*. Returns a short trace-note fragment (or ``None`` when nothing changed). Called only on
+    a human-turn result that is actually acted on — a mandatory *satisfied* speak or a reactive reply
+    that was not superseded — so a newer turn's focus is never clobbered by a stale result."""
+    source = work.snapshot.get("context", {}).get("source", {})
+    override, new_focus = resolve_focus_transition(
+        ctx, decision.focus_transition, decision.focus_memory_id, source.get("prior_focus_memory_id")
+    )
+    if not override:
+        return None
+    conversation = ctx.stores.state.load_conversation()
+    if conversation.focus_memory_id == new_focus:
+        return None
+    ctx.stores.state.save_conversation(replace(conversation, focus_memory_id=new_focus))
+    return "focus_cleared" if new_focus is None else "focus_set"
+
+
 def _finish_mandatory(ctx, event, work: WorkItem, decision: LLMDecision, now) -> HandlerOutcome:
     obligation = ctx.stores.work.obligation_by_work(event.work_id)
     useful = apply_proposals(ctx, decision.proposals, now)
@@ -147,8 +171,9 @@ def _finish_mandatory(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
         ctx.stores.work.update_obligation(
             replace(obligation, status=ObligationStatus.SATISFIED, satisfied_by_message_id=message_id)
         )
-    _finalize(ctx, event.cycle_id, "speak", useful=useful)
-    return HandlerOutcome(deliver=True, note="mandatory_satisfied")
+    focus_note = _apply_focus_transition(ctx, work, decision)
+    _finalize(ctx, event.cycle_id, "speak", useful=useful, note=focus_note)
+    return HandlerOutcome(deliver=True, note=_join_note("mandatory_satisfied", focus_note))
 
 
 def _finish_reactive(ctx, event, work: WorkItem, decision: LLMDecision, now) -> HandlerOutcome:
@@ -169,8 +194,9 @@ def _finish_reactive(ctx, event, work: WorkItem, decision: LLMDecision, now) -> 
         ctx, kind=OutboundKind.MANDATORY, channel=_channel(work), text=decision.message,
         cycle_id=event.cycle_id, source_event_id=None, now=now,
     )
-    _finalize(ctx, event.cycle_id, "speak", useful=useful)
-    return HandlerOutcome(deliver=True, note="reactive_reply")
+    focus_note = _apply_focus_transition(ctx, work, decision)
+    _finalize(ctx, event.cycle_id, "speak", useful=useful, note=focus_note)
+    return HandlerOutcome(deliver=True, note=_join_note("reactive_reply", focus_note))
 
 
 def _release_enrichment_claim(ctx, work: WorkItem, now) -> None:
