@@ -35,6 +35,14 @@ _WHITELISTED_PROPOSAL_TYPES = frozenset(
     }
 )
 
+# Advancement relation a proactive result may propose for its own message (DESIGN §35.4). Parsed
+# here (validate + whitelist) only; the suppression *policy* (which values mute a speak) lives in
+# the reducer. An absent or unrecognized value parses to ``None`` and the reducer falls open to the
+# §34 decision — never a parse failure (§35.9 case 2), so the current v0.7 worker is unaffected.
+_ADVANCEMENT_RELATIONS = frozenset(
+    {"ADVANCE", "EVIDENCE", "REVISE", "CLOSE", "REOPEN", "ORPHAN", "REPEAT"}
+)
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
@@ -63,6 +71,9 @@ class LLMDecision:
     message: str | None
     proposals: tuple[Proposal, ...]
     useful_enrichment: bool = False
+    # A proactive message's proposed relation to the current thread (§35.4); ``None`` when absent or
+    # unrecognized. Advisory data the reducer gates on — never authority (invariant 42a).
+    relation: str | None = None
 
 
 def _clean_str(value: Any, limit: int) -> str:
@@ -151,9 +162,12 @@ def parse_decision(raw: Any) -> LLMDecision:
     useful_enrichment = any(
         p.type in ("ENRICH_PROVISIONAL_MEMORY", "CREATE_DEFERRED_INTENT") for p in proposals
     )
+    relation_raw = str(raw.get("relation", "")).strip().upper()
+    relation = relation_raw if relation_raw in _ADVANCEMENT_RELATIONS else None
     return LLMDecision(
         action=action,
         message=message,
         proposals=tuple(proposals),
         useful_enrichment=useful_enrichment or bool(raw.get("useful_enrichment", False)),
+        relation=relation,
     )

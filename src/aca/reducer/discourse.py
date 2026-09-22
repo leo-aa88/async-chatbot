@@ -159,3 +159,27 @@ def is_discourse_orphan(ctx: ReducerContext, kind: str, candidate_id: str, now) 
     if not gate_active(ctx, now):
         return False
     return assess(ctx, kind, candidate_id) is DiscourseRelation.ORPHAN
+
+
+def advancement_suppresses(ctx: ReducerContext, relation: str | None, now) -> bool:
+    """Whether a proposed advancement relation mutes the proactive speak (§35.4, invariant 42a).
+
+    Suppress-only, and scoped by *kind*:
+    * ``REPEAT`` mutes in **any** mode — never restate something already said (mirrors §16.2).
+    * ``ORPHAN`` mutes **only while a live thread actually exists** — mode `IDLE` (the discourse
+      gate's window) *and* a focus subject set (`focus_memory_id is not None`). "Off the current
+      thread" is meaningful only against a current subject, so both parts are required: `DORMANT`
+      has no live window, and `IDLE` with no focus (e.g. only check-ins were exchanged, so no turn
+      ever set the focus) has no thread either — in both an "orphan" is a legitimate *resurfacing*
+      that §34.7 preserves, and the LLM's `ORPHAN` label must not suppress it. The guard is focus
+      *existence*, not its vector: an LLM semantic judgement must not hinge on whether an embedding
+      happened to be available (that fail-open belongs to §34.5's cosine gate, not here).
+    Forward moves (`ADVANCE`/`EVIDENCE`/`REVISE`/`CLOSE`/`REOPEN`) and a missing/unrecognized
+    relation (`None`) fall open to §34, so the current v0.7 worker is gated exactly as before.
+    """
+    if relation == "REPEAT":
+        return True
+    if relation == "ORPHAN":
+        conversation = ctx.stores.state.load_conversation()
+        return conversation.focus_memory_id is not None and gate_active(ctx, now)
+    return False
