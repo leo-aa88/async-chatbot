@@ -33,29 +33,28 @@ class DiscourseRelation(str, Enum):
     UNJUDGED = "unjudged"   # no comparable vector (missing/cross-model) — never suppressed
 
 
-# A subject is asserted only by a *structural* cue — an imperative/task, a re-prompt, or a question
-# (ends with "?" / a directed request). These are affirmative, deterministic signals of a new
-# subject, independent of length. A plain declarative statement (HIGH_INFORMATION / STATEMENT) is
-# NOT such a cue: ack-vs-subject in a bare declarative ("I hear you loud and clear" vs "Robots are
-# next") cannot be told apart deterministically, and no word list closes that gap — so it is the
-# conservative-unknown branch and does NOT change the subject (§34.4: uncertainty preserves the
-# known subject). Richer declarative-subject detection (or an LLM-proposed relation) is deferred to
-# DESIGN §31.15; the cost is that a purely declarative topic shift does not re-anchor the gate,
-# which under-suppresses (fails open) rather than mis-anchoring on an acknowledgement.
+# A subject is asserted, approximately, by a structural cue that introduces something to discuss —
+# a task/imperative or a question. This is a *content-free approximation*, deliberately separate
+# from response obligation: `REPROMPT` ("You there?") requires a response but never asserts a new
+# subject, so it is excluded. Two undecidable classes remain and are accepted, documented residuals
+# (DESIGN §34.4), not solved here: a bare declarative ("The robot needs better balance" vs an ack
+# "I hear you loud and clear") and a confirmation/check-in question ("Is that clear?") — neither is
+# separable from a real subject deterministically, and both, if mishandled, over-suppress (silence)
+# rather than voice an orphan. Faithful subject detection needs an LLM-proposed relation (§31.15).
 _SUBJECT_CLASSES = frozenset({
-    MessageClass.DIRECT_TASK, MessageClass.TASK_QUESTION, MessageClass.REPROMPT,
-    MessageClass.SOCIAL_QUESTION,
+    MessageClass.DIRECT_TASK, MessageClass.TASK_QUESTION, MessageClass.SOCIAL_QUESTION,
 })
 
 
 def is_focus_setting(text: str, message_class: MessageClass) -> bool:
-    """Whether a human turn asserts a new conversational subject (DESIGN §34.4).
+    """Approximate whether a human turn introduces a new conversational subject (DESIGN §34.4).
 
-    True only on a structural subject cue (task / re-prompt / question). Everything else —
-    acknowledgements, closers, low-information turns, and *plain declarative statements* — is the
-    conservative-unknown branch and does not change the subject, so no acknowledgement (listed or
-    not, of any length) is ever installed as the focus. ``text`` is unused in v0.7 but kept in the
-    signature for a future content-aware or LLM-proposed refinement (§31.15).
+    Focus-setting is a separate axis from response obligation: a task/question introduces something
+    to discuss, but a `REPROMPT` (obligation without a new subject) does not and is excluded. Plain
+    declaratives never set the focus (undecidable vs an acknowledgement). It is only an
+    approximation — a confirmation question ("Is that clear?") is a known residual that can still
+    become the focus, over-suppressing for one IDLE band; faithful detection is deferred to §31.15.
+    ``text`` is unused in v0.7 but kept for that future content-aware / LLM-proposed refinement.
     """
     return message_class in _SUBJECT_CLASSES
 

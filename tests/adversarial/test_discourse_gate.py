@@ -16,7 +16,7 @@ from aca import ids
 from aca.clock import ManualClock
 from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
-from aca.domain.enums import EnrichmentStatus, OutboundKind, OutboundStatus
+from aca.domain.enums import EnrichmentStatus, MessageClass, OutboundKind, OutboundStatus
 from aca.domain.runtime import OutboundMessage
 from aca.domain.state import ProvisionalMemory, Topic
 from aca.errors import ConfigError
@@ -154,10 +154,12 @@ def test_pre_outbox_recheck_drops_a_candidate_that_became_orphan(tmp_path):
 
 # --- focus lifecycle (via the human handler) ---------------------------------------------------
 
-def test_a_question_sets_the_focus(tmp_path):
+def test_a_question_sets_focus_and_is_answered(tmp_path):
+    # Focus-setting and response-obligation are separate axes; a substantive question does both.
     h = _harness(tmp_path)
     h.send_human("What should the robot's balance controller do?")
-    assert h.stores.state.load_conversation().focus_memory_id is not None
+    assert h.stores.state.load_conversation().focus_memory_id is not None  # focus set
+    assert h.stores.work.pending_obligations()                            # mandatory reply obligated
     h.close()
 
 
@@ -315,6 +317,9 @@ def test_only_structural_cues_set_a_subject():
     assert _focus_setting("Robots are next.") is False  # bare declarative shift not detected (v0.7)
     assert _focus_setting("noted") is False
     assert _focus_setting("ok") is False
+    # A re-prompt establishes response obligation, not a new subject — never focus-setting.
+    assert is_focus_setting("You there?", MessageClass.REPROMPT) is False
+    assert is_focus_setting("Still there?", MessageClass.REPROMPT) is False
 
 
 def test_focus_predicate_is_punctuation_insensitive():
