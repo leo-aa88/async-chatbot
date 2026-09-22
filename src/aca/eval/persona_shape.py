@@ -62,7 +62,7 @@ _DISMISSIVE_WHATEVER = r"(?:^|[.!?…]\s*)whatever\s*(?:[.,!…]|$)"
 # Narrating the character or its rules instead of performing it ("I'll earn the attitude by...").
 SELF_NARRATION = _rx(
     r"system prompt", r"\bmy prompt\b", r"\bpersona\b", r"\btsundere\b", r"(?:my|the) personality",
-    r"(?:my|the) character\b", r"i'?ll earn", r"on command", r"personality audition", r"\baudition\b",
+    r"(?:my|the) character\b", r"i'?ll earn", r"personality audition", r"\baudition\b",
     r"wanting to hurt you", r"(?:not|never) (?:trying|going|want) to hurt you",
 )
 

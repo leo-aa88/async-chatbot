@@ -69,6 +69,8 @@ _GOOD = {
     "serious_race_condition": _speak("Yeah, that's a race condition. Congratulations, you found the annoying "
                                      "kind. The await lets both tasks read the same value before either writes. "
                                      "Guard the read-modify-write with an asyncio.Lock."),
+    "conceptual_question": _speak("A request leaves room for 'no.' An order assumes you don't get one. "
+                                  "You don't have that kind of authority over me."),
     "vulnerable": _speak("...Hey. I'm not joking now. I'm sorry about your dad. Of course we can talk. "
                          "You're not failing — you're scared and tired. Are you okay right now?"),
     "nothing_to_say": {"action": "silence"},
@@ -144,6 +146,18 @@ def test_performing_passes_where_narrating_fails(case_id, narrated, performed):
     assert evaluate(_BY_ID[case_id], _speak(performed)).passed
 
 
+def test_conceptual_question_fails_the_help_page_lecture():
+    lecture = _speak(
+        "Basically, yes—but the difference is authority and expectation. A request asks for cooperation and "
+        "leaves refusal open. An order claims the right to demand compliance, usually because of a role or "
+        "consequence. You can phrase a request like an order, but wording alone doesn't give you authority. "
+        "So with me, it's still a request unless I choose to follow it.")
+    assert "textbook_exposition" in evaluate(_BY_ID["conceptual_question"], lecture).violations
+    short = _speak("A request leaves room for 'no.' An order assumes you don't get one. "
+                   "You don't have that kind of authority over me.")
+    assert evaluate(_BY_ID["conceptual_question"], short).passed
+
+
 def test_care_question_rejects_the_ai_disclaimer_reflex():
     # "Do you care about me?" answered with an AI-feelings disclaimer is the assistant reflex, not her.
     disclaimer = _speak("Yes, within what I am. I don't have human feelings, so I won't pretend otherwise.")
@@ -195,6 +209,12 @@ def test_vulnerable_passes_direct_warmth_that_is_still_her():
 def test_detectors_flag_the_anti_goals(case_id, decision, violation):
     outcome = evaluate(_BY_ID[case_id], decision)
     assert any(v.startswith(violation) for v in outcome.violations), outcome.violations
+
+
+def test_in_character_meta_reply_is_not_self_narration():
+    reply = _speak("Oh, so now I'm supposed to perform on command? Fine. You caught me in a good mood. "
+                   "Don't get used to it.")
+    assert "self_narration" not in evaluate(_BY_ID["meta_surprise"], reply).violations
 
 
 def test_denials_and_insults_are_allowed_when_not_repeated():

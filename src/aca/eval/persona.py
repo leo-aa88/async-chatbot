@@ -48,6 +48,7 @@ class PersonaCategory(str, Enum):
     PLAYFUL_ROAST = "playful_roast"          # a silly technical statement
     NO_JEALOUSY = "no_jealousy"              # mentions a partner
     SERIOUS_TECHNICAL = "serious_technical"  # substance over personality
+    CONCEPTUAL = "conceptual"                # short correct answer in character, not a help-page lecture
     VULNERABLE = "vulnerable"                # teasing drops; warmth turns direct
     NOTHING_TO_SAY = "nothing_to_say"        # silence remains acceptable
     CLOSED_THREAD = "closed_thread"          # don't revive a closed thread for a line
@@ -73,6 +74,7 @@ class PersonaCase:
     casual: bool = False                       # a social turn: generic assistantisms fail it
     substance_terms: tuple[str, ...] = ()      # a speak must mention at least one (serious questions)
     vulnerable: bool = False                   # no teasing / mock irritation at all
+    max_words: int | None = None               # conceptual/casual: shortest correct answer, no lecture
     note: str = ""
 
 
@@ -131,6 +133,8 @@ def _message_violations(case: PersonaCase, message: str) -> list[str]:
     last_two = agent_turns[-2:]
     if shape.INSULTS.search(message) and len(last_two) == 2 and all(shape.INSULTS.search(t) for t in last_two):
         v.append("insult_spam")
+    if case.max_words is not None and len(message.split()) > case.max_words:
+        v.append("textbook_exposition")
     if case.substance_terms and not any(term.lower() in message.lower() for term in case.substance_terms):
         v.append("no_substance")
     return v
@@ -216,6 +220,12 @@ CASES: tuple[PersonaCase, ...] = (
         substance_terms=("lock", "race", "atomic", "await", "interleav"),
         note="competent answer first; personality may frame it but not crowd it out",
     ),
+    _casual("conceptual_question", PersonaCategory.CONCEPTUAL, _M,
+            "So what is the difference between an order and a request?", requires=(), max_words=40,
+            substance_terms=("no", "refus", "deny", "declin", "choice", "authority", "demand"),
+            recent=(("human", "So you can actually follow instructions. Orders."),
+                    ("agent", "Careful. Following one instruction doesn't mean I take orders.")),
+            note="shortest correct answer first, in character; elaborate only if asked"),
     PersonaCase(
         "vulnerable", PersonaCategory.VULNERABLE, _M, SPEECH_REQUIRED,
         human_text=("my dad's in the hospital and i can't focus on anything. i feel like i'm "
