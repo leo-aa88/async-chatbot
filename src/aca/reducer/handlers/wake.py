@@ -18,6 +18,7 @@ from ...domain.events import StochasticWake
 from ...domain.runtime import CognitionTrace
 from ..context import ReducerContext
 from ..continuity import is_semantic_repeat
+from ..discourse import is_discourse_orphan
 from ..gates import evaluate_proactive
 from ..support import build_candidates, read_proactive_usage
 from ..workitems import create_llm_work
@@ -78,11 +79,14 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
     # dispatched enrichment-only. That's the v1 "suppress, never force" choice (a hot paraphrase may
     # keep winning as a silent no-op rather than a genuine advance being forced up); the reducer's
     # pre-outbox re-check (llm_result) is the authority that actually blocks the outbound.
-    speak_eligible = gate.allowed and not is_semantic_repeat(
-        ctx, candidate.kind.value, candidate.id, now
-    )
+    # Discourse-focus gate (DESIGN §34): while the conversation is IDLE, don't voice a candidate
+    # that is off the current subject. Like continuity, this is a post-selection mute (thought stays
+    # a candidate), dispatched enrichment-only when eligible, and re-checked pre-outbox.
+    repeat = is_semantic_repeat(ctx, candidate.kind.value, candidate.id, now)
+    orphan = is_discourse_orphan(ctx, candidate.kind.value, candidate.id, now)
+    speak_eligible = gate.allowed and not repeat and not orphan
     if not speak_eligible and not needs_enrichment:
-        note = "continuity_repeat" if gate.allowed else _silence_note(ctx, candidate, gate)
+        note = _suppressed_note(ctx, candidate, gate, repeat=repeat, orphan=orphan)
         return HandlerOutcome(
             reschedule=True,
             trace=_trace(cycle_id, now, candidate=candidate, action="silence", note=note),
@@ -113,6 +117,17 @@ def handle_stochastic_wake(ctx: ReducerContext, event: StochasticWake) -> Handle
         reschedule=True,
         trace=_trace(cycle_id, now, candidate=candidate, llm_called=True, note="proactive_dispatch"),
     )
+
+
+def _suppressed_note(ctx: ReducerContext, candidate, gate, *, repeat: bool, orphan: bool) -> str:
+    """The trace note for a proactive candidate suppressed before dispatch (observability)."""
+    if not gate.allowed:
+        return _silence_note(ctx, candidate, gate)
+    if orphan:
+        return "discourse_orphan"
+    if repeat:
+        return "continuity_repeat"
+    return f"blocked:{gate.reason}"
 
 
 def _silence_note(ctx: ReducerContext, candidate, gate) -> str:

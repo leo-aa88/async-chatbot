@@ -160,6 +160,23 @@ class Memory:
     # but-distinct topics ("robot embodiment" vs "robot safety") are not merged. 0 disables the
     # semantic path (set both this and topic_merge_similarity to 0 to disable all merging). τ_dedup.
     topic_dedup_cosine: float = 0.94
+    # Discourse-focus gate (DESIGN §34, v0.7): affinity (cosine, 0..1) of a proactive candidate to
+    # the current conversation focus. >= continue is CONTINUE, >= bridge is BRIDGE (both may speak);
+    # below bridge is ORPHAN (suppressed while conversation mode is IDLE). These are their OWN keys
+    # and must not alias the observational cuts above (topic_dedup_cosine / semantic_neighbor_
+    # threshold) — sharing a cut would make the gate mechanically drive the advance-rate metric
+    # (Goodhart, DESIGN 34.5). ``discourse_bridge_cosine <= 0`` disables the gate.
+    discourse_continue_cosine: float = 0.75
+    discourse_bridge_cosine: float = 0.55
+
+    def __post_init__(self) -> None:
+        # The ORPHAN boundary is discourse_bridge_cosine and must sit at or below the CONTINUE
+        # boundary, or the bands are inverted and the advertised gate boundary is meaningless.
+        # Enforced here so a *direct* Memory(...) construction can't bypass it either (DESIGN 34.5).
+        if self.discourse_bridge_cosine > self.discourse_continue_cosine:
+            raise ConfigError(
+                "memory.discourse_bridge_cosine must be <= memory.discourse_continue_cosine"
+            )
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Memory:
@@ -192,6 +209,14 @@ class Memory:
             topic_dedup_cosine=_fraction(
                 "memory.topic_dedup_cosine",
                 data.get("topic_dedup_cosine", 0.94),
+            ),
+            discourse_continue_cosine=_fraction(
+                "memory.discourse_continue_cosine",
+                data.get("discourse_continue_cosine", 0.75),
+            ),
+            discourse_bridge_cosine=_fraction(
+                "memory.discourse_bridge_cosine",
+                data.get("discourse_bridge_cosine", 0.55),
             ),
         )
 
