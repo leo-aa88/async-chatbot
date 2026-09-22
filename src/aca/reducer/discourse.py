@@ -17,7 +17,6 @@ Two independent pieces:
 
 from __future__ import annotations
 
-import re
 from enum import Enum
 
 from ..cognition import vectors
@@ -34,65 +33,31 @@ class DiscourseRelation(str, Enum):
     UNJUDGED = "unjudged"   # no comparable vector (missing/cross-model) — never suppressed
 
 
-# Structural signals from ingress that are *reliable* about subject-ness (not the length split):
-# a task/question/reprompt always asserts a subject; an acknowledgement/closer/low-info never does.
+# A subject is asserted only by a *structural* cue — an imperative/task, a re-prompt, or a question
+# (ends with "?" / a directed request). These are affirmative, deterministic signals of a new
+# subject, independent of length. A plain declarative statement (HIGH_INFORMATION / STATEMENT) is
+# NOT such a cue: ack-vs-subject in a bare declarative ("I hear you loud and clear" vs "Robots are
+# next") cannot be told apart deterministically, and no word list closes that gap — so it is the
+# conservative-unknown branch and does NOT change the subject (§34.4: uncertainty preserves the
+# known subject). Richer declarative-subject detection (or an LLM-proposed relation) is deferred to
+# DESIGN §31.15; the cost is that a purely declarative topic shift does not re-anchor the gate,
+# which under-suppresses (fails open) rather than mis-anchoring on an acknowledgement.
 _SUBJECT_CLASSES = frozenset({
     MessageClass.DIRECT_TASK, MessageClass.TASK_QUESTION, MessageClass.REPROMPT,
     MessageClass.SOCIAL_QUESTION,
 })
-_NON_SUBJECT_CLASSES = frozenset({
-    MessageClass.ACKNOWLEDGEMENT, MessageClass.CONVERSATION_CLOSER, MessageClass.LOW_INFORMATION,
-})
-
-# For the *plain-statement* bucket (HIGH_INFORMATION / STATEMENT — the same kind of turn split only
-# by length at ingress, so length is NOT a subject signal), require **positive subject evidence**:
-# at least ``_MIN_SUBJECT_CONTENT_WORDS`` tokens that are neither function/filler nor acknowledgement
-# words. Absence of a known ack word is NOT evidence of a subject — an unlisted acknowledgement like
-# "I understand" has too little substantive content and defaults to *not* focus-setting, preserving
-# the known subject (§34.4). Deliberately imperfect; calibration is DESIGN §31.15.
-_ACK_WORDS = frozenset({
-    "ok", "okay", "k", "kk", "yes", "yeah", "yep", "yup", "no", "nope", "nah", "lol", "haha",
-    "lmao", "ty", "thx", "thanks", "nice", "cool", "fair", "sure", "great", "gotcha", "right",
-    "makes", "sense", "word", "see", "point", "agree", "agreed", "understand", "understood",
-    "true", "correct", "exactly", "totally", "absolutely", "indeed", "noted", "alright", "aight",
-    "fine", "good", "got", "np", "definitely",
-})
-_FILLER_WORDS = frozenset({
-    "i", "you", "your", "my", "we", "they", "it", "the", "a", "an", "that", "this", "these",
-    "those", "is", "are", "was", "were", "now", "then", "so", "well", "oh", "ah", "to", "of",
-    "and", "but", "do", "me", "us", "am", "will", "just",
-})
-_MIN_SUBJECT_CONTENT_WORDS = 2
-
-# Punctuation-insensitive word tokenizer, consistent regardless of a trailing "." — "Robotics" and
-# "Robotics." tokenize identically, so the focus decision cannot flip on punctuation.
-_WORD_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
-
-
-def _asserts_subject(text: str) -> bool:
-    """Positive subject evidence in a plain statement, independent of the ingress length class:
-    at least ``_MIN_SUBJECT_CONTENT_WORDS`` tokens that are neither filler nor acknowledgement
-    words. Terse or acknowledgement-only turns fail this and default to *not* focus-setting.
-    """
-    words = _WORD_RE.findall(text.lower())
-    content = [w for w in words if w not in _FILLER_WORDS and w not in _ACK_WORDS]
-    return len(content) >= _MIN_SUBJECT_CONTENT_WORDS
 
 
 def is_focus_setting(text: str, message_class: MessageClass) -> bool:
     """Whether a human turn asserts a new conversational subject (DESIGN §34.4).
 
-    Its own discourse decision, not the ingress length class: structural task/question classes
-    assert a subject; acknowledgement/closer/low-info never do; and a *plain statement* asserts a
-    subject only on positive evidence (`_asserts_subject`) — enough substantive content, not merely
-    the absence of a known ack word. So "I see your point now" / "I understand" (ack) do not become
-    the focus, while a short real shift ("Robots are next") does, and punctuation never changes it.
+    True only on a structural subject cue (task / re-prompt / question). Everything else —
+    acknowledgements, closers, low-information turns, and *plain declarative statements* — is the
+    conservative-unknown branch and does not change the subject, so no acknowledgement (listed or
+    not, of any length) is ever installed as the focus. ``text`` is unused in v0.7 but kept in the
+    signature for a future content-aware or LLM-proposed refinement (§31.15).
     """
-    if message_class in _NON_SUBJECT_CLASSES:
-        return False
-    if message_class in _SUBJECT_CLASSES:
-        return True
-    return _asserts_subject(text)
+    return message_class in _SUBJECT_CLASSES
 
 
 def _focus_vector(ctx: ReducerContext):

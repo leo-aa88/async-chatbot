@@ -154,16 +154,44 @@ def test_pre_outbox_recheck_drops_a_candidate_that_became_orphan(tmp_path):
 
 # --- focus lifecycle (via the human handler) ---------------------------------------------------
 
-def test_substantive_turn_sets_focus(tmp_path):
+def test_a_question_sets_the_focus(tmp_path):
     h = _harness(tmp_path)
-    h.send_human("Let's design the robot's balance controller on the ESP32.")
+    h.send_human("What should the robot's balance controller do?")
     assert h.stores.state.load_conversation().focus_memory_id is not None
     h.close()
 
 
+def test_a_short_question_shift_sets_the_focus(tmp_path):
+    # A short structural subject cue (a question) DOES re-anchor the focus, through the real path.
+    h = _harness(tmp_path)
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        conv = h.stores.state.load_conversation()
+        h.stores.state.save_conversation(conv.__class__(
+            last_human_message_at=now - timedelta(seconds=60), focus_memory_id="subject_X"))
+    h.send_human("What about the robots?")
+    focus = h.stores.state.load_conversation().focus_memory_id
+    assert focus is not None and focus != "subject_X"  # replaced with the new subject's memory
+    h.close()
+
+
+def test_multiword_acknowledgement_does_not_anchor(tmp_path):
+    # The reviewer's case, end-to-end: "I hear you loud and clear" is an unlisted multiword ack that
+    # ingress calls HIGH_INFORMATION and embeds. It must NOT replace the real subject.
+    h = _harness(tmp_path)
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        conv = h.stores.state.load_conversation()
+        h.stores.state.save_conversation(conv.__class__(
+            last_human_message_at=now - timedelta(seconds=60), focus_memory_id="subject_X"))
+    h.send_human("I hear you loud and clear.")
+    assert h.stores.state.load_conversation().focus_memory_id == "subject_X"
+    h.close()
+
+
 def test_unlisted_acknowledgement_with_punctuation_does_not_become_focus(tmp_path):
-    # "I understand." is an ordinary acknowledgement, unlisted, with punctuation, and creates a RAW
-    # memory at ingress. It must NOT replace the real subject (positive-evidence predicate; §34.4).
+    # "I understand." — ordinary ack, unlisted, punctuation, creates a RAW memory. Must not replace
+    # the subject (§34.4: a plain declarative is the conservative-unknown branch).
     h = _harness(tmp_path)
     now = h.clock.now_utc()
     with h.stores.db.transaction():
@@ -172,21 +200,6 @@ def test_unlisted_acknowledgement_with_punctuation_does_not_become_focus(tmp_pat
             last_human_message_at=now - timedelta(seconds=60), focus_memory_id="subject_X"))
     h.send_human("I understand.")
     assert h.stores.state.load_conversation().focus_memory_id == "subject_X"
-    h.close()
-
-
-def test_short_real_topic_shift_sets_focus(tmp_path):
-    # The inverse of the "I see" case, through the real path: a short STATEMENT that is a genuine
-    # subject shift ("Robots are next.") must replace the focus, not be dropped as uncertain.
-    h = _harness(tmp_path)
-    now = h.clock.now_utc()
-    with h.stores.db.transaction():
-        conv = h.stores.state.load_conversation()
-        h.stores.state.save_conversation(conv.__class__(
-            last_human_message_at=now - timedelta(seconds=60), focus_memory_id="subject_X"))
-    h.send_human("Robots are next.")
-    focus = h.stores.state.load_conversation().focus_memory_id
-    assert focus is not None and focus != "subject_X"  # replaced with the new subject's memory
     h.close()
 
 
@@ -265,23 +278,23 @@ def _focus_setting(text: str) -> bool:
     return is_focus_setting(text, classify(text).message_class)
 
 
-def test_focus_predicate_is_independent_of_the_ingress_length_class():
-    # Subjects — a SHORT real topic shift ingress calls STATEMENT, and a longer HIGH_INFORMATION one.
-    assert _focus_setting("Robots are next.") is True
-    assert _focus_setting("the AI layer will happen later on with raspberry pi") is True
+def test_only_structural_cues_set_a_subject():
+    # Structural subject cues (questions/tasks) set a subject, including a short one.
     assert _focus_setting("what about a coma?") is True
-    assert _focus_setting("Deploy the agent onto physical hardware.") is True
-    # Acknowledgements — including a LONG one ingress calls HIGH_INFORMATION and an UNLISTED one
-    # ("I understand"): absence of a known ack word is not evidence of a subject.
+    assert _focus_setting("how does the ESP32 handle balance?") is True
+    assert _focus_setting("Robots?") is True
+    # Everything else — plain declaratives AND acknowledgements alike — does not. The key contract:
+    # no acknowledgement, listed or not, of any length, is ever installed as the focus.
+    assert _focus_setting("I hear you loud and clear") is False  # unlisted multiword ack
+    assert _focus_setting("I understand") is False
     assert _focus_setting("I see your point now.") is False
     assert _focus_setting("yeah that makes sense") is False
-    assert _focus_setting("I understand") is False
+    assert _focus_setting("Robots are next.") is False  # bare declarative shift not detected (v0.7)
     assert _focus_setting("noted") is False
     assert _focus_setting("ok") is False
 
 
 def test_focus_predicate_is_punctuation_insensitive():
-    # A trailing period must not flip the decision either way (both are embedding-eligible STATEMENTs).
+    # A trailing period never flips the decision (both are embedding-eligible STATEMENTs -> False).
     assert _focus_setting("Robotics") == _focus_setting("Robotics.")
     assert _focus_setting("I understand") == _focus_setting("I understand.")
-    assert _focus_setting("Robots are next") == _focus_setting("Robots are next.")
