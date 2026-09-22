@@ -183,3 +183,33 @@ def advancement_suppresses(ctx: ReducerContext, relation: str | None, now) -> bo
         conversation = ctx.stores.state.load_conversation()
         return conversation.focus_memory_id is not None and gate_active(ctx, now)
     return False
+
+
+def resolve_focus_transition(
+    ctx: ReducerContext, transition: str | None, memory_id: str | None, prior_focus: str | None
+) -> tuple[bool, str | None]:
+    """Resolve a human-turn focus transition (§35.3, invariant 42b) into an optional **override** of
+    the §34.4 deterministic provisional focus. Returns ``(override, new_focus_memory_id)``:
+
+    * ``None`` / unrecognized ⇒ ``(False, _)`` — **no override**: the deterministic provisional focus
+      (written at reduction as a pre-result placeholder) stands. This is the v0.7 backward-compat
+      floor (§35.9 cases 3, 8): the current worker emits no ``focus`` and is unaffected.
+    * ``KEEP`` ⇒ ``(True, prior_focus)`` — the subject is unchanged *from before this turn*, so the
+      focus reverts to the pre-turn focus. This is what makes `KEEP` **fix** the check-in residual:
+      an unlisted check-in ("was that understandable?") that §34.4 wrongly anchored to this turn's
+      memory is reverted to the real subject (§35.3), not merely left on the wrong anchor.
+    * ``CLEAR`` ⇒ ``(True, None)`` — nothing is on the floor; the gate then fails open (a deliberate
+      widening, §35.6), not a suppression.
+    * ``REPLACE`` naming a **validated existing provisional-memory** id ⇒ ``(True, id)``; any other
+      id (a ``topic_id``, an unknown/missing id) is **treated as KEEP** ⇒ ``(True, prior_focus)``
+      (§35.9 case 6). Validation is provisional-memory *existence* — the sole LLM input to the focus,
+      writing no other state; it is deliberately independent of whether an embedding exists (that
+      cosine fail-open is §34.5's concern), so the focus is a *memory* the §34 gate can resolve.
+    """
+    if transition is None:
+        return False, None
+    if transition == "CLEAR":
+        return True, None
+    if transition == "REPLACE" and memory_id and ctx.stores.memory.get_memory(memory_id) is not None:
+        return True, memory_id
+    return True, prior_focus  # KEEP, or a REPLACE that failed validation (treated as KEEP)
