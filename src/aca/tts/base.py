@@ -27,6 +27,16 @@ class TtsEngine(ABC):
         Callers serialize invocations so utterances never overlap; an engine need not lock itself.
         """
 
+    def stop(self) -> None:
+        """Interrupt the *current* utterance so an in-flight :meth:`speak` returns promptly.
+
+        Unlike :meth:`aclose` this is non-terminal: the engine stays usable and a later
+        :meth:`speak` renders normally. It is the barge-in primitive — the human reclaims the floor,
+        the agent stops mid-sentence, the session keeps running. Default is a no-op (an engine that
+        can't interrupt simply plays out the current utterance). Safe to call from any thread.
+        """
+        return None
+
     async def aclose(self) -> None:
         """Release audio/model resources. Idempotent; safe to call even if nothing was spoken."""
         return None

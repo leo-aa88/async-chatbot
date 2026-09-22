@@ -2900,6 +2900,19 @@ A later refinement may let an LLM *propose* `COMMIT`/`CONTINUE` within these det
 ### 36.4 Scope and residuals
 
 - **v0.7 (this section):** `VoiceTurnAssembler` + acoustic-time commit. Determinism, replay, and `input_mode`-as-metadata are unchanged; all logic is client-side and offline-testable (`IterableSource` + `FakeTranscriber`).
-- **Immediate follow-up (separate PR):** half-duplex barge-in — the mic must not commit while TTS plays (self-hearing), and explicit human speech should stop TTS; needs `SpeechController` playback state.
-- **Deferred, evidence-gated:** conversation-repair events (ASR `AGI→AJI`), ASR-confidence affecting cognition, TTS delivery metadata, prosody, streaming/partial ASR, acoustic echo cancellation.
+- **Shipped next (§36.5):** half-duplex floor control — the mic does not commit while TTS plays (self-hearing), and a keystroke barges in.
+- **Deferred, evidence-gated:** conversation-repair events (ASR `AGI→AJI`), ASR-confidence affecting cognition, TTS delivery metadata, prosody, streaming/partial ASR, acoustic echo cancellation (which is what *acoustic* barge-in — the human's voice cutting off the agent's — depends on, §36.5).
 - **Accepted residual:** the unfinished-tail predicate is a weak heuristic; a genuinely complete turn that happens to end on a listed word waits `continuation_gap` (mildly slower), and a trailing-off incomplete one may commit early — both degrade gracefully and reset on the next turn. Calibration of the three timings is empirical (`docs/VOICE.md`).
+
+### 36.5 Half-duplex floor control (self-hearing and barge-in)
+
+> **The audio floor is half-duplex: while the agent holds it, microphone audio commits no turn.**
+
+On a shared open mic and speaker with no acoustic echo cancellation (e.g. the WSLg audio bridge), TTS playback is captured by the mic, the VAD trips, and Whisper transcribes the agent's *own* words — which without a gate commit as a `you/voice` `HumanMessage`, and the agent answers itself in a runaway loop. The fix is structural, not a heuristic: at most one party holds the audio floor at a time.
+
+- **State.** `SpeechController` exposes `speaking` — true from `submit` (synchronous, so there is no not-yet-speaking window) through the end of playback, counting queued *and* in-flight utterances. It is the one authority on whether the agent holds the floor.
+- **Self-hearing gate.** While `speaking` is true — plus `echo_guard_seconds` after it releases, so the room echo of the final words dies before the mic reopens — `VoiceSession` drops each captured frame, resets the segmenter/VAD, and clears any partial assembler turn. The agent's own speech therefore never reaches ingress. This needs no echo cancellation; it is a pure time gate driven by the same frame stream §36.3 uses. Cost: the human genuinely cannot be heard *while the agent talks* — that is the honest half-duplex tradeoff, not a bug.
+- **Barge-in (keystroke).** `SpeechController.interrupt()` stops the current utterance via the engine's non-terminal `stop()` (distinct from `aclose()`: the speaker task and loaded model stay alive) and drops the queued backlog, so a cut-off agent does not resume a stale reply. It is wired to the keyboard: any input line while the agent is speaking reclaims the floor immediately. This is a real barge-in that works without AEC.
+- **Deferred — acoustic barge-in.** Letting the human's *voice* cut off the agent requires telling the human apart from the agent's own playback in the mic, i.e. acoustic echo cancellation (§36.4 deferred). Until then the mic is muted, not listened-to-and-filtered, during playback.
+- **Residual — proactive over a partial human turn.** If a proactive agent message begins playing while a human utterance is still buffered (unlikely in half-duplex, but proactive speech is unsolicited), the gate clears that partial turn rather than committing a fragment. Dropping is the safe choice; committing a half-turn would be worse.
+- **Invariants preserved.** All of this is client-side rendering/perception: no reducer, no durable state (invariant 1), and `speaking`/`interrupt` carry no clock or RNG. A spoken turn that *does* commit is still an ordinary `HumanMessage` (invariant 2).

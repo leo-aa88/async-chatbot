@@ -177,6 +177,83 @@ async def test_session_assembler_flushes_final_turn_at_eof():
     assert turns == ["only"]  # flush at EOF commits the in-progress turn
 
 
+# --- half-duplex floor control (DESIGN §36.5) -----------------------------------------------
+async def test_agent_floor_mutes_mic_no_self_hearing():
+    # While the agent holds the audio floor, LOUD frames (its own TTS in the mic) commit NO turn —
+    # otherwise the agent transcribes and answers itself. floor_held stays True the whole stream.
+    frames = [LOUD, LOUD, LOUD, SIL, SIL, LOUD, LOUD, SIL, SIL]
+    got: list[str] = []
+
+    async def on_transcript(text: str) -> None:
+        got.append(text)
+
+    seg = Segmenter(start_frames=1, silence_frames=2, min_speech_frames=1, max_frames=100, pre_roll_frames=1)
+    session = VoiceSession(
+        IterableSource(frames), EnergyVad(0.02), seg, FakeTranscriber(["ghost", "ghost2"]),
+        on_transcript, floor_held=lambda: True,
+    )
+    await session.run()
+    assert got == []  # nothing the mic heard while the agent spoke reached ingress
+
+
+async def test_echo_guard_keeps_mute_after_floor_release_then_reopens():
+    # After the agent stops, the mic stays muted for echo_guard (tail echo of the last words), then
+    # reopens. floor_held is True for the first 2 frames; echo_guard (0.025s = 2.5 frames @0.01s)
+    # covers frames 3-4; real human speech from frame 5 on commits normally.
+    n = {"i": 0}
+
+    def floor_held() -> bool:
+        n["i"] += 1
+        return n["i"] <= 2  # agent holds the floor for the first two frames only
+
+    frames = [LOUD, LOUD, LOUD, LOUD, LOUD, LOUD, SIL, SIL]  # frames 1-4 muted, 5-6 live speech
+    got: list[str] = []
+
+    async def on_transcript(text: str) -> None:
+        got.append(text)
+
+    seg = Segmenter(start_frames=1, silence_frames=2, min_speech_frames=1, max_frames=100, pre_roll_frames=1)
+    session = VoiceSession(
+        IterableSource(frames), EnergyVad(0.02), seg, FakeTranscriber(["heard"]),
+        on_transcript, floor_held=floor_held, echo_guard_seconds=0.025,
+    )
+    await session.run()
+    assert got == ["heard"]  # the agent's frames dropped; the post-guard human utterance committed
+
+
+async def test_floor_mute_clears_partial_assembled_turn():
+    # A partial human turn buffered in the assembler is discarded (not committed) when the agent
+    # takes the floor mid-turn — committing a fragment of the agent's own captured voice is worse.
+    from aca.config import Voice
+    from aca.voice.factory import build_turn_assembler
+
+    turns: list[str] = []
+
+    async def on_turn(text: str) -> None:
+        turns.append(text)
+
+    assembler = build_turn_assembler(Voice(turn_gap_seconds=1.0, continuation_gap_seconds=2.0), on_turn)
+    # Human utterance in frames 1-4 buffers a partial turn; the agent then seizes the floor (frame 5+)
+    # before the assembler's floor-yield gap elapses, so the buffered turn must be dropped, not flushed.
+    frames = [LOUD, LOUD, SIL, SIL] + [SIL] * 6
+    n = {"i": 0}
+
+    def floor_held() -> bool:
+        n["i"] += 1
+        return n["i"] >= 5  # floor free for the human's utterance, agent takes it from frame 5
+
+    async def on_transcript(text: str) -> None:  # unused on the assembler path; kept for the signature
+        pass
+
+    seg = Segmenter(start_frames=1, silence_frames=2, min_speech_frames=1, max_frames=100, pre_roll_frames=1)
+    session = VoiceSession(
+        IterableSource(frames), EnergyVad(0.02), seg, FakeTranscriber(["partial thought and"]),
+        on_transcript, assembler=assembler, floor_held=floor_held, echo_guard_seconds=0.0,
+    )
+    await session.run()
+    assert turns == []  # the buffered partial turn was cleared by the floor gate, never committed
+
+
 # --- factory --------------------------------------------------------------------------------
 def test_build_transcriber_default_is_fake():
     assert isinstance(build_transcriber(Voice()), FakeTranscriber)

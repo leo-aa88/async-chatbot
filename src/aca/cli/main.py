@@ -117,12 +117,14 @@ def _cmd_simple(args: argparse.Namespace, op: str) -> int:
     return asyncio.run(run())
 
 
-def _start_voice(config, client: IpcClient, ui: ChatUI) -> tuple:
+def _start_voice(config, client: IpcClient, ui: ChatUI, speech: SpeechController) -> tuple:
     """Build and start a concurrent voice session feeding the same ingress as typed input.
 
     Imported lazily and only when ``--voice`` is passed, so plain text chat never depends on the
     optional voice extra. Transcribed turns are echoed in the shared UI and injected as
     ``HumanMessage``s tagged ``input_mode="voice"`` — indistinguishable to cognition from typing.
+    ``speech`` is the output controller: the session reads its ``speaking`` state so the mic is
+    muted while the agent talks (half-duplex, DESIGN §36.5), never hearing and answering itself.
     Returns ``(session, task)`` so the caller can tear it down.
     """
     from ..errors import ConfigError
@@ -163,7 +165,11 @@ def _start_voice(config, client: IpcClient, ui: ChatUI) -> tuple:
 
     assembler = build_turn_assembler(voice, on_turn)
     session = VoiceSession(
-        source, detector, segmenter, transcriber, on_turn, on_error=on_error, assembler=assembler
+        source, detector, segmenter, transcriber, on_turn,
+        on_error=on_error,
+        assembler=assembler,
+        floor_held=lambda: speech.speaking,  # mute the mic while the agent's TTS holds the floor
+        echo_guard_seconds=voice.echo_guard_seconds,
     )
     return session, asyncio.ensure_future(session.run())
 
@@ -193,7 +199,7 @@ async def _chat(data_dir: Path, *, voice: bool = False) -> None:
     # ingress. Text chat works with no voice dependencies installed; --voice is a pure add-on.
     voice_session = voice_task = None
     if voice:
-        voice_session, voice_task = _start_voice(config, client, ui)
+        voice_session, voice_task = _start_voice(config, client, ui, speech)
 
     banner = "Connected. Type a message and press enter (Ctrl-D to quit)."
     if voice:
@@ -205,6 +211,11 @@ async def _chat(data_dir: Path, *, voice: bool = False) -> None:
         # Keystrokes and agent-message prints are both handled on this event loop — a single
         # terminal writer, so async messages can't clobber the input line (no thread, no mutex).
         async for line in ui.lines():
+            # Barge-in: any keystroke line while the agent is speaking cuts the TTS off (the human is
+            # reclaiming the floor). Works without echo cancellation — acoustic barge-in is deferred
+            # (DESIGN §36.5). An empty line does nothing but silence a runaway reply.
+            if speech.speaking:
+                speech.interrupt()
             text = line.strip()
             if text:
                 await client.chat_send(text)

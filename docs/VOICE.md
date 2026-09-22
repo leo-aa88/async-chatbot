@@ -81,11 +81,21 @@ dry runs never touch a model or a microphone.
 | `turn_gap`         | `1.3s`           | trailing silence that commits an ordinary *turn* (must be > `silence`) |
 | `continuation_gap` | `2.8s`           | longer grace when the turn looks syntactically unfinished      |
 | `max_turn`         | `120s`           | safety cap; forces a turn commit at the next silence boundary  |
+| `echo_guard`       | `0.4s`           | how long the mic stays muted *after* TTS stops (half-duplex, §36.5) |
 
 **Tuning turn-taking.** `silence` is when *one utterance* ends; `turn_gap` is when *your whole turn*
 ends. Raise `turn_gap` if Wolfy answers before you've finished a thought; lower it if replies feel
 sluggish. `continuation_gap` only applies when your last word looks unfinished (a trailing "and",
 "to", "uh", …), so a mid-thought pause waits longer than a finished sentence.
+
+**Half-duplex / self-hearing.** With TTS on (`aca chat --voice` + `tts.provider=kokoro`) on open
+speakers, the mic would otherwise hear Wolfy's own voice and answer itself. While Wolfy is speaking
+the mic is muted, and stays muted for `echo_guard` after playback ends so the tail echo of the last
+words doesn't commit a turn. Raise `echo_guard` if the end of a spoken reply occasionally comes back
+as a phantom turn (reverberant room / high-latency audio bridge); lower it toward `0` on a headset
+where there's no echo and you want the mic live again the instant Wolfy stops. **Barge-in:** press
+Enter (or start typing) while Wolfy is talking to cut the reply off and reclaim the floor. Cutting
+Wolfy off *by voice* needs acoustic echo cancellation and is not supported yet (§36.5).
 
 ## Design notes
 

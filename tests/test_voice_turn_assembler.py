@@ -38,6 +38,21 @@ async def test_silence_without_fragments_does_nothing():
     assert turns == []
 
 
+async def test_clear_drops_buffered_turn_without_committing():
+    # The half-duplex gate (§36.5) clears a partial turn when the agent takes the floor: the buffered
+    # text is discarded, so neither a later silence nor a flush ever commits it.
+    asm, turns = _asm()
+    await asm.add("half a thought and", 0.5)
+    asm.clear()
+    await asm.on_silence(10.0)  # well past any gap — nothing buffered to commit
+    await asm.flush()
+    assert turns == []
+    # And the assembler is reusable: a fresh utterance after a clear commits normally.
+    await asm.add("a new complete turn", 1.0)
+    await asm.on_silence(2.0)
+    assert turns == ["a new complete turn"]
+
+
 async def test_unfinished_tail_waits_for_the_continuation_gap():
     asm, turns = _asm()
     await asm.add("so I was thinking about", 1.0)  # trailing "about" — syntactically unfinished
