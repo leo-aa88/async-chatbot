@@ -2769,3 +2769,41 @@ These pin the intended behavior and belong in the adversarial/counterfactual har
 9. **Threshold independence.** A candidate whose affinity falls in the observational "switch" band is **not** automatically `ORPHAN` unless `discourse_bridge_cosine` independently places it there.
 10. **Pre-outbox catch after fail-open.** Focus vector absent at wake ⇒ dispatched output-eligible; the focus embedding lands mid-flight; at `LLMResult` the candidate is now `ORPHAN` ⇒ dropped pre-outbox, not spoken (§34.6 checkpoint 2).
 11. **Backfill dependency.** Before `topic_embeddings` is populated, a topic candidate has no vector ⇒ not `ORPHAN` (§34.5 rule 2); the gate only bites once the backfill has run.
+
+---
+
+## 36. Voice turn-taking (perception commits turns, not segments) (v0.7)
+
+*(§35 is reserved for the LLM-proposed discourse relation.)*
+
+### 36.1 The invariant
+
+> **VAD/ASR output is provisional perception; only a *committed voice turn* enters semantic ingress.**
+
+Segmentation answers *"where did continuous speech stop?"*; turn assembly answers *"has the human yielded the floor?"* — two different questions, and the client previously had only the first. A VAD utterance was sent straight to ingress as a `HumanMessage`, but a silence gap is an *acoustic* boundary, not a *conversational* one: we pause to think, breathe, and use fillers. Observed live — "So do you think that perhaps" / "uh, an algorithm like yours is suitable." / "for AGI." was answered as three separate turns, before the human had finished. This is a turn-taking defect, not ASR (Whisper transcribed fine) and not cognition (meaning survived the modality perfectly). This extends the same provisional-vs-committed discipline ACA already applies to memory (raw → provisional → enriched) one layer earlier, at perception.
+
+### 36.2 Architecture (client-side, before ingress)
+
+```
+mic → VAD → AudioSegment → ASR → utterance text → VoiceTurnAssembler → one HumanMessage → (unchanged ingress)
+```
+
+The **daemon, reducer, and `input_mode` metadata are untouched** — a spoken turn and a typed turn are identical to cognition (invariant 2). The assembler only decides *when* a turn is complete, then sends the joined text through the existing `chat_send`. Acoustic utterances are surfaced for debugging but never become individual memories or response opportunities (**observably traceable, not a new persistence subsystem**).
+
+### 36.3 Commit policy — acoustic time, deterministic
+
+The floor-yield decision is driven by **trailing silence measured in the captured frame stream**, never wall-clock after ASR: `VoiceSession` awaits Whisper inside its loop, during which mic frames keep queuing, so "time since the transcript arrived" ≠ silence. Counting non-speech frames since the human last spoke (reset on any speech frame) makes ASR latency irrelevant.
+
+- An ordinary turn commits after **`turn_gap_seconds`** of trailing silence (must exceed the VAD `silence` hangover, else every utterance is its own turn).
+- A turn whose transcript looks **syntactically unfinished** (ends on a conjunction/article/preposition/filler — a predicate versioned in code, *not* user config, since it is linguistic structure) waits the longer **`continuation_gap_seconds`** — don't answer a hesitation, don't stall a finished sentence.
+- **`max_turn_seconds`** is a safety cap that forces a commit at the next silence boundary (never a mid-word cut); it is generous, not a target.
+- Stream end (`flush`) commits any buffered turn.
+
+A later refinement may let an LLM *propose* `COMMIT`/`CONTINUE` within these deterministic bounds (model proposes, code decides), deferred until the deterministic version's failure modes are measured (cf. §31.15).
+
+### 36.4 Scope and residuals
+
+- **v0.7 (this section):** `VoiceTurnAssembler` + acoustic-time commit. Determinism, replay, and `input_mode`-as-metadata are unchanged; all logic is client-side and offline-testable (`IterableSource` + `FakeTranscriber`).
+- **Immediate follow-up (separate PR):** half-duplex barge-in — the mic must not commit while TTS plays (self-hearing), and explicit human speech should stop TTS; needs `SpeechController` playback state.
+- **Deferred, evidence-gated:** conversation-repair events (ASR `AGI→AJI`), ASR-confidence affecting cognition, TTS delivery metadata, prosody, streaming/partial ASR, acoustic echo cancellation.
+- **Accepted residual:** the unfinished-tail predicate is a weak heuristic; a genuinely complete turn that happens to end on a listed word waits `continuation_gap` (mildly slower), and a trailing-off incomplete one may commit early — both degrade gracefully and reset on the next turn. Calibration of the three timings is empirical (`docs/VOICE.md`).

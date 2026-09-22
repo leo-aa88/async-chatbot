@@ -329,10 +329,11 @@ class Voice:
     """Client-side speech-to-text for the ``aca chat --voice`` perception path (DESIGN 13, 28.2).
 
     Voice is a *perception adapter*, not cognition: the client captures a microphone, a lightweight
-    VAD carves it into conversational turns, a Whisper model transcribes each utterance, and the
-    text is injected through the *same* durable ingress as typed input (a ``HumanMessage`` tagged
-    ``input_mode="voice"``). Nothing here runs in the daemon core or touches the reducer, so it
-    cannot affect determinism or replay — the transcript is just another human utterance.
+    VAD carves it into **acoustic utterances**, a Whisper model transcribes each, a turn assembler
+    joins them into a conversational turn once the human yields the floor (DESIGN §36), and only that
+    committed turn is injected through the *same* durable ingress as typed input (a ``HumanMessage``
+    tagged ``input_mode="voice"``). Nothing here runs in the daemon core or touches the reducer, so
+    it cannot affect determinism or replay — the transcript is just another human utterance.
 
     ``provider`` selects the transcriber: ``fake`` (deterministic, offline, for tests) or
     ``faster-whisper`` (CTranslate2; English-only ``small.en`` at ``int8_float16`` fits a 4 GB GPU).
@@ -360,6 +361,16 @@ class Voice:
     min_utterance_seconds: float = 0.3
     max_utterance_seconds: float = 30.0
     pre_roll_seconds: float = 0.2
+    # Turn assembly (DESIGN §36): a VAD utterance is an ACOUSTIC segment, not a conversational turn.
+    # The assembler joins consecutive utterances into one HumanMessage and commits only after the
+    # human yields the floor, measured as trailing silence in the captured frame stream (never
+    # wall-clock after ASR). ``turn_gap`` is the silence that ends an ordinary turn; a turn whose
+    # transcript looks syntactically unfinished waits the longer ``continuation_gap``. ``max_turn``
+    # is a safety cap that forces a commit at the next silence boundary. Must exceed the VAD's
+    # ``silence`` hangover, or every utterance would be its own turn.
+    turn_gap_seconds: float = 1.3
+    continuation_gap_seconds: float = 2.8
+    max_turn_seconds: float = 120.0
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Voice:
@@ -376,6 +387,16 @@ class Voice:
         max_utterance = parse_seconds(data.get("max_utterance", 30.0))
         if max_utterance < min_utterance:
             raise ConfigError("voice.max_utterance must be >= min_utterance")
+        silence = parse_seconds(data.get("silence", 0.6))
+        turn_gap = parse_seconds(data.get("turn_gap", 1.3))
+        continuation_gap = parse_seconds(data.get("continuation_gap", 2.8))
+        max_turn = parse_seconds(data.get("max_turn", 120.0))
+        if turn_gap <= silence:
+            raise ConfigError("voice.turn_gap must be > voice.silence (else every utterance is a turn)")
+        if continuation_gap < turn_gap:
+            raise ConfigError("voice.continuation_gap must be >= voice.turn_gap")
+        if max_turn < max_utterance:
+            raise ConfigError("voice.max_turn must be >= voice.max_utterance")
         return Voice(
             provider=str(data.get("provider", "fake")).strip().lower(),
             model=str(data.get("model", "small.en")),
@@ -388,10 +409,13 @@ class Voice:
             vad=str(data.get("vad", "energy")).strip().lower(),
             vad_threshold=_fraction("voice.vad_threshold", data.get("vad_threshold", 0.02)),
             start_seconds=parse_seconds(data.get("start", 0.15)),
-            silence_seconds=parse_seconds(data.get("silence", 0.6)),
+            silence_seconds=silence,
             min_utterance_seconds=min_utterance,
             max_utterance_seconds=max_utterance,
             pre_roll_seconds=parse_seconds(data.get("pre_roll", 0.2)),
+            turn_gap_seconds=turn_gap,
+            continuation_gap_seconds=continuation_gap,
+            max_turn_seconds=max_turn,
         )
 
 
