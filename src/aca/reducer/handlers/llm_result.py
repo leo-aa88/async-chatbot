@@ -163,16 +163,19 @@ def _apply_focus_transition(ctx, work: WorkItem, decision: LLMDecision) -> str |
     conversation = ctx.stores.state.load_conversation()
     if _focus_write_is_stale(conversation, work):
         return "focus_stale"
-    # A CLEAR *closes* the subject (§34.11): its absence is deliberate, so the gate won't renag it in
-    # IDLE. Any transition that establishes a subject re-opens the floor (subject_closed=False); a
-    # KEEP that leaves no focus (prior was already None) doesn't change the closed state.
-    closed = True if decision.focus_transition == "CLEAR" else (
-        False if new_focus is not None else conversation.subject_closed
-    )
-    if conversation.focus_memory_id == new_focus and conversation.subject_closed == closed:
+    # A CLEAR *closes* the subject (§34.11), retaining its identity (the prior focus) so the gate can
+    # renag only that thread in IDLE. A transition that establishes a subject reopens the floor
+    # (nothing closed); a KEEP that leaves no focus (prior already None) doesn't change the closed id.
+    if decision.focus_transition == "CLEAR":
+        closed_focus = source.get("prior_focus_memory_id")  # the subject being closed
+    elif new_focus is not None:
+        closed_focus = None
+    else:
+        closed_focus = conversation.closed_focus_memory_id
+    if conversation.focus_memory_id == new_focus and conversation.closed_focus_memory_id == closed_focus:
         return None
     ctx.stores.state.save_conversation(
-        replace(conversation, focus_memory_id=new_focus, subject_closed=closed))
+        replace(conversation, focus_memory_id=new_focus, closed_focus_memory_id=closed_focus))
     if decision.focus_transition == "CLEAR":
         return "focus_closed"
     return "focus_cleared" if new_focus is None else "focus_set"

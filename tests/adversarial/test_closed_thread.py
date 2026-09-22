@@ -1,11 +1,11 @@
-"""Closed-subject state (DESIGN §34.11, v0.8): a deliberately closed thread is not "no focus yet".
+"""Closed-subject state (DESIGN §34.11, v0.8): a deliberately closed thread keeps its *identity*.
 
 ``focus_memory_id is None`` had three meanings — never had a focus, closed on purpose, lapsed — and
 the discourse gate failed open on all of them, so a just-closed thread got renagged in IDLE (the gap
-the continuity corpus surfaced). A ``subject_closed`` marker set by a §35.3 ``CLEAR`` disambiguates
-them: the gate declines to renag a closed thread while the human is present (IDLE), without touching
-dormant resurfacing (DORMANT, gate inactive). These tests pin the gate rule and the marker's
-lifecycle (set on CLEAR; cleared by a new subject or a lull; held across a bare acknowledgement).
+the continuity corpus surfaced). ``closed_focus_memory_id`` records *which* subject a §35.3 ``CLEAR``
+closed, so the gate can **invert** against it: while IDLE with no active focus, a candidate *related*
+to the closed subject is muted (don't reopen a resolved thread) while a genuinely *unrelated*
+worthwhile thought still speaks. These tests pin that inversion and the marker's lifecycle.
 """
 
 from __future__ import annotations
@@ -16,9 +16,17 @@ from datetime import UTC, datetime, timedelta
 from conftest import Harness
 
 from aca.clock import ManualClock
+from aca.cognition.activation import half_life_to_rate_per_hour
 from aca.config import Config
+from aca.domain.enums import EnrichmentStatus
+from aca.domain.state import ProvisionalMemory, Topic
 from aca.reducer.discourse import is_discourse_orphan
 from aca.workers.base import LLMOutput
+
+_RATE = half_life_to_rate_per_hour(24.0)
+_SUBJECT_VEC = [1.0, 0.0, 0.0]
+_RELATED_VEC = [0.96, 0.28, 0.0]   # cosine ~0.96 to the closed subject -> renag
+_UNRELATED_VEC = [0.0, 1.0, 0.0]   # cosine 0 -> a genuinely different thought
 
 
 def _config() -> Config:
@@ -54,85 +62,120 @@ def _harness(tmp_path, focus: str | None = None) -> Harness:
                    llm=_FocusLLM(focus))
 
 
-def _set(h: Harness, *, gap_seconds: float, focus_memory_id, subject_closed: bool) -> None:
+def _set(h: Harness, *, gap_seconds: float, focus_memory_id, closed_focus_memory_id) -> None:
     now = h.clock.now_utc()
     conv = h.stores.state.load_conversation()
     h.stores.state.save_conversation(replace(
         conv, last_human_message_at=now - timedelta(seconds=gap_seconds),
-        focus_memory_id=focus_memory_id, subject_closed=subject_closed))
+        focus_memory_id=focus_memory_id, closed_focus_memory_id=closed_focus_memory_id))
 
 
-def _closed(h: Harness) -> bool:
-    return h.stores.state.load_conversation().subject_closed
+def _install_subject(h: Harness, mid: str, vec: list[float]) -> None:
+    now = h.clock.now_utc()
+    h.stores.memory.insert_memory(ProvisionalMemory(
+        id=mid, event_id="e", text="a closed subject", activation=0.8, salience=0.8,
+        decay_rate_per_hour=_RATE, created_at=now, last_activated_at=now,
+        enrichment_status=EnrichmentStatus.ENRICHED))
+    h.stores.memory.insert_embedding(f"{mid}_emb", mid, "m", vec, now)
+
+
+def _install_candidate(h: Harness, tid: str, vec: list[float]) -> None:
+    now = h.clock.now_utc()
+    h.stores.memory.insert_topic(Topic(
+        id=tid, summary=tid, activation=0.9, importance=0.9, decay_rate_per_hour=_RATE,
+        created_at=now, last_activated_at=now, unfinished=False, source_memory_id=None))
+    h.stores.memory.insert_topic_embedding(tid, "m", vec, now)
+
+
+def _closed(h: Harness):
+    return h.stores.state.load_conversation().closed_focus_memory_id
 
 
 def _focus(h: Harness):
     return h.stores.state.load_conversation().focus_memory_id
 
 
-# --- the gate rule (IDLE-scoped) ----------------------------------------------------------------
+def _orphan(h: Harness, tid: str) -> bool:
+    return is_discourse_orphan(h.ctx, "TOPIC", tid, h.clock.now_utc())
 
-def test_closed_subject_suppresses_in_idle(tmp_path):
+
+# --- the inverted gate (IDLE) -------------------------------------------------------------------
+
+def test_closed_thread_renags_a_related_candidate(tmp_path):
     h = _harness(tmp_path)
-    _set(h, gap_seconds=60, focus_memory_id=None, subject_closed=True)   # IDLE, closed
-    assert is_discourse_orphan(h.ctx, "TOPIC", "anything", h.clock.now_utc()) is True
+    with h.stores.db.transaction():
+        _install_subject(h, "closed", _SUBJECT_VEC)
+        _install_candidate(h, "same_thread", _RELATED_VEC)
+    _set(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id="closed")  # IDLE
+    assert _orphan(h, "same_thread") is True   # renagging the resolved thread -> muted
     h.close()
 
 
-def test_no_focus_not_closed_still_fails_open(tmp_path):
-    # The declarative residual / a fresh conversation: no focus but nothing was closed -> fail open.
+def test_closed_thread_allows_an_unrelated_candidate(tmp_path):
+    # The load-bearing guard against over-suppression: closing subject X must NOT gag a genuinely
+    # different worthwhile thought while IDLE.
     h = _harness(tmp_path)
-    _set(h, gap_seconds=60, focus_memory_id=None, subject_closed=False)
-    assert is_discourse_orphan(h.ctx, "TOPIC", "anything", h.clock.now_utc()) is False
+    with h.stores.db.transaction():
+        _install_subject(h, "closed", _SUBJECT_VEC)
+        _install_candidate(h, "different", _UNRELATED_VEC)
+    _set(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id="closed")  # IDLE
+    assert _orphan(h, "different") is False     # unrelated -> speaks
     h.close()
 
 
-def test_closed_subject_does_not_suppress_in_dormant(tmp_path):
-    # A lull leaves the gate inactive, so dormant resurfacing survives even with the closed marker set.
+def test_nothing_closed_fails_open(tmp_path):
     h = _harness(tmp_path)
-    _set(h, gap_seconds=2 * 3600, focus_memory_id=None, subject_closed=True)  # DORMANT
-    assert is_discourse_orphan(h.ctx, "TOPIC", "anything", h.clock.now_utc()) is False
+    with h.stores.db.transaction():
+        _install_candidate(h, "anything", _UNRELATED_VEC)
+    _set(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id=None)
+    assert _orphan(h, "anything") is False
+    h.close()
+
+
+def test_closed_thread_not_enforced_in_dormant(tmp_path):
+    # A lull leaves the gate inactive, so even a candidate related to the closed subject resurfaces.
+    h = _harness(tmp_path)
+    with h.stores.db.transaction():
+        _install_subject(h, "closed", _SUBJECT_VEC)
+        _install_candidate(h, "same_thread", _RELATED_VEC)
+    _set(h, gap_seconds=2 * 3600, focus_memory_id=None, closed_focus_memory_id="closed")  # DORMANT
+    assert _orphan(h, "same_thread") is False
     h.close()
 
 
 # --- the marker's lifecycle ---------------------------------------------------------------------
 
-def test_clear_transition_marks_the_subject_closed(tmp_path):
-    # A human turn whose result CLEARs the focus closes the subject: focus None AND subject_closed.
+def test_clear_records_the_closed_subject_identity(tmp_path):
     h = _harness(tmp_path, focus="CLEAR")
-    _set(h, gap_seconds=60, focus_memory_id="prior_subject", subject_closed=False)
+    _set(h, gap_seconds=60, focus_memory_id="prior_subject", closed_focus_memory_id=None)
     h.send_human("Anyway, that's settled — let's drop it.")
     h.run_all_pending()
     assert _focus(h) is None
-    assert _closed(h) is True
+    assert _closed(h) == "prior_subject"   # the closed thread keeps its identity
     h.close()
 
 
 def test_a_new_subject_reopens_the_floor(tmp_path):
-    # After a close, a focus-setting turn establishes a subject -> the closed marker clears.
     h = _harness(tmp_path)  # deterministic focus (worker emits no transition)
-    _set(h, gap_seconds=60, focus_memory_id=None, subject_closed=True)
+    _set(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id="old")
     h.send_human("How does the gyroscope stabilize it?")  # a question -> focus-setting
     h.run_all_pending()
     assert _focus(h) is not None
-    assert _closed(h) is False
+    assert _closed(h) is None
     h.close()
 
 
 def test_a_bare_ack_keeps_it_closed(tmp_path):
-    # An acknowledgement after a close must not quietly re-open the resolved thread.
     h = _harness(tmp_path)
-    _set(h, gap_seconds=60, focus_memory_id=None, subject_closed=True)
+    _set(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id="old")
     h.send_human("ok")  # ACKNOWLEDGEMENT: no call, no new subject
-    assert _closed(h) is True
+    assert _closed(h) == "old"
     h.close()
 
 
 def test_a_lull_ends_the_closed_window(tmp_path):
-    # Once the conversation has gone DORMANT, the just-closed window is over: the next turn clears the
-    # marker, so later resurfacing is unconstrained again.
     h = _harness(tmp_path)
-    _set(h, gap_seconds=2 * 3600, focus_memory_id=None, subject_closed=True)  # closed, then a long lull
-    h.send_human("ok")  # arrives after DORMANT -> pre_mode DORMANT ends the closed window
-    assert _closed(h) is False
+    _set(h, gap_seconds=2 * 3600, focus_memory_id=None, closed_focus_memory_id="old")  # then a lull
+    h.send_human("ok")  # arrives after DORMANT -> the closed window is over
+    assert _closed(h) is None
     h.close()

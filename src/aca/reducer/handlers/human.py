@@ -80,7 +80,7 @@ def _previous_context(ctx: ReducerContext) -> ClassificationContext:
 
 
 def _update_conversation(
-    ctx: ReducerContext, now: datetime, *, focus_memory_id: str | None, subject_closed: bool
+    ctx: ReducerContext, now: datetime, *, focus_memory_id: str | None, closed_focus_memory_id: str | None
 ) -> None:
     conversation = ctx.stores.state.load_conversation()
     recent = (*conversation.recent_human_turn_timestamps, now)[-_MAX_RECENT_TURNS:]
@@ -90,22 +90,24 @@ def _update_conversation(
         active_observed_silence_seconds=0.0,  # a present human resets observed silence
         recent_human_turn_timestamps=recent,
         focus_memory_id=focus_memory_id,
-        subject_closed=subject_closed,
+        closed_focus_memory_id=closed_focus_memory_id,
     )
     updated = replace(updated, mode=infer_mode_for(ctx, updated, now))
     ctx.stores.state.save_conversation(updated)
 
 
-def _next_subject_closed(current: bool, *, focus_memory_id: str | None, pre_mode: ConversationMode) -> bool:
-    """Whether the just-closed state (§34.11) survives this human turn. The deterministic path never
-    *closes* a subject (only a §35.3 `CLEAR` does); it only lets a close expire: a turn that
-    establishes a subject re-opens the floor, and a lull (`pre_mode` DORMANT) ends the just-closed
-    window so later resurfacing is unconstrained. Otherwise (a bare ack in a live conversation) the
-    close persists, so an acknowledgement can't quietly re-open a thread the human resolved."""
+def _next_closed_focus(
+    current: str | None, *, focus_memory_id: str | None, pre_mode: ConversationMode
+) -> str | None:
+    """Whether the closed subject (§34.11) survives this human turn. The deterministic path never
+    *closes* one (only a §35.3 `CLEAR` does); it only lets a close expire: a turn that establishes a
+    subject reopens the floor, and a lull (`pre_mode` DORMANT) ends the just-closed window so later
+    resurfacing is unconstrained. Otherwise (a bare ack in a live conversation) the closed subject
+    persists, so an acknowledgement can't quietly reopen a thread the human resolved."""
     if focus_memory_id is not None:
-        return False
+        return None
     if pre_mode is ConversationMode.DORMANT:
-        return False
+        return None
     return current
 
 
@@ -175,9 +177,9 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
         memory_id=memory_id,
         pre_mode=pre_mode,
     )
-    subject_closed = _next_subject_closed(
-        pre_conversation.subject_closed, focus_memory_id=focus, pre_mode=pre_mode)
-    _update_conversation(ctx, now, focus_memory_id=focus, subject_closed=subject_closed)
+    closed_focus = _next_closed_focus(
+        pre_conversation.closed_focus_memory_id, focus_memory_id=focus, pre_mode=pre_mode)
+    _update_conversation(ctx, now, focus_memory_id=focus, closed_focus_memory_id=closed_focus)
 
     if classification.possible_prior_miss:
         # Re-prompt is weak classification-quality evidence, zero adaptation weight (DESIGN 17.1).

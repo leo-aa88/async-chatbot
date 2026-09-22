@@ -81,12 +81,11 @@ def is_focus_setting(text: str, message_class: MessageClass) -> bool:
     return message_class in _SUBJECT_CLASSES and not _is_checkin(text)
 
 
-def _focus_vector(ctx: ReducerContext):
-    conversation = ctx.stores.state.load_conversation()
-    fid = conversation.focus_memory_id
-    if not fid:
+def _subject_vector(ctx: ReducerContext, memory_id: str | None):
+    """The stored ``(model_version, vector)`` of a subject memory (focus or closed), or ``None``."""
+    if not memory_id:
         return None
-    return ctx.stores.memory.embeddings_by_memory([fid]).get(fid)
+    return ctx.stores.memory.embeddings_by_memory([memory_id]).get(memory_id)
 
 
 def gate_active(ctx: ReducerContext, now) -> bool:
@@ -126,18 +125,20 @@ def _affinity(a: list[float], b: list[float]) -> float | None:
     return max(-1.0, min(1.0, val))
 
 
-def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelation:
-    """Relation of a candidate to the current focus subject by cosine band. UNJUDGED when either
-    vector is missing, from a different model, or not usably comparable (drift-/degeneracy-safe;
-    never an orphan, §34.5)."""
+def assess_against(
+    ctx: ReducerContext, subject_memory_id: str | None, kind: str, candidate_id: str
+) -> DiscourseRelation:
+    """Relation of a candidate to a given *subject* memory by cosine band. UNJUDGED when either vector
+    is missing, from a different model, or not usably comparable (drift-/degeneracy-safe; never an
+    orphan, §34.5). Used for both the current focus and the closed subject (§34.11)."""
     bridge = ctx.config.memory.discourse_bridge_cosine
     if bridge <= 0.0:
         return DiscourseRelation.UNJUDGED  # gate disabled
-    focus = _focus_vector(ctx)
+    subject = _subject_vector(ctx, subject_memory_id)
     cand = candidate_vector(ctx, kind, candidate_id)
-    if focus is None or cand is None or focus[0] != cand[0]:
+    if subject is None or cand is None or subject[0] != cand[0]:
         return DiscourseRelation.UNJUDGED
-    affinity = _affinity(focus[1], cand[1])
+    affinity = _affinity(subject[1], cand[1])
     if affinity is None:  # not a measurement (empty/zero/non-finite/overflow/mismatch) — fail open
         return DiscourseRelation.UNJUDGED
     # Check the ORPHAN boundary (bridge) FIRST so the suppression cut is exactly discourse_bridge_
@@ -150,16 +151,24 @@ def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelati
     return DiscourseRelation.BRIDGE
 
 
+def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelation:
+    """Relation of a candidate to the *current focus* subject (§34.5)."""
+    focus_id = ctx.stores.state.load_conversation().focus_memory_id
+    return assess_against(ctx, focus_id, kind, candidate_id)
+
+
 def is_discourse_orphan(ctx: ReducerContext, kind: str, candidate_id: str, now) -> bool:
     """True iff a proactive candidate should be muted by the discourse gate (IDLE only).
 
     Three cases while IDLE:
-    * a **focus is set** — the candidate is an ORPHAN of it (cosine below the bridge, §34.5).
-    * **no focus, subject just closed** — a §35.3 `CLEAR` resolved the thread; don't renag it while
-      the human is still present. This is the one case where a missing focus *suppresses* rather than
-      fails open, and it is deliberately scoped to `IDLE`: `DORMANT` leaves the gate inactive, so a
-      later lull still resurfaces (§34.7). Disambiguates `focus is None` (§34.11).
-    * **no focus, not closed** — the declarative residual, or a fresh conversation: fail open.
+    * a **focus is set** — the candidate is an ORPHAN of it (cosine below the bridge, §34.5): the
+      open-focus rule — *unrelated* is muted.
+    * **no focus, a subject was just closed** (§34.11) — the gate **inverts** against the closed
+      subject: a candidate *related* to it (CONTINUE/BRIDGE) is muted (don't reopen a resolved
+      thread), while a genuinely *unrelated* (ORPHAN, or UNJUDGED) thought still speaks. This is the
+      one place a missing focus can suppress, and only for the closed thread itself; scoped to `IDLE`
+      (`DORMANT` leaves the gate inactive, so a later lull still resurfaces, §34.7).
+    * **no focus, nothing closed** — the declarative residual, or a fresh conversation: fail open.
 
     Fail-open everywhere else: inactive outside `IDLE`; UNJUDGED (missing/degenerate/cross-model
     vector, or gate disabled) is never an orphan (§34.5, §34.7).
@@ -167,9 +176,13 @@ def is_discourse_orphan(ctx: ReducerContext, kind: str, candidate_id: str, now) 
     if not gate_active(ctx, now):
         return False
     conversation = ctx.stores.state.load_conversation()
-    if conversation.focus_memory_id is None:
-        return conversation.subject_closed
-    return assess(ctx, kind, candidate_id) is DiscourseRelation.ORPHAN
+    if conversation.focus_memory_id is not None:
+        return assess_against(ctx, conversation.focus_memory_id, kind, candidate_id) is DiscourseRelation.ORPHAN
+    if conversation.closed_focus_memory_id is not None:
+        # Inverted rule: renag *the closed thread* only — related is muted, unrelated speaks.
+        return assess_against(ctx, conversation.closed_focus_memory_id, kind, candidate_id) in (
+            DiscourseRelation.CONTINUE, DiscourseRelation.BRIDGE)
+    return False
 
 
 def advancement_suppresses(ctx: ReducerContext, relation: str | None, now) -> bool:
