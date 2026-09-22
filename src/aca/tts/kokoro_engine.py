@@ -18,9 +18,14 @@ thread. Two things that thread must *not* do are leak onto the terminal or refus
   ``HF_HUB_DISABLE_PROGRESS_BARS`` (no tqdm download bars), Kokoro's own loguru logger disabled (no
   espeak-fallback warnings), and a ``warnings`` filter scoped to model construction only (torch's
   ``weight_norm`` ``FutureWarning``). None of that touches the terminal streams.
-* Shutdown must interrupt in-flight audio. ``aclose`` sets a stop flag and calls ``sd.stop()``,
-  which unblocks a running ``sd.wait()`` so the worker returns promptly instead of holding
-  ``aca chat`` open (asyncio joins its executor threads at process exit) until the utterance ends.
+* Shutdown must interrupt in-flight audio *and* an in-flight forward pass. ``aclose`` sets a stop
+  flag (checked between chunks) and calls ``sd.stop()`` (which unblocks a running ``sd.wait()``).
+  But ``sd.stop()`` cannot unblock ``KPipeline.__call__`` mid-synthesis, and ``asyncio.to_thread``
+  runs on the default executor, which ``asyncio.run`` *joins* at process exit — so Ctrl-D during a
+  forward pass would still wait it out. So synthesis runs on our own **daemon** thread instead: the
+  interpreter never joins daemon threads, and ``loop.shutdown_default_executor`` only joins the
+  default pool, so quitting returns immediately even mid-forward-pass. The abandoned thread stops
+  at the next chunk boundary (or dies with the process) and never blocks the shell.
 """
 
 from __future__ import annotations
@@ -86,11 +91,40 @@ class KokoroTtsEngine(TtsEngine):
         self._device = device
         self._pipeline = None  # lazily built on first speak (loads the model)
         self._stop = threading.Event()  # set by aclose() to abandon in-flight/queued synthesis
+        self._thread: threading.Thread | None = None
 
     async def speak(self, text: str) -> None:
         text = text.strip()
-        if text and not self._stop.is_set():
-            await asyncio.to_thread(self._render_and_play, text)
+        if not text or self._stop.is_set():
+            return
+        # Run synthesis+playback on a daemon thread (not asyncio.to_thread's default executor) so a
+        # quit mid-forward-pass returns immediately: the interpreter never joins daemon threads. A
+        # future carries completion/errors back to this coroutine; the controller still awaits speak
+        # so utterances stay serialized.
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[None] = loop.create_future()
+
+        def worker() -> None:
+            error: BaseException | None = None
+            try:
+                self._render_and_play(text)
+            except BaseException as exc:  # noqa: BLE001 - relayed to the awaiting coroutine
+                error = exc
+
+            def deliver() -> None:
+                if future.done():  # awaiter was cancelled (aclose) — nothing to report
+                    return
+                if error is not None:
+                    future.set_exception(error)
+                else:
+                    future.set_result(None)
+
+            with contextlib.suppress(RuntimeError):  # loop may be closing during shutdown
+                loop.call_soon_threadsafe(deliver)
+
+        self._thread = threading.Thread(target=worker, name="aca-tts", daemon=True)
+        self._thread.start()
+        await future
 
     async def aclose(self) -> None:
         # Interrupt any in-flight utterance so the worker thread returns promptly (and process exit

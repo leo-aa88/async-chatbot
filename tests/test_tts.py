@@ -148,6 +148,30 @@ async def test_render_never_redirects_terminal_streams(monkeypatch):
     assert sys.stdout is original_stdout and sys.stderr is original_stderr  # untouched afterward
 
 
+async def test_speak_runs_on_daemon_thread_and_cancel_abandons_forward_pass(monkeypatch):
+    # Ctrl-D during a forward pass must return at once. sd.stop() can't interrupt KPipeline.__call__,
+    # and the default executor is joined at process exit — so synthesis runs on a daemon thread and a
+    # cancelled speak returns without waiting the (blocking) render out.
+    engine = KokoroTtsEngine(voice="am_onyx", lang_code="", speed=1.0)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _blocking_render(text: str) -> None:  # stands in for a torch forward pass mid-synthesis
+        entered.set()
+        release.wait(timeout=5)
+
+    monkeypatch.setattr(engine, "_render_and_play", _blocking_render)
+    task = asyncio.ensure_future(engine.speak("hi"))
+    await _wait_for(lambda: entered.is_set())
+    assert engine._thread is not None and engine._thread.daemon is True  # never joined at exit
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=2)  # returns immediately, not after the block ends
+    assert not release.is_set()  # we did not wait the forward pass out
+    release.set()  # let the daemon thread unwind (test hygiene)
+
+
 async def test_kokoro_aclose_stops_playback(monkeypatch):
     # aclose must call sd.stop() so an in-flight sd.wait() is interrupted at shutdown. Inject a fake
     # sounddevice (the real one isn't installed) and assert stop() is invoked.
