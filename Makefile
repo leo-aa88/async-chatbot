@@ -13,7 +13,7 @@ PIP := $(BIN)/pip
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-14s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 $(VENV): ## Create the virtualenv
 	$(PYTHON) -m venv $(VENV)
@@ -64,6 +64,52 @@ demo: install ## Throwaway agent tuned to message you on its own; drops into cha
 .PHONY: status
 status: ## Show agent status
 	$(BIN)/aca status
+
+# --- experimental tsundere persona, on its own fresh data dir (DB/lock/socket/config) -----------
+# Runs this checkout's code (PYTHONPATH=src) so it also works from a git worktree without its own
+# venv: falls back to the main checkout's .venv. Your default ~/.aca agent is never touched.
+TSUNDERE_DIR ?= $(HOME)/.aca-tsundere
+TSUNDERE_MODEL ?= gpt-5.6-luna
+MAIN_CHECKOUT := $(shell dirname "$$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")
+ACA_BIN := $(if $(wildcard $(CURDIR)/$(BIN)/aca),$(CURDIR)/$(BIN),$(MAIN_CHECKOUT)/$(VENV)/bin)
+TSUNDERE_ACA := ACA_DATA_DIR=$(TSUNDERE_DIR) PYTHONPATH=$(CURDIR)/src $(ACA_BIN)/aca
+
+.PHONY: tsundere-init
+tsundere-init: ## Create the tsundere data dir + config (never overwrites; links the repo .env)
+	@mkdir -p $(TSUNDERE_DIR)
+	@test -f $(TSUNDERE_DIR)/config.json || { printf '%s\n' \
+		'{' \
+		'  "identity": { "persona": "tsundere" },' \
+		'  "llm": { "provider": "openai", "model": "$(TSUNDERE_MODEL)", "max_tokens": 512 },' \
+		'  "tts": { "provider": "kokoro" }' \
+		'}' > $(TSUNDERE_DIR)/config.json && echo "wrote $(TSUNDERE_DIR)/config.json"; }
+	@if [ ! -e $(TSUNDERE_DIR)/.env ] && [ -f $(MAIN_CHECKOUT)/.env ]; then \
+		ln -s $(MAIN_CHECKOUT)/.env $(TSUNDERE_DIR)/.env && echo "linked $(TSUNDERE_DIR)/.env -> $(MAIN_CHECKOUT)/.env"; fi
+
+.PHONY: tsundere-run
+tsundere-run: tsundere-init ## Start the tsundere agent service (foreground)
+	$(TSUNDERE_ACA) service start
+
+.PHONY: tsundere-chat
+tsundere-chat: ## Chat with the tsundere agent
+	$(TSUNDERE_ACA) chat
+
+.PHONY: tsundere-voice
+tsundere-voice: ## Chat with the tsundere agent by voice (needs the voice extra)
+	$(TSUNDERE_ACA) chat --voice
+
+.PHONY: tsundere-status
+tsundere-status: ## Show the tsundere agent's status
+	$(TSUNDERE_ACA) status
+
+.PHONY: tsundere-reset
+tsundere-reset: ## Wipe the tsundere agent's DB (keeps config); stop its service first
+	rm -f $(TSUNDERE_DIR)/agent.db $(TSUNDERE_DIR)/agent.db-wal $(TSUNDERE_DIR)/agent.db-shm
+
+.PHONY: tsundere-eval
+tsundere-eval: ## Run the persona eval corpus against the configured real LLM
+	cd $(MAIN_CHECKOUT) && PYTHONPATH=$(CURDIR)/src $(ACA_BIN)/python $(CURDIR)/scripts/persona_eval.py \
+		--data-dir $(TSUNDERE_DIR)
 
 .PHONY: clean
 clean: ## Remove build artifacts and caches
