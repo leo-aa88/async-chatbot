@@ -16,6 +16,7 @@ from conftest import Harness
 
 from aca.clock import ManualClock
 from aca.config import Config
+from aca.domain.enums import WorkKind
 from aca.domain.proposals import parse_decision
 from aca.reducer.discourse import resolve_focus_transition
 from aca.workers.base import LLMOutput
@@ -77,6 +78,12 @@ def _mandatory_turn(h: Harness, text: str) -> str:
     h.clock.advance(2)
     h.send_human(text)
     return _recent_memory_id(h)
+
+
+def _latest_llm_work_id(h: Harness) -> str:
+    """The most recently created pending cognition (LLM) work item — the turn currently in flight."""
+    llm = [w for w in h.pending_work() if w.kind is WorkKind.LLM_COGNITION]
+    return max(llm, key=lambda w: w.created_at).work_id
 
 
 # --- override semantics -------------------------------------------------------------------------
@@ -168,6 +175,31 @@ def test_no_call_turn_keeps_the_focus(tmp_path):
     h.clock.advance(2)
     h.send_human("ok")  # ACKNOWLEDGEMENT: no call, no work to run
     assert _focus(h) == mem_a  # unchanged
+    h.close()
+
+
+def test_stale_mandatory_result_does_not_clobber_a_newer_turn(tmp_path):
+    # Two mandatory turns in flight at once. A is dispatched; then B is reduced first, deterministically
+    # setting the focus to mem_b; then A's now-stale result arrives with REPLACE(mem_a). The mandatory
+    # reply is always delivered (invariant 25), but the focus write must be DROPPED — a stale result
+    # must not drag the focus back to A's subject. (Reachable in normal async operation; the reactive
+    # branch is guarded by is_superseded, the mandatory branch is not — so the guard lives in the
+    # focus write itself.)
+    h = _harness(tmp_path, "none")
+    mem_a = _mandatory_turn(h, "How does the robot keep its balance?")
+    a_llm = _latest_llm_work_id(h)          # A's cognition work, still pending
+    mem_b = _mandatory_turn(h, "What about the sensor budget?")
+    b_llm = _latest_llm_work_id(h)
+    assert _focus(h) == mem_b               # B's deterministic provisional focus
+
+    h.llm.mode = "replace_id"               # A's stale result wants REPLACE(mem_a)...
+    h.llm.replace_id = mem_a
+    h.run_work(a_llm)
+    assert _focus(h) == mem_b               # ...dropped: B still owns the subject
+
+    h.llm.mode = "keep"                     # B is the current turn -> not stale -> its write applies
+    h.run_work(b_llm)
+    assert _focus(h) == mem_a               # KEEP reverts to B's pre-turn subject (A)
     h.close()
 
 

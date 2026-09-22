@@ -131,12 +131,29 @@ def _on_parse_failure(ctx, event, cycle_type, error, now) -> HandlerOutcome:
     return HandlerOutcome(note=f"parse_failure:{error}")
 
 
+def _focus_write_is_stale(conversation, work: WorkItem) -> bool:
+    """Whether a newer human turn was reduced while this result was in flight (§35.3, invariant 42b).
+
+    Focus currency is a *separate* concern from delivery. A mandatory reply is always delivered
+    (invariant 25, §31.10) — ``_finish_mandatory`` never runs ``is_superseded`` — but its focus write
+    must NOT clobber a newer turn's subject if a later ``HumanMessage`` landed before this turn's
+    ``LLMResult`` arrived. The human handler is the only writer of ``last_human_message_at``, and it
+    stamps it to each turn's own timestamp; ``work.created_at`` is this turn's timestamp (dispatch
+    happens in the same reduction). So a strictly-newer ``last_human_message_at`` means a later turn
+    now owns the focus and this result is stale. (The reactive branch already drops a stale result
+    via ``is_superseded`` before reaching here; this makes the guard hold for the mandatory branch,
+    which by design must still deliver.)"""
+    last = conversation.last_human_message_at
+    return last is not None and work.created_at is not None and last > work.created_at
+
+
 def _apply_focus_transition(ctx, work: WorkItem, decision: LLMDecision) -> str | None:
     """Apply a human-turn focus transition (§35.3, invariant 42b), overriding the §34.4 deterministic
     provisional focus. A state write, not a suppression: it re-points/reverts/clears the focus
-    *subject*. Returns a short trace-note fragment (or ``None`` when nothing changed). Called only on
-    a human-turn result that is actually acted on — a mandatory *satisfied* speak or a reactive reply
-    that was not superseded — so a newer turn's focus is never clobbered by a stale result."""
+    *subject*. Returns a short trace-note fragment (or ``None`` when nothing changed). A stale result
+    (a newer human turn was reduced meanwhile) never writes the focus, independent of whether its
+    reply is still delivered — so a mandatory turn's must-deliver guarantee can't drag a stale focus
+    write along with it."""
     source = work.snapshot.get("context", {}).get("source", {})
     override, new_focus = resolve_focus_transition(
         ctx, decision.focus_transition, decision.focus_memory_id, source.get("prior_focus_memory_id")
@@ -144,6 +161,8 @@ def _apply_focus_transition(ctx, work: WorkItem, decision: LLMDecision) -> str |
     if not override:
         return None
     conversation = ctx.stores.state.load_conversation()
+    if _focus_write_is_stale(conversation, work):
+        return "focus_stale"
     if conversation.focus_memory_id == new_focus:
         return None
     ctx.stores.state.save_conversation(replace(conversation, focus_memory_id=new_focus))
