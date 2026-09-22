@@ -2750,7 +2750,7 @@ Both parking and `REOPEN` are **deferred past the v0.7 MVP** on purpose: `REOPEN
 
 ### 34.9 Determinism, boundaries, and scope
 
-- **Determinism / single writer.** The discourse focus (`focus_memory_id`) is written only by the reducer in the human-message handler. Warmth is derived from mode (a function of `last_human_message_at`), and affinity is a pure function of stored vectors, so the decision replays under a recorded clock and stored embeddings (invariant 28). No new clock/RNG reads.
+- **Determinism / single writer.** The discourse focus (`focus_memory_id`) is written by the reducer: in v0.7, only in the human-message handler (at reduction); in v0.8, a call-making turn's generative *result* may also override it via the `llm_result` handler (§35.3, invariant 42b). Both are the same reducer (invariant 2 holds — a different handler writing durable state is fine); the "only the human-message handler" claim is v0.7-specific. Warmth is derived from mode (a function of `last_human_message_at`), and affinity is a pure function of stored vectors, so the decision replays under a recorded clock, stored embeddings, and recorded worker results (invariant 28). No new clock/RNG reads.
 - **LLM is not authority (invariant 5).** v0.7's relation is computed from embeddings by code. Should an LLM later *propose* a relation (§31.15), it remains a proposal the deterministic gate may accept or reject — never the gate itself.
 - **Cognitive vs conversational salience.** This section introduces a second, distinct notion of salience: a thought's intrinsic worth (its candidate score) is separate from its fitness for the current discourse (its affinity). "Remember it" and "say it now" are different decisions; §34 governs only the second.
 - **Dependency.** Focus→memory affinity works today (provisional-memory embeddings are eager). Focus→**topic** affinity requires topic-summary vectors to be populated, so the gate is only fully effective once the summary-embedding backfill (topic-embedding reconcile) has run.
@@ -2840,3 +2840,24 @@ The two relations have **different safety envelopes** — invariant 42 is split 
 ### 35.8 Evaluation
 
 Success = a measured rise in warm-zone advance-rate (fewer switches, more advances) against the v0.7 baseline (all-switches, 2026-09-22), with no regression in mandatory-answer latency or on-topic relevance. The counterfactual harness (§26, §27.2) and the advance-rate metric measure it; the LLM relation must never be wired into that metric.
+
+### 35.9 Regression cases
+
+These pin the subtle behaviors §35 introduces, at §34.10's level of specificity, so the follow-up implementation's tests are decided here rather than under implementation pressure:
+
+**Advancement relation (suppress-only, invariant 42a):**
+
+1. **`ORPHAN`/`REPEAT` suppress; forward moves pass.** A proactive result labeled `ORPHAN` or `REPEAT` is dropped at pre-outbox (enrichment-only or silence); one labeled `ADVANCE`/`EVIDENCE`/`REVISE`/`CLOSE` leaves the §34 decision untouched (it speaks iff §34 already allows).
+2. **Missing/unknown `relation` ⇒ exact v0.7 behavior.** A proactive result that omits the field (the current worker) or emits an unrecognized value is gated by §34 alone — never silenced for the omission (it is *not* a §22.3 parse failure). This is the backward-compatibility guarantee.
+3. **The label cannot force a speak.** A result labeled `ADVANCE` whose candidate is a cosine near-repeat is still suppressed by the continuity mute (§16.2) / an `ORPHAN` by §34 — a forward label never overrides a deterministic block.
+
+**Focus transition (validated state write, invariant 42b):**
+
+4. **`KEEP` / `REPLACE` / `CLEAR` effect.** On a call-making human-turn *result*: `KEEP` leaves the focus; `REPLACE(valid memory id)` sets the focus to that memory; `CLEAR` sets it to none — after which the next `IDLE` wake **fails the gate open** (a candidate the old focus would have `ORPHAN`ed can now speak), which is a *deliberate widening*, not a suppression (mirrors §34.10 case 4's deterministic `DORMANT` clear).
+5. **`REPLACE` naming a non-memory id ⇒ treated as `KEEP`.** A proposed focus that is a `topic_id`, or any id that is not an existing provisional memory, is **not** adopted (it would validate as "existing" then miss `embeddings_by_memory` and fail-open, §34.5 rule 1) — the transition is treated as `KEEP`, not an error.
+6. **Override commit point.** The transition is applied on the human-turn *result* (`llm_result`), overriding the provisional deterministic focus written at reduction; a wake between the human reduction and the result is scored against that provisional focus, not the (not-yet-arrived) proposal.
+7. **No-call turn keeps the deterministic focus.** A human turn that makes no generative call — a backchannel, or a bare declarative that silences via `_optional_path` — carries no proposal, so the v0.7 deterministic predicate's focus stands (the documented declarative residual, §35.3).
+
+**Boundaries:**
+
+8. **No new generative call.** A human turn makes exactly the calls it made in v0.7, and a proactive cycle exactly one — the relations are fields on those results (invariant 3), and the LLM relation never appears in the advance-rate/dominance metric inputs (Goodhart).
