@@ -205,6 +205,40 @@ def test_build_model_auto_falls_back_to_cpu_when_cuda_load_fails(monkeypatch):
     assert [d for d, _ in attempts] == ["cuda", "cpu"]  # tried CUDA, then fell back
 
 
+def test_build_model_auto_fallback_downgrades_a_pinned_cuda_quantizer(monkeypatch):
+    # device=auto with a pinned CUDA-only quantizer (int8_float16): the CUDA load fails, and the CPU
+    # retry must resolve compute as 'auto' (-> int8), NOT reuse int8_float16 (which _resolve_compute_
+    # type rejects on CPU and would mask the real error).
+    from aca.voice import whisper
+
+    monkeypatch.setattr(whisper, "_resolve_device", lambda d: "cuda" if d == "auto" else d)
+    attempts = []
+
+    def build(model, device, compute):
+        attempts.append((device, compute))
+        if device == "cuda":
+            raise RuntimeError("libcublas.so.12 not found")
+        return f"model@{device}/{compute}"
+
+    result, resolved = whisper._build_model(build, "small.en", "auto", "int8_float16")
+    assert resolved == "cpu"
+    assert attempts == [("cuda", "int8_float16"), ("cpu", "int8")]  # CUDA type tried, CPU downgraded
+    assert result == "model@cpu/int8"
+
+
+def test_build_model_chains_original_error_when_cpu_also_fails(monkeypatch):
+    from aca.voice import whisper
+
+    monkeypatch.setattr(whisper, "_resolve_device", lambda d: "cuda" if d == "auto" else d)
+
+    def build(model, device, compute):
+        raise RuntimeError(f"{device} boom")
+
+    with pytest.raises(RuntimeError, match="cpu boom") as ei:
+        whisper._build_model(build, "small.en", "auto", "auto")
+    assert isinstance(ei.value.__cause__, RuntimeError)  # original CUDA error chained
+
+
 def test_build_model_explicit_cuda_reraises(monkeypatch):
     # An explicit device="cuda" is the user asking for CUDA — surface the load error, don't silently
     # downgrade to CPU.

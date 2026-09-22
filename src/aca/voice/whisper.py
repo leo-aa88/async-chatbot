@@ -55,12 +55,18 @@ def _build_model(build, model: str, requested_device: str, compute_type: str):
     compute = _resolve_compute_type(compute_type, device)
     try:
         return build(model, device, compute), device
-    except Exception:
+    except Exception as exc:
         if requested_device != "auto" or device != "cuda":
             raise
-        device = "cpu"
-        compute = _resolve_compute_type(compute_type, device)
-        return build(model, device, compute), device
+        # Retry on CPU with an *auto*-resolved compute type (→ int8), NOT the original one: a pinned
+        # CUDA-only quantizer like ``int8_float16`` was legal on CUDA but ``_resolve_compute_type``
+        # would reject it on CPU, and that ConfigError would mask the real load failure. Chain the
+        # original CUDA error so the underlying cause (e.g. missing libcublas) stays visible.
+        cpu_compute = _resolve_compute_type("auto", "cpu")
+        try:
+            return build(model, "cpu", cpu_compute), "cpu"
+        except Exception as cpu_exc:
+            raise cpu_exc from exc
 
 
 def _resolve_compute_type(compute_type: str, device: str) -> str:
