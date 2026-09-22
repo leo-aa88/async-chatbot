@@ -80,6 +80,15 @@ class VoiceTurnAssembler:
         if self._parts:
             await self._commit()
 
+    def clear(self) -> None:
+        """Drop the in-progress turn WITHOUT committing it (no ``on_turn`` call).
+
+        Used by the half-duplex gate when the agent takes the audio floor: any partially-buffered
+        utterances are discarded rather than committed, so the agent's own captured speech can never
+        be joined onto — or flushed as — a human turn. Distinct from :meth:`flush`, which commits."""
+        self._parts = []
+        self._turn_seconds = 0.0
+
     async def _commit(self) -> None:
         text = " ".join(self._parts).strip()
         self._parts = []

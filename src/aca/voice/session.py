@@ -18,6 +18,7 @@ from .vad import SpeechDetector
 
 OnTranscript = Callable[[str], Awaitable[None]]
 OnError = Callable[[str, Exception], Awaitable[None]]
+FloorHeld = Callable[[], bool]
 
 
 class VoiceSession:
@@ -42,6 +43,8 @@ class VoiceSession:
         min_chars: int = 1,
         on_error: OnError | None = None,
         assembler: VoiceTurnAssembler | None = None,
+        floor_held: FloorHeld | None = None,
+        echo_guard_seconds: float = 0.0,
     ) -> None:
         self._source = source
         self._detector = detector
@@ -54,15 +57,37 @@ class VoiceSession:
         # trailing silence in the frame stream drives its floor-yield decision (DESIGN §36). When
         # None, the legacy behavior holds: each utterance is emitted directly as one transcript.
         self._assembler = assembler
+        # Half-duplex floor control (DESIGN §36.5): ``floor_held`` reports whether the agent holds
+        # the audio floor (TTS queued or playing). While it does — plus ``echo_guard_seconds`` after
+        # it releases, to let room echo of the last words die — captured audio is dropped and no turn
+        # is committed, so the agent never hears and answers itself. No AEC; a pure time gate.
+        self._floor_held = floor_held
+        self._echo_guard = max(0.0, echo_guard_seconds)
         self._running = False
 
     async def run(self) -> None:
         self._running = True
         silence_seconds = 0.0  # trailing acoustic silence since the human last spoke (frame stream)
+        mute_tail = 0.0  # remaining echo-guard seconds after the agent released the floor
         try:
             async for frame in self._source.frames():
                 if not self._running:
                     break
+                # Half-duplex gate: while the agent holds the floor (and for an echo tail after), the
+                # mic is hearing the agent, not a human — drop the frame and keep no partial turn
+                # across the boundary, so the agent's own speech never becomes a HumanMessage (§36.5).
+                held = self._floor_held() if self._floor_held is not None else False
+                if held:
+                    mute_tail = self._echo_guard
+                elif mute_tail > 0.0:
+                    mute_tail = max(0.0, mute_tail - frame.duration_seconds)
+                if held or mute_tail > 0.0:
+                    self._segmenter.reset()
+                    self._detector.reset()
+                    if self._assembler is not None:
+                        self._assembler.clear()
+                    silence_seconds = 0.0
+                    continue
                 speech = self._detector.is_speech(frame)
                 silence_seconds = 0.0 if speech else silence_seconds + frame.duration_seconds
                 utterance = self._segmenter.push(frame, speech)

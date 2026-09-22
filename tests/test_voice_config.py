@@ -58,6 +58,16 @@ def test_config_includes_voice_section():
     assert Config().voice.provider == "fake"  # default when omitted
 
 
+def test_voice_echo_guard_default_and_custom():
+    assert Voice().echo_guard_seconds == 0.4  # half-duplex mute tail (§36.5)
+    assert Voice.from_mapping({"echo_guard": "0.25s"}).echo_guard_seconds == 0.25
+
+
+def test_voice_rejects_negative_echo_guard():
+    with pytest.raises(ConfigError):
+        Voice.from_mapping({"echo_guard": -0.1})
+
+
 # --- input_mode metadata -------------------------------------------------------------------
 def test_human_message_defaults_to_text():
     assert HumanMessage(event_id="e1", timestamp=T0, text="hi").input_mode == "text"

@@ -277,6 +277,110 @@ async def test_controller_latches_off_after_engine_failure():
     assert engine.calls == 1  # never retried the dead device
 
 
+class _GatedEngine(TtsEngine):
+    """A ``speak`` that blocks until released — lets a test observe the `speaking` state and cut it
+    off mid-utterance. ``stop`` mimics Kokoro's engine: it unblocks the in-flight render (sd.stop)."""
+
+    def __init__(self) -> None:
+        self.spoken: list[str] = []
+        self.stopped = 0
+        self.entered = asyncio.Event()  # set when a speak has begun (an utterance is in flight)
+        self.release = asyncio.Event()  # a speak returns only once this is set
+
+    async def speak(self, text: str) -> None:
+        self.entered.set()
+        await self.release.wait()
+        self.spoken.append(text)
+
+    def stop(self) -> None:
+        self.stopped += 1
+        self.release.set()  # engine owns interruption — unblock the current render
+
+
+async def test_base_stop_is_a_noop():
+    NullTtsEngine().stop()  # default engine can't interrupt; must not raise
+
+
+async def test_controller_speaking_tracks_queue_and_playback():
+    # `speaking` is the half-duplex floor signal: true the instant we submit (synchronous), through
+    # playback, false once the queue drains — so the mic is muted for exactly as long as TTS runs.
+    engine = _GatedEngine()
+    ctrl = SpeechController(engine)
+    ctrl.start()
+    assert ctrl.speaking is False
+    ctrl.submit("one")
+    ctrl.submit("two")
+    assert ctrl.speaking is True  # synchronous: no window where a just-queued utterance reads idle
+    engine.release.set()
+    await _wait_for(lambda: len(engine.spoken) == 2)
+    await _wait_for(lambda: ctrl.speaking is False)
+    assert ctrl.speaking is False
+    await ctrl.aclose()
+
+
+async def test_controller_interrupt_cuts_current_and_drops_backlog_but_stays_usable():
+    # Barge-in: interrupt() stops the in-flight utterance and discards the queued backlog (no stale
+    # resume), and is NON-terminal — a later submit still speaks (unlike aclose()).
+    engine = _GatedEngine()
+    ctrl = SpeechController(engine)
+    ctrl.start()
+    ctrl.submit("one")
+    ctrl.submit("two")
+    ctrl.submit("three")
+    await _wait_for(lambda: engine.entered.is_set())  # "one" is in flight; two/three queued
+    assert ctrl.speaking is True
+
+    ctrl.interrupt()
+    assert engine.stopped == 1  # engine told to stop current playback
+    await _wait_for(lambda: ctrl.speaking is False)  # backlog dropped + in-flight unwound
+    assert engine.spoken == ["one"]  # two/three never spoken — no stale resume
+
+    engine.release.set()  # (already set by stop) keep future renders unblocked
+    ctrl.submit("four")
+    await _wait_for(lambda: "four" in engine.spoken)  # engine still usable after a barge-in
+    assert ctrl.enabled is True
+    await ctrl.aclose()
+
+
+async def test_interrupt_is_noop_when_disabled():
+    ctrl = SpeechController(NullTtsEngine())
+    ctrl.start()
+    ctrl.interrupt()  # nothing queued, engine disabled — must not raise
+    assert ctrl.speaking is False
+    await ctrl.aclose()
+
+
+async def test_kokoro_stop_is_nonterminal_and_next_speak_clears_interrupt(monkeypatch):
+    # stop() interrupts the current utterance (sets the per-utterance flag + sd.stop) but leaves the
+    # terminal aclose flag untouched, so the engine stays usable; the next speak clears the flag.
+    played: list = []
+    monkeypatch.setitem(
+        sys.modules, "sounddevice",
+        types.SimpleNamespace(play=lambda *a, **k: played.append(a), wait=lambda: None, stop=lambda: None),
+    )
+    monkeypatch.setitem(sys.modules, "numpy", types.SimpleNamespace(asarray=lambda a, dtype=None: a))
+
+    class _FakePipeline:
+        def __init__(self, **kwargs):
+            pass
+
+        def __call__(self, text, voice, speed):
+            yield ("g", "p", [0.0, 0.1])
+
+    monkeypatch.setitem(sys.modules, "kokoro", types.SimpleNamespace(KPipeline=_FakePipeline))
+    monkeypatch.setitem(
+        sys.modules, "loguru", types.SimpleNamespace(logger=types.SimpleNamespace(disable=lambda n: None)),
+    )
+
+    engine = KokoroTtsEngine(voice="am_onyx", lang_code="", speed=1.0)
+    engine.stop()
+    assert engine._interrupt.is_set() and not engine._stop.is_set()  # per-utterance, not terminal
+
+    await engine.speak("hello")  # a fresh utterance clears the interrupt and renders
+    assert engine._interrupt.is_set() is False
+    assert played  # the chunk actually reached playback (not skipped by a stale interrupt)
+
+
 async def test_speaker_survives_a_raising_error_callback():
     # If on_error itself raises, the speaker task must not die and quitting must not re-raise.
     def _boom(_exc: BaseException) -> None:
