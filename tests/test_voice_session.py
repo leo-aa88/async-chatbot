@@ -151,3 +151,35 @@ def test_build_segmenter_derives_frame_counts():
     seg = build_segmenter(Voice(frame_seconds=0.03, start_seconds=0.15, silence_seconds=0.6))
     assert seg._start_frames == 5     # 0.15 / 0.03
     assert seg._silence_frames == 20  # 0.60 / 0.03
+
+
+# --- Whisper compute-type / device resolution (pure, no WhisperModel) ----------------------
+def test_compute_type_auto_matches_resolved_device():
+    from aca.voice.whisper import _resolve_compute_type
+
+    assert _resolve_compute_type("auto", "cuda") == "int8_float16"
+    assert _resolve_compute_type("auto", "cpu") == "int8"  # CPU-runnable default, not a CUDA type
+
+
+def test_compute_type_cuda_only_on_cpu_is_rejected():
+    from aca.voice.whisper import _resolve_compute_type
+
+    # The exact failure the reviewer flagged: int8_float16 on a CPU device. Reject cleanly (before
+    # any model download) rather than let CTranslate2 raise a raw ValueError mid-load.
+    for cuda_only in ("int8_float16", "float16", "bfloat16"):
+        with pytest.raises(ConfigError):
+            _resolve_compute_type(cuda_only, "cpu")
+
+
+def test_compute_type_explicit_cpu_type_passes_through():
+    from aca.voice.whisper import _resolve_compute_type
+
+    assert _resolve_compute_type("int8", "cpu") == "int8"
+    assert _resolve_compute_type("float32", "cpu") == "float32"
+
+
+def test_resolve_device_passes_explicit_through():
+    from aca.voice.whisper import _resolve_device
+
+    assert _resolve_device("cpu") == "cpu"
+    assert _resolve_device("cuda") == "cuda"

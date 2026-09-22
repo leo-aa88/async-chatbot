@@ -25,7 +25,7 @@ def test_voice_defaults():
     v = Voice()
     assert v.provider == "fake" and v.model == "small.en"
     assert v.vad == "energy" and v.sample_rate == 16000
-    assert v.compute_type == "int8_float16" and v.language == "en"
+    assert v.compute_type == "auto" and v.device == "auto" and v.language == "en"
 
 
 def test_voice_from_mapping_custom():

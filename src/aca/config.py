@@ -319,7 +319,9 @@ class Voice:
     provider: str = "fake"
     model: str = "small.en"
     device: str = "auto"
-    compute_type: str = "int8_float16"
+    # ``auto`` picks a compute type the resolved device can run (``int8_float16`` on CUDA, ``int8``
+    # on CPU); an explicit CUDA-only type on a CPU device is rejected before the model downloads.
+    compute_type: str = "auto"
     language: str = "en"
     beam_size: int = 5
     sample_rate: int = 16000
@@ -353,7 +355,7 @@ class Voice:
             provider=str(data.get("provider", "fake")).strip().lower(),
             model=str(data.get("model", "small.en")),
             device=str(data.get("device", "auto")).strip().lower(),
-            compute_type=str(data.get("compute_type", "int8_float16")),
+            compute_type=str(data.get("compute_type", "auto")).strip().lower(),
             language=str(data.get("language", "en")),
             beam_size=beam_size,
             sample_rate=sample_rate,

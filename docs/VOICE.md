@@ -33,6 +33,12 @@ aca service start             # in one terminal
 aca chat --voice              # in another: type OR speak; Ctrl-D to quit
 ```
 
+The first run downloads the model weights. `device` and `compute_type` default to `auto`: with a
+CUDA GPU present, `small.en` loads at `int8_float16` (~2 GB VRAM, fits a 4 GB card); with no CUDA it
+falls back to CPU at `int8` — it works, just slower. (An explicit CUDA-only `compute_type` like
+`int8_float16` set against a CPU box is rejected up front, before the download, rather than crashing
+mid-load.)
+
 Without the extra installed, `aca chat` still works for typing; `--voice` fails fast with a clear
 "pip install 'aca[voice]'" message rather than erroring deep in the capture loop.
 
@@ -62,8 +68,8 @@ dry runs never touch a model or a microphone.
 | ------------------ | ---------------- | -------------------------------------------------------------- |
 | `provider`         | `fake`           | `fake` (offline) or `faster-whisper`                           |
 | `model`            | `small.en`       | Whisper model id                                               |
-| `device`           | `auto`           | `cuda` / `cpu` / `auto`                                         |
-| `compute_type`     | `int8_float16`   | CTranslate2 quantization                                       |
+| `device`           | `auto`           | `cuda` / `cpu` / `auto` (auto → CUDA if present, else CPU)      |
+| `compute_type`     | `auto`           | `auto` picks per device (`int8_float16` CUDA / `int8` CPU)      |
 | `language`         | `en`             | transcription language                                         |
 | `vad`              | `energy`         | `energy` (RMS gate, no deps) or `silero` (needs `voice-silero`)|
 | `vad_threshold`    | `0.02`           | energy-VAD speech threshold, normalized RMS in `[0,1]`         |
