@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aca"
-version = "0.6.36"
+version = "0.6.37"
 description = "Asynchronous Conversational Agent — a persistent, introspective conversational agent."
 readme = "README.md"
 requires-python = ">=3.12"

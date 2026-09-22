@@ -16,6 +16,7 @@ from ..cognition.snapshot import build_snapshot
 from ..domain.enums import WorkKind, WorkStatus
 from ..domain.runtime import WorkItem
 from ..errors import AcaError
+from ..persona import DEFAULT_PERSONA
 from .context import ReducerContext
 
 
@@ -31,6 +32,10 @@ def _agent_state_summary(ctx: ReducerContext) -> dict[str, Any]:
     }
     if ctx.config.identity.name:
         summary["name"] = ctx.config.identity.name  # durable self-name -> prompt (survives resets)
+    if ctx.config.identity.persona != DEFAULT_PERSONA:
+        # Voice selection -> prompt (wording only; no gate reads it). Omitted for the default persona
+        # so default snapshots, and their prompt hashes, are unchanged.
+        summary["persona"] = ctx.config.identity.persona
     return summary
 
 

@@ -14,6 +14,7 @@ from typing import Any
 
 from .durations import parse_hours, parse_seconds
 from .errors import ConfigError
+from .persona import DEFAULT_PERSONA, get_persona
 
 
 def _fraction(name: str, value: Any) -> float:
@@ -432,13 +433,19 @@ class Identity:
     ``name`` is the agent's own name. Unlike a fact it happens to remember, it's part of the fixed
     identity injected into every prompt, so it survives runtime sessions, memory decay, and a data
     reset. Empty by default (the agent has no name unless one is configured).
+
+    ``persona`` selects the user-facing voice (``aca.persona``: ``default`` or ``tsundere``). It is
+    wording only — no gate, budget, or cadence reads it — and it is validated here so a typo fails
+    at startup rather than silently speaking in the default voice.
     """
 
     name: str = ""
+    persona: str = DEFAULT_PERSONA
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Identity:
-        return Identity(name=str(data.get("name", "")).strip())
+        persona = get_persona(str(data.get("persona", DEFAULT_PERSONA))).name
+        return Identity(name=str(data.get("name", "")).strip(), persona=persona)
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,11 +464,12 @@ class Tts:
     ``provider`` is ``none`` (the silent default: no audio, no extra dependencies) or ``kokoro``
     (offline Kokoro-82M neural TTS, ``pip install 'aca[tts]'``). Kokoro runs locally; after a
     one-time model download from Hugging Face on first use, nothing leaves the host. ``voice``
-    selects a Kokoro voice (default ``am_onyx``, an American male voice); ``lang_code`` is Kokoro's
-    pipeline language, auto-derived from the voice's first letter when left blank. ``speed`` scales
-    the speaking rate; ``device`` optionally names a non-default audio output device. (There is no
-    sample-rate knob: Kokoro's decoder output is fixed at 24 kHz, so the player clock is that
-    constant, not configuration.)
+    selects a Kokoro voice; unset, it is the persona's voice (``am_onyx``, an American male voice,
+    for ``default``; ``af_bella`` for ``tsundere``), and an explicit ``voice`` always wins.
+    ``lang_code`` is Kokoro's pipeline language, auto-derived from the voice's first letter when
+    left blank. ``speed`` scales the speaking rate; ``device`` optionally names a non-default audio
+    output device. (There is no sample-rate knob: Kokoro's decoder output is fixed at 24 kHz, so the
+    player clock is that constant, not configuration.)
     """
 
     provider: str = "none"
@@ -471,13 +479,13 @@ class Tts:
     device: str | None = None
 
     @staticmethod
-    def from_mapping(data: Mapping[str, Any]) -> Tts:
+    def from_mapping(data: Mapping[str, Any], default_voice: str = "am_onyx") -> Tts:
         speed = float(data.get("speed", 1.0))
         if speed <= 0.0:
             raise ConfigError("tts.speed must be > 0")
         return Tts(
             provider=str(data.get("provider", "none")).strip().lower(),
-            voice=str(data.get("voice", "am_onyx")).strip(),
+            voice=str(data.get("voice", default_voice)).strip(),
             lang_code=str(data.get("lang_code", "")).strip(),
             speed=speed,
             device=(str(data["device"]) if data.get("device") else None),
@@ -505,10 +513,11 @@ class Config:
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Config:
         seed = data.get("rng_seed")
+        identity = Identity.from_mapping(data.get("identity", {}))
         return Config(
             local_timezone=str(data.get("local_timezone", "UTC")),
             rng_seed=None if seed is None else int(seed),
-            identity=Identity.from_mapping(data.get("identity", {})),
+            identity=identity,
             cognition=Cognition.from_mapping(data.get("cognition", {})),
             temperament=Temperament.from_mapping(data.get("temperament", {})),
             timing=Timing.from_mapping(data.get("timing", {})),
@@ -518,7 +527,7 @@ class Config:
             llm=LLM.from_mapping(data.get("llm", {})),
             embedding=Embedding.from_mapping(data.get("embedding", {})),
             voice=Voice.from_mapping(data.get("voice", {})),
-            tts=Tts.from_mapping(data.get("tts", {})),
+            tts=Tts.from_mapping(data.get("tts", {}), default_voice=get_persona(identity.persona).tts_voice),
         )
 
     def with_overrides(self, **overrides: Any) -> Config:

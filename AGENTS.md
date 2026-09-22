@@ -54,6 +54,7 @@ exist to catch violations.
 
 ```
 errors, ids, clock, rng, durations, config   # foundations (pure, injectable)
+persona                                       # user-facing voice presets (prompt text only, no gates)
 domain/     enums, events, state, proposals   # data contracts, no behavior/IO
 cognition/  activation, classifier, selection, scheduler, gating, budgets, snapshot
             # pure decision logic; deterministic given (state, clock, rng)
@@ -108,5 +109,9 @@ Data directory defaults to `~/.aca/` (override with `--data-dir` or `ACA_DATA_DI
   and add reducer + adversarial tests.
 - Adding an LLM proposal type → whitelist it in `domain/proposals.py` with bounds/clamps and
   cover it in `tests/test_reducer_llm.py`.
+- Changing the agent's *voice* → edit/add a persona in `persona.py`; it is inserted at one point in
+  `workers/llm/prompt.py`. Never let a persona touch gates/cadence, and keep machine-facing fields
+  (topic summaries, labels) neutral. The `default` persona must render `tests/fixtures/
+  system_prompt_default.txt` exactly.
 - Touching timing/decay/budgets → verify with a `ManualClock`; never introduce a real
   `sleep`/wall-clock read into the decision path.

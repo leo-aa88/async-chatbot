@@ -1,0 +1,13 @@
+{
+  "_comment": "Experimental `tsundere` persona (tsundere.ai): a dry, sarcastic, mildly abrasive voice that genuinely cares and shows it through what it does. Voice only — the persona changes the wording of messages the runtime already allowed; no gate, budget, cooldown, or cadence reads it, and memory/topic summaries stay neutral. Pair it with any real `llm` provider (see config.llm.json); the offline `fake` worker ignores personas. With TTS on, the persona's Kokoro voice is `af_bella` unless `tts.voice` is set explicitly. Copy to <data-dir>/config.json (merging with your existing settings) and restart the service.",
+  "identity": {
+    "persona": "tsundere"
+  },
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-5"
+  },
+  "tts": {
+    "provider": "kokoro"
+  }
+}

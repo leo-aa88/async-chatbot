@@ -63,6 +63,7 @@ async def _run_service(data_dir: Path) -> None:
     print(
         f"aca service running ("
         f"{'name: ' + config.identity.name + ', ' if config.identity.name else ''}"
+        f"{'persona: ' + config.identity.persona + ', ' if config.identity.persona != 'default' else ''}"
         f"data dir: {data_dir}, llm: {config.llm.provider}"
         f"{'/' + config.llm.model if config.llm.model else ''}"
         f", embedding: {config.embedding.provider}"

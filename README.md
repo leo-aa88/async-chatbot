@@ -169,7 +169,8 @@ pip install -e ".[tts]"                          # adds kokoro, sounddevice, num
 "tts": { "provider": "kokoro", "voice": "am_onyx" }
 ```
 
-The default voice is `am_onyx` (an American male voice); `lang_code` is derived from the voice's
+The default voice is `am_onyx` (an American male voice), or the persona's voice when
+`identity.persona` is set (`tsundere` → `af_bella`); `lang_code` is derived from the voice's
 first letter. This is **client-side rendering only** — DESIGN §6.1 anticipates exactly this ("a TTS
 adapter … without changing cognition semantics"). The client still **prints every message verbatim**
 (you always read what the agent says); TTS additionally synthesizes a *spoken normalization* of that
@@ -180,6 +181,28 @@ shown once as a `[client]` status line and latches speech off rather than disrup
 Kokoro runs on-device, but the **first** use downloads the model weights from Hugging Face (~330 MB);
 after that it is fully offline and no audio or text leaves the host. See
 [`examples/config.tts.json`](examples/config.tts.json).
+
+### Persona (optional, experimental)
+
+`identity.persona` selects the agent's user-facing *voice*. `default` is the plain, non-sycophantic
+voice. `tsundere` is dry, sarcastic, and mildly abrasive, and it cares about you and shows it mostly
+by helping: it teases what you do, not who you are. It can nudge you to eat or sleep when the
+conversation shows you need it. It drops the edge when you're struggling, and it is never possessive
+or guilt-trippy. It isn't an anime parody:
+
+```json
+"identity": { "persona": "tsundere" }
+```
+
+A persona is wording only. It adds one section to the shared prompt (reactive, mandatory, and
+proactive cycles alike) and never touches a gate, budget, cooldown, discourse focus, or cadence, so
+the agent speaks no more often in character than without it. Machine-facing output (topic
+summaries, intents, relation/focus labels) is told to stay neutral so durable memory isn't written
+in character. The persona also picks the default TTS voice: `tsundere` → Kokoro `af_bella`
+(`default` → `am_onyx`), and an explicit `tts.voice` overrides it. It needs a real LLM provider;
+the offline `fake` worker ignores personas. See [`examples/config.tsundere.json`](examples/config.tsundere.json).
+To score a provider against the persona eval corpus (behavioral shape, not wording), run
+`python scripts/persona_eval.py`.
 
 ### Seeing autonomous (proactive) messages
 

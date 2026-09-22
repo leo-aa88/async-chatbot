@@ -1,21 +1,3 @@
-"""Deterministic, provider-neutral prompt construction for the generative boundary (DESIGN 21, 22).
-
-Turns a canonical ``Snapshot`` into a ``(system, user)`` pair. The system prompt fixes the JSON
-action contract the reducer expects; the user prompt is the compact, canonically-serialized
-context. Determinism (sorted keys, explicit timestamps from state) keeps prompts stable for
-replay and prompt-drift detection (DESIGN 21).
-"""
-
-from __future__ import annotations
-
-import json
-
-from ...cognition.snapshot import Snapshot
-from ...domain.cycles import CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL
-from ...persona import persona_for_prompt
-
-# Everything before the persona insertion point: role, disposition, contract, speech acts, voice.
-_SYSTEM_HEAD = """\
 You are the cognition core of an asynchronous, introspective conversational agent (ACA).
 Human input is optional, and so is your output.
 
@@ -90,10 +72,6 @@ Voice — sound like a specific mind, not a chat assistant. When you speak:
 - Don't tack on a question just to keep the conversation going. Ask only when you actually want
   the answer.
 
-"""
-
-# Everything after the persona insertion point: machine-facing enrichment + the proposal whitelist.
-_SYSTEM_TAIL = """\
 Enrichment — this is how fleeting memories become durable topics, so do it on any cycle that
 surfaces one, reactive or proactive alike: when the selected candidate is a provisional memory
 (context.source.candidate.kind == "PROVISIONAL_MEMORY") worth remembering as a standing topic,
@@ -108,47 +86,3 @@ Keep messages concise and natural. Only these proposal types are honored (others
   {"type":"ADJUST_TOPIC_ACTIVATION","topic_id":"...","delta":<-0.5..0.5>}
   {"type":"CREATE_DEFERRED_INTENT","intent":"...","topic_id":"...","provisional_memory_id":"..."}
   {"type":"RESOLVE_DEFERRED_INTENT","intent_id":"..."}
-"""
-
-
-def build_system_prompt(persona: str | None = None) -> str:
-    """The system prompt for a persona (``None`` -> default).
-
-    The persona's character section is inserted at exactly one point — after the shared voice rules,
-    before the neutral enrichment contract — so every cycle type gets the same character and the
-    machine-facing contract is byte-identical across personas. ``default`` inserts nothing.
-    """
-    character = persona_for_prompt(persona).character
-    return _SYSTEM_HEAD + (f"{character}\n" if character else "") + _SYSTEM_TAIL
-
-
-def build_prompt(snapshot: Snapshot) -> tuple[str, str]:
-    """Return ``(system_prompt, user_prompt)`` for the given snapshot."""
-    agent_state = snapshot.context.get("agent_state") or {}
-    system = build_system_prompt(agent_state.get("persona"))
-    name = agent_state.get("name")
-    if name:
-        # Durable self-name, prepended so the agent knows who it is on every cycle (DESIGN 5).
-        system = f"Your name is {name}.\n\n{system}"
-    context = json.dumps(snapshot.context, sort_keys=True, indent=2, default=str)
-    user = (
-        f"cycle_id: {snapshot.cycle_id}\n"
-        f"basis_revision: {snapshot.basis_revision}\n"
-        f"context:\n{context}\n\n"
-        "Return your decision as the single JSON object described in the system prompt."
-    )
-    return system, user
-
-
-def cycle_type(snapshot: Snapshot) -> str:
-    """The cycle type carried in the snapshot (defaults to reactive-optional)."""
-    source = snapshot.context.get("source") or {}
-    return str(source.get("cycle_type", CYCLE_REACTIVE_OPTIONAL))
-
-
-def wants_speech(snapshot: Snapshot) -> bool:
-    """Whether this cycle should fall back to speaking if the model returns non-JSON prose."""
-    source = snapshot.context.get("source") or {}
-    return cycle_type(snapshot) in (CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL) or bool(
-        source.get("response_required")
-    )
