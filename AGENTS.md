@@ -62,6 +62,7 @@ reducer/    context, reducer, handlers/*      # THE single writer; dispatch by e
 workers/    base, fake_llm, fake_embedding    # side-effect-isolated; return events only
 service/    lock, timer, dispatcher, recovery, delivery, service  # runtime orchestration
 ipc/        protocol, server, client          # unix-socket line-framed JSON
+tts/        base, factory, kokoro_engine, controller  # optional client-side speech output
 cli/        main                              # `aca service|status|chat|logs|memories|topics`
 ```
 

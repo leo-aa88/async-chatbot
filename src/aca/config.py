@@ -316,6 +316,48 @@ class Identity:
 
 
 @dataclass(frozen=True, slots=True)
+class Tts:
+    """Optional speech output for the chat client (DESIGN 2.2 secondary goal, 28.6).
+
+    Speech output is a *client-side rendering* concern, not cognition. The ``aca chat`` client
+    speaks each delivered agent message aloud, exactly as it already prints it — nothing here
+    touches the reducer or durable state (invariant 1). It's a second rendering of an utterance the
+    reducer already authorized and delivered, so it needs no injected ``Clock``/``Rng``.
+
+    ``provider`` is ``none`` (the silent default: no audio, no extra dependencies) or ``kokoro``
+    (offline Kokoro-82M neural TTS, ``pip install 'aca[tts]'`` — runs locally, nothing leaves the
+    host). ``voice`` selects a Kokoro voice (default ``am_onyx``, an American male voice);
+    ``lang_code`` is Kokoro's pipeline language, auto-derived from the voice's first letter when
+    left blank. ``speed`` scales the speaking rate; ``sample_rate`` is Kokoro's native 24 kHz;
+    ``device`` optionally names a non-default audio output device.
+    """
+
+    provider: str = "none"
+    voice: str = "am_onyx"
+    lang_code: str = ""
+    speed: float = 1.0
+    sample_rate: int = 24_000
+    device: str | None = None
+
+    @staticmethod
+    def from_mapping(data: Mapping[str, Any]) -> Tts:
+        speed = float(data.get("speed", 1.0))
+        if speed <= 0.0:
+            raise ConfigError("tts.speed must be > 0")
+        sample_rate = int(data.get("sample_rate", 24_000))
+        if sample_rate <= 0:
+            raise ConfigError("tts.sample_rate must be > 0")
+        return Tts(
+            provider=str(data.get("provider", "none")).strip().lower(),
+            voice=str(data.get("voice", "am_onyx")).strip(),
+            lang_code=str(data.get("lang_code", "")).strip(),
+            speed=speed,
+            sample_rate=sample_rate,
+            device=(str(data["device"]) if data.get("device") else None),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Top-level immutable configuration."""
 
@@ -330,6 +372,7 @@ class Config:
     conversation: Conversation = field(default_factory=Conversation)
     llm: LLM = field(default_factory=LLM)
     embedding: Embedding = field(default_factory=Embedding)
+    tts: Tts = field(default_factory=Tts)
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Config:
@@ -346,6 +389,7 @@ class Config:
             conversation=Conversation.from_mapping(data.get("conversation", {})),
             llm=LLM.from_mapping(data.get("llm", {})),
             embedding=Embedding.from_mapping(data.get("embedding", {})),
+            tts=Tts.from_mapping(data.get("tts", {})),
         )
 
     def with_overrides(self, **overrides: Any) -> Config:
