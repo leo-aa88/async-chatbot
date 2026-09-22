@@ -50,13 +50,17 @@ def _config():
     })
 
 
-def _make_idle(h: Harness) -> None:
-    """Put the conversation in IDLE (a live thread, no focus vector) so the discourse gate is active
-    but fails open at wake, letting the candidate reach the advancement gate."""
+def _make_idle(h: Harness, focus: str | None = "t1") -> None:
+    """Put the conversation in IDLE (a live window). With ``focus`` set (default) a focus subject
+    exists, so the advancement gate sees a live *thread*; the discourse-focus gate still fails open
+    at wake (no focus *vector* stored), letting the candidate reach the advancement gate. Pass
+    ``focus=None`` for the reachable IDLE-but-no-focus state (only check-ins exchanged, so no turn
+    ever set the focus) where there is no thread to be orphaned from."""
     now = h.clock.now_utc()
     with h.stores.db.transaction():
         conv = h.stores.state.load_conversation()
-        h.stores.state.save_conversation(conv.__class__(last_human_message_at=now - timedelta(seconds=60)))
+        h.stores.state.save_conversation(conv.__class__(
+            last_human_message_at=now - timedelta(seconds=60), focus_memory_id=focus))
 
 
 def _harness(tmp_path, relation: str | None) -> Harness:
@@ -81,11 +85,12 @@ def _note(h: Harness) -> str:
     return h.stores.work.recent_traces(limit=1)[0].notes
 
 
-def _run_proactive(tmp_path, relation: str | None, *, idle: bool = False) -> Harness:
+def _run_proactive(tmp_path, relation: str | None, *, idle: bool = False,
+                   focus: str | None = "t1") -> Harness:
     h = _harness(tmp_path, relation)
     _candidate_topic(h, "t1")
     if idle:
-        _make_idle(h)
+        _make_idle(h, focus)
     h.wake()
     assert _note(h) == "proactive_dispatch"  # dispatched (gate fails open at wake)
     h.run_all_pending()
@@ -93,10 +98,19 @@ def _run_proactive(tmp_path, relation: str | None, *, idle: bool = False) -> Har
 
 
 def test_advancement_orphan_is_suppressed_while_idle(tmp_path):
-    # ORPHAN mutes only when a live thread exists (IDLE / discourse gate active).
-    h = _run_proactive(tmp_path, "ORPHAN", idle=True)
+    # ORPHAN mutes only when a live thread exists: IDLE window AND a focus subject set.
+    h = _run_proactive(tmp_path, "ORPHAN", idle=True)  # default focus="t1"
     assert h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE) == []
     assert _note(h) == "pre_outbox:advancement_orphan"
+    h.close()
+
+
+def test_orphan_does_not_suppress_idle_without_focus(tmp_path):
+    # IDLE but no focus_memory_id (only check-ins were ever exchanged, so no turn set the focus):
+    # there is no thread to be off, so an ORPHAN label is a legitimate resurfacing and must NOT be
+    # suppressed — mode alone (gate_active) is not enough, focus existence is required.
+    h = _run_proactive(tmp_path, "ORPHAN", idle=True, focus=None)
+    assert len(h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE)) == 1
     h.close()
 
 
@@ -171,9 +185,11 @@ def test_advancement_suppresses_policy(tmp_path):
     for forward in ("ADVANCE", "EVIDENCE", "REVISE", "CLOSE", "REOPEN"):
         assert advancement_suppresses(h.ctx, forward, now) is False
     assert advancement_suppresses(h.ctx, None, now) is False            # missing -> fail open
-    # ORPHAN mutes only in IDLE (a live thread), not in DORMANT (resurfacing).
-    assert advancement_suppresses(h.ctx, "ORPHAN", now) is False        # DORMANT
-    _make_idle(h)
-    assert advancement_suppresses(h.ctx, "ORPHAN", now) is True         # IDLE
-    assert advancement_suppresses(h.ctx, "REPEAT", now) is True
+    # ORPHAN mutes only against a live thread: IDLE window AND a focus subject set.
+    assert advancement_suppresses(h.ctx, "ORPHAN", now) is False        # DORMANT (no window)
+    _make_idle(h, focus=None)                                           # IDLE but no focus set
+    assert advancement_suppresses(h.ctx, "ORPHAN", now) is False        # no thread to be off
+    _make_idle(h)                                                       # IDLE + focus (live thread)
+    assert advancement_suppresses(h.ctx, "ORPHAN", now) is True
+    assert advancement_suppresses(h.ctx, "REPEAT", now) is True         # REPEAT: any state
     h.close()
