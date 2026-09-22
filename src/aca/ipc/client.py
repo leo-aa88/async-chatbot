@@ -39,9 +39,12 @@ class IpcClient:
         finally:
             writer.close()
 
-    async def chat_send(self, text: str, *, event_id: str | None = None, channel: str = "cli") -> dict:
+    async def chat_send(
+        self, text: str, *, event_id: str | None = None, channel: str = "cli", input_mode: str = "text"
+    ) -> dict:
         return await self.request_once(
-            p.OP_CHAT, text=text, channel=channel, event_id=event_id or ids.new_id(ids.EVENT)
+            p.OP_CHAT, text=text, channel=channel, input_mode=input_mode,
+            event_id=event_id or ids.new_id(ids.EVENT),
         )
 
     async def status(self) -> dict:

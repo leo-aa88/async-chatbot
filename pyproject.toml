@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aca"
-version = "0.6.23"
+version = "0.6.24"
 description = "Asynchronous Conversational Agent — a persistent, introspective conversational agent."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,6 +15,11 @@ dependencies = []
 [project.optional-dependencies]
 # Real LLM providers (OpenAI / Anthropic / Grok / Gemini) need an async HTTP client.
 llm = ["httpx>=0.28.1"]
+# Client-side voice input (`aca listen`): microphone capture + Whisper transcription. Optional and
+# imported lazily — the daemon core and the default `fake`/`energy` pipeline need none of these.
+voice = ["faster-whisper>=1.0.0", "sounddevice>=0.4.6", "numpy>=1.26"]
+# Neural VAD alternative to the dependency-free energy gate (voice.vad = "silero").
+voice-silero = ["silero-vad>=5.1", "torch>=2.2"]
 dev = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0", "ruff>=0.16.8", "httpx>=0.28.1"]
 
 [project.scripts]

@@ -60,9 +60,10 @@ cognition/  activation, classifier, selection, scheduler, gating, budgets, snaps
 persistence/ schema, db, *_store             # SQLite; the only IO for durable state
 reducer/    context, reducer, handlers/*      # THE single writer; dispatch by event type
 workers/    base, fake_llm, fake_embedding    # side-effect-isolated; return events only
+voice/      audio, vad, segmenter, transcriber, session  # CLIENT-SIDE speech->text perception
 service/    lock, timer, dispatcher, recovery, delivery, service  # runtime orchestration
 ipc/        protocol, server, client          # unix-socket line-framed JSON
-cli/        main                              # `aca service|status|chat|logs|memories|topics`
+cli/        main                              # `aca service|status|chat [--voice]|logs|memories|topics`
 ```
 
 Data flows one direction: `events → reducer → commit → (optional work item) → worker →

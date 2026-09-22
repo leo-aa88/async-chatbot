@@ -300,6 +300,75 @@ class Embedding:
 
 
 @dataclass(frozen=True, slots=True)
+class Voice:
+    """Client-side speech-to-text for the ``aca listen`` perception path (DESIGN 13, 28.2).
+
+    Voice is a *perception adapter*, not cognition: the client captures a microphone, a lightweight
+    VAD carves it into conversational turns, a Whisper model transcribes each utterance, and the
+    text is injected through the *same* durable ingress as typed input (a ``HumanMessage`` tagged
+    ``input_mode="voice"``). Nothing here runs in the daemon core or touches the reducer, so it
+    cannot affect determinism or replay — the transcript is just another human utterance.
+
+    ``provider`` selects the transcriber: ``fake`` (deterministic, offline, for tests) or
+    ``faster-whisper`` (CTranslate2; English-only ``small.en`` at ``int8_float16`` fits a 4 GB GPU).
+    ``vad`` selects the segmenter's speech detector: ``energy`` (dependency-free RMS gate, the
+    default) or ``silero`` (optional, more robust). All timings are seconds; frame counts are
+    derived from ``frame_seconds`` at build time.
+    """
+
+    provider: str = "fake"
+    model: str = "small.en"
+    device: str = "auto"
+    compute_type: str = "int8_float16"
+    language: str = "en"
+    beam_size: int = 5
+    sample_rate: int = 16000
+    frame_seconds: float = 0.03
+    # Segmentation (VAD boundaries). Onset debounce, end-of-utterance silence (hangover), the
+    # blip/runaway bounds, and pre-roll kept so speech onset isn't clipped.
+    vad: str = "energy"
+    vad_threshold: float = 0.02  # RMS in [0, 1]; frames at/above this are speech (energy VAD only)
+    start_seconds: float = 0.15
+    silence_seconds: float = 0.6
+    min_utterance_seconds: float = 0.3
+    max_utterance_seconds: float = 30.0
+    pre_roll_seconds: float = 0.2
+
+    @staticmethod
+    def from_mapping(data: Mapping[str, Any]) -> Voice:
+        sample_rate = int(data.get("sample_rate", 16000))
+        if sample_rate <= 0:
+            raise ConfigError("voice.sample_rate must be > 0")
+        beam_size = int(data.get("beam_size", 5))
+        if beam_size <= 0:
+            raise ConfigError("voice.beam_size must be > 0")
+        frame_seconds = parse_seconds(data.get("frame_seconds", 0.03))
+        if frame_seconds <= 0.0:
+            raise ConfigError("voice.frame_seconds must be > 0")
+        min_utterance = parse_seconds(data.get("min_utterance", 0.3))
+        max_utterance = parse_seconds(data.get("max_utterance", 30.0))
+        if max_utterance < min_utterance:
+            raise ConfigError("voice.max_utterance must be >= min_utterance")
+        return Voice(
+            provider=str(data.get("provider", "fake")).strip().lower(),
+            model=str(data.get("model", "small.en")),
+            device=str(data.get("device", "auto")).strip().lower(),
+            compute_type=str(data.get("compute_type", "int8_float16")),
+            language=str(data.get("language", "en")),
+            beam_size=beam_size,
+            sample_rate=sample_rate,
+            frame_seconds=frame_seconds,
+            vad=str(data.get("vad", "energy")).strip().lower(),
+            vad_threshold=_fraction("voice.vad_threshold", data.get("vad_threshold", 0.02)),
+            start_seconds=parse_seconds(data.get("start", 0.15)),
+            silence_seconds=parse_seconds(data.get("silence", 0.6)),
+            min_utterance_seconds=min_utterance,
+            max_utterance_seconds=max_utterance,
+            pre_roll_seconds=parse_seconds(data.get("pre_roll", 0.2)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Identity:
     """Durable self-identity that outlives memory and DB resets (DESIGN 5, 27).
 
@@ -330,6 +399,7 @@ class Config:
     conversation: Conversation = field(default_factory=Conversation)
     llm: LLM = field(default_factory=LLM)
     embedding: Embedding = field(default_factory=Embedding)
+    voice: Voice = field(default_factory=Voice)
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Config:
@@ -346,6 +416,7 @@ class Config:
             conversation=Conversation.from_mapping(data.get("conversation", {})),
             llm=LLM.from_mapping(data.get("llm", {})),
             embedding=Embedding.from_mapping(data.get("embedding", {})),
+            voice=Voice.from_mapping(data.get("voice", {})),
         )
 
     def with_overrides(self, **overrides: Any) -> Config:
