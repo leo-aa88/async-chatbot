@@ -216,6 +216,29 @@ def test_noted_is_a_backchannel_not_a_subject(tmp_path):
     h.close()
 
 
+def test_declarative_first_subject_does_not_anchor_v07(tmp_path):
+    # Documented v0.7 contract (§34.4): a purely declarative first subject does not anchor the gate
+    # (no structural cue). With no prior focus and pre-turn DORMANT, the focus stays unset.
+    h = _harness(tmp_path)
+    h.send_human("The robot needs better balance.")
+    assert h.stores.state.load_conversation().focus_memory_id is None
+    h.close()
+
+
+def test_declarative_topic_shift_keeps_prior_subject_v07(tmp_path):
+    # Documented v0.7 limitation (§34.4): a declarative topic shift mid-conversation is not detected,
+    # so the prior subject is kept (may over-suppress the new-subject candidate — accepted trade-off).
+    h = _harness(tmp_path)
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        conv = h.stores.state.load_conversation()
+        h.stores.state.save_conversation(conv.__class__(
+            last_human_message_at=now - timedelta(seconds=60), focus_memory_id="subject_X"))
+    h.send_human("The robot needs better balance.")
+    assert h.stores.state.load_conversation().focus_memory_id == "subject_X"
+    h.close()
+
+
 def test_backchannel_after_dormancy_retires_the_subject(tmp_path):
     h = _harness(tmp_path)
     now = h.clock.now_utc()
