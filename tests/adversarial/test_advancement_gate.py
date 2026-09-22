@@ -8,7 +8,7 @@ speak the deterministic gates already block.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from conftest import Harness
 
@@ -43,9 +43,20 @@ def _config():
         "cognition": {"selection_temperature": 0.2, "null_candidate_score": -10.0,
                       "semantic_worthiness_floor": 0.2},
         "timing": {"proactive_cooldown": "0s"},
+        # Short ACTIVE window so a 60s-old turn is IDLE (a live thread); long IDLE window.
+        "conversation": {"active_within": "10s", "idle_within": "1h"},
         "budgets": {"proactive_messages_per_hour": 100, "proactive_llm_calls_per_hour": 100,
                     "proactive_llm_calls_per_day": 1000},
     })
+
+
+def _make_idle(h: Harness) -> None:
+    """Put the conversation in IDLE (a live thread, no focus vector) so the discourse gate is active
+    but fails open at wake, letting the candidate reach the advancement gate."""
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        conv = h.stores.state.load_conversation()
+        h.stores.state.save_conversation(conv.__class__(last_human_message_at=now - timedelta(seconds=60)))
 
 
 def _harness(tmp_path, relation: str | None) -> Harness:
@@ -70,24 +81,36 @@ def _note(h: Harness) -> str:
     return h.stores.work.recent_traces(limit=1)[0].notes
 
 
-def _run_proactive(tmp_path, relation: str | None) -> Harness:
+def _run_proactive(tmp_path, relation: str | None, *, idle: bool = False) -> Harness:
     h = _harness(tmp_path, relation)
     _candidate_topic(h, "t1")
+    if idle:
+        _make_idle(h)
     h.wake()
-    assert _note(h) == "proactive_dispatch"  # dispatched (DORMANT: no discourse/continuity block)
+    assert _note(h) == "proactive_dispatch"  # dispatched (gate fails open at wake)
     h.run_all_pending()
     return h
 
 
-def test_advancement_orphan_is_suppressed(tmp_path):
-    h = _run_proactive(tmp_path, "ORPHAN")
+def test_advancement_orphan_is_suppressed_while_idle(tmp_path):
+    # ORPHAN mutes only when a live thread exists (IDLE / discourse gate active).
+    h = _run_proactive(tmp_path, "ORPHAN", idle=True)
     assert h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE) == []
     assert _note(h) == "pre_outbox:advancement_orphan"
     h.close()
 
 
-def test_advancement_repeat_is_suppressed(tmp_path):
-    h = _run_proactive(tmp_path, "REPEAT")
+def test_orphan_does_not_suppress_dormant_resurfacing(tmp_path):
+    # In DORMANT there is no current thread: an ORPHAN label is a legitimate resurfacing and must
+    # NOT be suppressed (§34.7 preserves dormant resurfacing) — the load-bearing guard.
+    h = _run_proactive(tmp_path, "ORPHAN", idle=False)
+    assert len(h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE)) == 1
+    h.close()
+
+
+def test_advancement_repeat_is_suppressed_in_any_mode(tmp_path):
+    # REPEAT (never restate) mutes regardless of mode — here DORMANT.
+    h = _run_proactive(tmp_path, "REPEAT", idle=False)
     assert h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE) == []
     assert _note(h) == "pre_outbox:advancement_repeat"
     h.close()
@@ -140,9 +163,17 @@ def test_parse_decision_relation_whitelist():
     assert parse_decision({"action": "speak", "message": "x"}).relation is None  # absent
 
 
-def test_advancement_suppresses_policy():
-    assert advancement_suppresses("ORPHAN") is True
-    assert advancement_suppresses("REPEAT") is True
+def test_advancement_suppresses_policy(tmp_path):
+    h = _harness(tmp_path, None)
+    now = h.clock.now_utc()
+    # REPEAT mutes in any mode; forward moves / None never.
+    assert advancement_suppresses(h.ctx, "REPEAT", now) is True         # DORMANT default
     for forward in ("ADVANCE", "EVIDENCE", "REVISE", "CLOSE", "REOPEN"):
-        assert advancement_suppresses(forward) is False
-    assert advancement_suppresses(None) is False  # missing -> fail open
+        assert advancement_suppresses(h.ctx, forward, now) is False
+    assert advancement_suppresses(h.ctx, None, now) is False            # missing -> fail open
+    # ORPHAN mutes only in IDLE (a live thread), not in DORMANT (resurfacing).
+    assert advancement_suppresses(h.ctx, "ORPHAN", now) is False        # DORMANT
+    _make_idle(h)
+    assert advancement_suppresses(h.ctx, "ORPHAN", now) is True         # IDLE
+    assert advancement_suppresses(h.ctx, "REPEAT", now) is True
+    h.close()

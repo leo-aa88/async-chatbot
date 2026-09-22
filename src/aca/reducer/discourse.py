@@ -161,17 +161,20 @@ def is_discourse_orphan(ctx: ReducerContext, kind: str, candidate_id: str, now) 
     return assess(ctx, kind, candidate_id) is DiscourseRelation.ORPHAN
 
 
-# Advancement relations that MUTE a proactive speak (§35.4). Everything else — a forward move
-# (ADVANCE/EVIDENCE/REVISE/CLOSE/REOPEN) or a missing/unrecognized relation (``None``) — leaves the
-# §34 decision untouched, so the current v0.7 worker (which emits no relation) is gated as before.
-_SUPPRESSING_RELATIONS = frozenset({"ORPHAN", "REPEAT"})
-
-
-def advancement_suppresses(relation: str | None) -> bool:
+def advancement_suppresses(ctx: ReducerContext, relation: str | None, now) -> bool:
     """Whether a proposed advancement relation mutes the proactive speak (§35.4, invariant 42a).
 
-    Suppress-only: only ``ORPHAN``/``REPEAT`` mute; forward moves and ``None`` fall open to §34.
-    This is *not* mode-scoped like the focus gate — a REPEAT/ORPHAN self-assessment holds whether
-    the conversation is `IDLE` or `DORMANT`, mirroring the semantic-repeat mute (§16.2).
+    Suppress-only, and scoped by *kind*:
+    * ``REPEAT`` mutes in **any** mode — never restate something already said (mirrors §16.2).
+    * ``ORPHAN`` mutes **only while a live thread exists** (mode `IDLE`, i.e. the discourse gate is
+      active). "Off the current thread" is meaningful only against a current subject; in `DORMANT`
+      there is no current thread and an "orphan" is a legitimate *resurfacing*, which §34.7
+      deliberately preserves — so the LLM's `ORPHAN` label must not be allowed to suppress it.
+    Forward moves (`ADVANCE`/`EVIDENCE`/`REVISE`/`CLOSE`/`REOPEN`) and a missing/unrecognized
+    relation (`None`) fall open to §34, so the current v0.7 worker is gated exactly as before.
     """
-    return relation in _SUPPRESSING_RELATIONS
+    if relation == "REPEAT":
+        return True
+    if relation == "ORPHAN":
+        return gate_active(ctx, now)
+    return False

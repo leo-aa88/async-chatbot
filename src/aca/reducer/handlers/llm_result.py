@@ -251,7 +251,7 @@ def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
     # self-assessed ORPHAN/REPEAT mutes it — suppress-only (invariant 42a); a forward move or a
     # missing relation leaves this decision as v0.7. It can never *force* a speak: the deterministic
     # gates above already ran, so a lying "ADVANCE" on a near-repeat is still dropped by them.
-    if advancement_suppresses(decision.relation):
+    if advancement_suppresses(ctx, decision.relation, now):
         note = f"advancement_{decision.relation.lower()}"
         ctx.stores.work.finalize_trace(
             event.cycle_id, action="silence", useful_enrichment=useful,

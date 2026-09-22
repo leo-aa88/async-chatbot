@@ -2815,7 +2815,12 @@ ORPHAN    unrelated to the current thread
 REPEAT    restates something already said
 ```
 
-Deterministic policy gates `SPEAK` **by suppression only**: `ORPHAN` and `REPEAT` degrade to enrichment-only or silence, at the **same pre-outbox checkpoint** and by the same mechanism §34.6 uses for a cosine orphan/near-repeat; every other value (the forward moves `ADVANCE` / `EVIDENCE` / `REVISE` / `CLOSE`, and `REOPEN` under a higher bar, §35.7) leaves the §34 decision untouched. This is the direct advance-rate intervention: a proactive utterance must *move* the thread, not merely sit near it.
+Deterministic policy gates `SPEAK` **by suppression only**, at the **same pre-outbox checkpoint** and mechanism §34.6 uses for a cosine orphan/near-repeat — but **scoped by kind**, because the two suppressing labels mean different things:
+
+- **`REPEAT` mutes in any mode** — never restate something already said (mirrors the semantic mute §16.2).
+- **`ORPHAN` mutes only while a live thread exists (mode `IDLE`).** "Off the current thread" is meaningful only against a *current* subject; in `DORMANT` there is no current thread and an `ORPHAN`-labelled message is a legitimate **resurfacing**, which §34.7 deliberately preserves — so the model's `ORPHAN` label must not be allowed to suppress it there. (An earlier draft muted `ORPHAN` in any mode; that would let the label kill dormant resurfacing, one of ACA's distinctive behaviors.)
+
+Every other value — the forward moves `ADVANCE` / `EVIDENCE` / `REVISE` / `CLOSE`, and `REOPEN` under a higher bar (§35.7) — leaves the §34 decision untouched. This is the direct advance-rate intervention: a proactive utterance must *move* the thread, not merely sit near it.
 
 **A missing or unknown relation fails open to the §34 decision — it is not a parse failure.** §22.3 (parse failure → no output) does **not** apply to the field's *absence*: a proactive result that omits `relation` — the current v0.7 worker, or any model that didn't emit it — is gated exactly as v0.7 (§34 cosine gate + continuity mute), never silenced for the omission. The advancement gate only *adds* suppression when the model *does* return `ORPHAN`/`REPEAT`; it is strictly suppress-only and backward-compatible.
 
@@ -2847,17 +2852,18 @@ These pin the subtle behaviors §35 introduces, at §34.10's level of specificit
 
 **Advancement relation (suppress-only, invariant 42a):**
 
-1. **`ORPHAN`/`REPEAT` suppress; forward moves pass.** A proactive result labeled `ORPHAN` or `REPEAT` is dropped at pre-outbox (enrichment-only or silence); one labeled `ADVANCE`/`EVIDENCE`/`REVISE`/`CLOSE` leaves the §34 decision untouched (it speaks iff §34 already allows).
-2. **Missing/unknown `relation` ⇒ exact v0.7 behavior.** A proactive result that omits the field (the current worker) or emits an unrecognized value is gated by §34 alone — never silenced for the omission (it is *not* a §22.3 parse failure). This is the backward-compatibility guarantee.
-3. **The label cannot force a speak.** A result labeled `ADVANCE` whose candidate is a cosine near-repeat is still suppressed by the continuity mute (§16.2) / an `ORPHAN` by §34 — a forward label never overrides a deterministic block.
+1. **Suppress by kind; forward moves pass.** `REPEAT` is dropped at pre-outbox in any mode; `ORPHAN` is dropped **only while `IDLE`** (a live thread); a forward move (`ADVANCE`/`EVIDENCE`/`REVISE`/`CLOSE`) leaves the §34 decision untouched (it speaks iff §34 already allows).
+2. **`ORPHAN` does not suppress dormant resurfacing.** In `DORMANT`, a proactive result labeled `ORPHAN` still speaks — there is no current thread to be off, and this is the resurfacing §34.7 preserves. (The load-bearing guard: an `ORPHAN`-in-any-mode gate would silence it.)
+3. **Missing/unknown `relation` ⇒ exact v0.7 behavior.** A proactive result that omits the field (the current worker) or emits an unrecognized value is gated by §34 alone — never silenced for the omission (it is *not* a §22.3 parse failure). This is the backward-compatibility guarantee.
+4. **The label cannot force a speak.** A result labeled `ADVANCE` whose candidate is a cosine near-repeat is still suppressed by the continuity mute (§16.2) / an `ORPHAN` by §34 — a forward label never overrides a deterministic block.
 
 **Focus transition (validated state write, invariant 42b):**
 
-4. **`KEEP` / `REPLACE` / `CLEAR` effect.** On a call-making human-turn *result*: `KEEP` leaves the focus; `REPLACE(valid memory id)` sets the focus to that memory; `CLEAR` sets it to none — after which the next `IDLE` wake **fails the gate open** (a candidate the old focus would have `ORPHAN`ed can now speak), which is a *deliberate widening*, not a suppression (mirrors §34.10 case 4's deterministic `DORMANT` clear).
-5. **`REPLACE` naming a non-memory id ⇒ treated as `KEEP`.** A proposed focus that is a `topic_id`, or any id that is not an existing provisional memory, is **not** adopted (it would validate as "existing" then miss `embeddings_by_memory` and fail-open, §34.5 rule 1) — the transition is treated as `KEEP`, not an error.
-6. **Override commit point.** The transition is applied on the human-turn *result* (`llm_result`), overriding the provisional deterministic focus written at reduction; a wake between the human reduction and the result is scored against that provisional focus, not the (not-yet-arrived) proposal.
-7. **No-call turn keeps the deterministic focus.** A human turn that makes no generative call — a backchannel, or a bare declarative that silences via `_optional_path` — carries no proposal, so the v0.7 deterministic predicate's focus stands (the documented declarative residual, §35.3).
+5. **`KEEP` / `REPLACE` / `CLEAR` effect.** On a call-making human-turn *result*: `KEEP` leaves the focus; `REPLACE(valid memory id)` sets the focus to that memory; `CLEAR` sets it to none — after which the next `IDLE` wake **fails the gate open** (a candidate the old focus would have `ORPHAN`ed can now speak), which is a *deliberate widening*, not a suppression (mirrors §34.10 case 4's deterministic `DORMANT` clear).
+6. **`REPLACE` naming a non-memory id ⇒ treated as `KEEP`.** A proposed focus that is a `topic_id`, or any id that is not an existing provisional memory, is **not** adopted (it would validate as "existing" then miss `embeddings_by_memory` and fail-open, §34.5 rule 1) — the transition is treated as `KEEP`, not an error.
+7. **Override commit point.** The transition is applied on the human-turn *result* (`llm_result`), overriding the provisional deterministic focus written at reduction; a wake between the human reduction and the result is scored against that provisional focus, not the (not-yet-arrived) proposal.
+8. **No-call turn keeps the deterministic focus.** A human turn that makes no generative call — a backchannel, or a bare declarative that silences via `_optional_path` — carries no proposal, so the v0.7 deterministic predicate's focus stands (the documented declarative residual, §35.3).
 
 **Boundaries:**
 
-8. **No new generative call.** A human turn makes exactly the calls it made in v0.7, and a proactive cycle exactly one — the relations are fields on those results (invariant 3), and the LLM relation never appears in the advance-rate/dominance metric inputs (Goodhart).
+9. **No new generative call.** A human turn makes exactly the calls it made in v0.7, and a proactive cycle exactly one — the relations are fields on those results (invariant 3), and the LLM relation never appears in the advance-rate/dominance metric inputs (Goodhart).
