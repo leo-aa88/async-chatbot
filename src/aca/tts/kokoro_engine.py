@@ -91,12 +91,16 @@ class KokoroTtsEngine(TtsEngine):
         self._device = device
         self._pipeline = None  # lazily built on first speak (loads the model)
         self._stop = threading.Event()  # set by aclose() to abandon in-flight/queued synthesis
+        self._interrupt = threading.Event()  # set by stop() to abandon only the CURRENT utterance
         self._thread: threading.Thread | None = None
 
     async def speak(self, text: str) -> None:
         text = text.strip()
         if not text or self._stop.is_set():
             return
+        # A fresh utterance clears a prior barge-in interrupt (stop() is per-utterance, not terminal;
+        # aclose()'s _stop is the terminal flag and is never cleared here).
+        self._interrupt.clear()
         # Run synthesis+playback on a daemon thread (not asyncio.to_thread's default executor) so a
         # quit mid-forward-pass returns immediately: the interpreter never joins daemon threads. A
         # future carries completion/errors back to this coroutine; the controller still awaits speak
@@ -125,6 +129,16 @@ class KokoroTtsEngine(TtsEngine):
         self._thread = threading.Thread(target=worker, name="aca-tts", daemon=True)
         self._thread.start()
         await future
+
+    def stop(self) -> None:
+        # Barge-in: abandon the current utterance but keep the engine (and loaded pipeline) alive for
+        # the next speak. Sets the per-utterance flag the render loop checks between chunks and calls
+        # sd.stop() to unblock a running sd.wait(); a queued/future speak clears the flag and plays.
+        self._interrupt.set()
+        with contextlib.suppress(Exception):
+            import sounddevice as sd
+
+            sd.stop()
 
     async def aclose(self) -> None:
         # Interrupt any in-flight utterance so the worker thread returns promptly (and process exit
@@ -183,7 +197,8 @@ class KokoroTtsEngine(TtsEngine):
 
         pipeline = self._ensure_pipeline()
         for chunk in pipeline(text, voice=self._voice, speed=self._speed):
-            if self._stop.is_set():  # aclose() was called — abandon the rest of the utterance
+            # aclose() (terminal) or stop() (barge-in, this utterance only) — abandon the rest.
+            if self._stop.is_set() or self._interrupt.is_set():
                 break
             # Kokoro yields (graphemes, phonemes, audio) tuples on older versions and Result objects
             # with an ``.audio`` attribute on newer ones — accept both.

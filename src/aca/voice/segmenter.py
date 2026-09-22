@@ -101,6 +101,14 @@ class Segmenter:
         self._reset_silence()
         return None
 
+    def reset(self) -> None:
+        """Discard any in-progress utterance and pre-roll context without emitting it.
+
+        Used by the half-duplex gate: while the agent holds the audio floor its own voice may reach
+        the mic, so the session drops those frames and resets the machine so no partial (agent-voice)
+        utterance survives the mute boundary. Distinct from :meth:`flush`, which *emits* the tail."""
+        self._reset_silence()
+
     # --- internals -----------------------------------------------------------------------
     def _begin_utterance(self) -> None:
         # Seed the buffer with up to ``pre_roll_frames`` of pre-speech context plus the confirmed

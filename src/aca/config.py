@@ -371,6 +371,10 @@ class Voice:
     turn_gap_seconds: float = 1.3
     continuation_gap_seconds: float = 2.8
     max_turn_seconds: float = 120.0
+    # Half-duplex floor control (DESIGN §36.5): while the agent's TTS holds the audio floor the mic
+    # is muted so it can't hear and answer itself (self-hearing). ``echo_guard`` keeps the mute for a
+    # short tail after playback ends, so the room echo of the final words doesn't commit a turn.
+    echo_guard_seconds: float = 0.4
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Voice:
@@ -397,6 +401,7 @@ class Voice:
             raise ConfigError("voice.continuation_gap must be >= voice.turn_gap")
         if max_turn < max_utterance:
             raise ConfigError("voice.max_turn must be >= voice.max_utterance")
+        echo_guard = parse_seconds(data.get("echo_guard", 0.4))  # parse_seconds rejects negatives
         return Voice(
             provider=str(data.get("provider", "fake")).strip().lower(),
             model=str(data.get("model", "small.en")),
@@ -416,6 +421,7 @@ class Voice:
             turn_gap_seconds=turn_gap,
             continuation_gap_seconds=continuation_gap,
             max_turn_seconds=max_turn,
+            echo_guard_seconds=echo_guard,
         )
 
 
