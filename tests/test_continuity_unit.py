@@ -10,6 +10,7 @@ from __future__ import annotations
 from aca.eval.continuity import (
     ContinuityCategory,
     DecisionOutcome,
+    as_worth,
     format_continuity,
     score,
 )
@@ -61,6 +62,18 @@ def test_by_category_rollup_flags_failures():
     assert rows["shift"]["intrusion"] == 1 and rows["shift"]["correct"] == 0
     assert rows["resumption"]["missed_continuation"] == 1
     assert "interruption" not in rows  # categories with no decisions are omitted
+
+
+def test_as_worth_derives_a_gating_oracle_from_labels():
+    # The corpus's own labels become gating's worth(candidate_id) — one source of truth, no re-encoding.
+    outcomes = [
+        DecisionOutcome("c1", _CAT, should_speak=True, did_speak=True, candidate_id="advance"),
+        DecisionOutcome("c2", _CAT, should_speak=False, did_speak=True, candidate_id="old_thread"),
+    ]
+    worth = as_worth(outcomes)
+    assert worth("advance") is True
+    assert worth("old_thread") is False
+    assert worth("never_labelled") is False   # unlabelled -> conservative default, not asserted worth
 
 
 def test_format_continuity_renders_headline_and_flags():

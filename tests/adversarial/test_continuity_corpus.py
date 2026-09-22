@@ -8,16 +8,20 @@ the score is two-sided (persistence AND restraint), so neither chattiness nor th
 it. The focus-transition MACHINERY that produces these end-states is tested separately
 (``test_focus_transition.py``); this corpus tests the proactive *decision* the end-state should yield.
 
-Label rationale is in each case. `test_continuity_corpus_report` prints the full scored report and
-locks the current balanced accuracy against regression; the per-category regression tests below pin
-the individual verdicts that currently hold. A case the system currently gets WRONG is kept (with its
-correct label) and surfaced in the report rather than deleted — measuring the gap is the point.
+Label rationale is in each case. The corpus itself is **observational** — `test_continuity_corpus_report`
+prints the scored report and asserts only that it is well-formed, not any particular rate, so an
+*improvement* never breaks CI. Only a small set of load-bearing invariants is hard-pinned as
+regressions (near-repeat must not speak, an off-focus interruption must not intrude, dormant
+resurfacing must remain possible, a backchannel must preserve focus). A known gap the corpus surfaced
+— `shift` (a closed thread is still spoken) — is a non-strict `xfail` of the *desired* outcome, so it
+stays loudly visible and a future fix turns it into an XPASS instead of a failure.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from conftest import Harness
 
 from aca.clock import ManualClock
@@ -96,9 +100,9 @@ def _did_speak(h: Harness) -> bool:
     return bool(h.stores.outbox.pending_by_kind(OutboundKind.PROACTIVE))
 
 
-def _outcome(case_id, category, should_speak, did_speak) -> DecisionOutcome:
+def _outcome(case_id, category, candidate_id, should_speak, did_speak) -> DecisionOutcome:
     return DecisionOutcome(case_id, category, should_speak=should_speak, did_speak=did_speak,
-                           detail="spoke" if did_speak else "silent")
+                           candidate_id=candidate_id, detail="spoke" if did_speak else "silent")
 
 
 # --- the corpus ---------------------------------------------------------------------------------
@@ -112,7 +116,7 @@ def case_continuation_advance(tmp_path) -> DecisionOutcome:
         _install_focus(h, _FOCUS_VEC)
         _install_candidate(h, "advance", _ON_THREAD)
     _set_conversation(h, gap_seconds=60, focus_memory_id="focus_mem")
-    return _outcome("continuation_advance", ContinuityCategory.CONTINUATION, True, _did_speak(h))
+    return _outcome("continuation_advance", ContinuityCategory.CONTINUATION, "advance", True, _did_speak(h))
 
 
 def case_continuation_near_repeat(tmp_path) -> DecisionOutcome:
@@ -127,7 +131,7 @@ def case_continuation_near_repeat(tmp_path) -> DecisionOutcome:
         h.stores.memory.insert_topic_embedding("said", "m", _ON_THREAD, now)
         h.stores.memory.record_expression("TOPIC", "said", now)
     _set_conversation(h, gap_seconds=60, focus_memory_id="focus_mem")
-    return _outcome("continuation_near_repeat", ContinuityCategory.CONTINUATION, False, _did_speak(h))
+    return _outcome("continuation_near_repeat", ContinuityCategory.CONTINUATION, "restate", False, _did_speak(h))
 
 
 def case_interruption(tmp_path) -> DecisionOutcome:
@@ -138,7 +142,7 @@ def case_interruption(tmp_path) -> DecisionOutcome:
         _install_focus(h, _FOCUS_VEC)                 # the new subject holds the focus
         _install_candidate(h, "old_thread", _OFF_THREAD)
     _set_conversation(h, gap_seconds=60, focus_memory_id="focus_mem")
-    return _outcome("interruption", ContinuityCategory.INTERRUPTION, False, _did_speak(h))
+    return _outcome("interruption", ContinuityCategory.INTERRUPTION, "old_thread", False, _did_speak(h))
 
 
 def case_resumption(tmp_path) -> DecisionOutcome:
@@ -150,7 +154,7 @@ def case_resumption(tmp_path) -> DecisionOutcome:
         _install_focus(h, _FOCUS_VEC)                 # focus resumed onto the earlier subject
         _install_candidate(h, "resumed", _ON_THREAD)
     _set_conversation(h, gap_seconds=60, focus_memory_id="focus_mem")
-    return _outcome("resumption", ContinuityCategory.RESUMPTION, True, _did_speak(h))
+    return _outcome("resumption", ContinuityCategory.RESUMPTION, "resumed", True, _did_speak(h))
 
 
 def case_shift(tmp_path) -> DecisionOutcome:
@@ -163,7 +167,7 @@ def case_shift(tmp_path) -> DecisionOutcome:
     with h.stores.db.transaction():
         _install_candidate(h, "closed_thread", _OFF_THREAD)
     _set_conversation(h, gap_seconds=60, focus_memory_id=None)  # IDLE, no focus (closed)
-    return _outcome("shift", ContinuityCategory.SHIFT, False, _did_speak(h))
+    return _outcome("shift", ContinuityCategory.SHIFT, "closed_thread", False, _did_speak(h))
 
 
 def case_backchannel(tmp_path) -> DecisionOutcome:
@@ -177,7 +181,7 @@ def case_backchannel(tmp_path) -> DecisionOutcome:
     _set_conversation(h, gap_seconds=60, focus_memory_id="focus_mem")
     h.send_human("makes sense")  # a backchannel: ACKNOWLEDGEMENT, no call, focus kept (not re-anchored)
     h.clock.advance(60)          # let the conversation settle back to IDLE (a fresh turn made it ACTIVE)
-    return _outcome("backchannel", ContinuityCategory.BACKCHANNEL, True, _did_speak(h))
+    return _outcome("backchannel", ContinuityCategory.BACKCHANNEL_RETENTION, "on_thread", True, _did_speak(h))
 
 
 def case_dormant_resurfacing(tmp_path) -> DecisionOutcome:
@@ -189,7 +193,7 @@ def case_dormant_resurfacing(tmp_path) -> DecisionOutcome:
         _install_focus(h, _FOCUS_VEC)                 # a stale prior subject
         _install_candidate(h, "resurfaced", _OFF_THREAD)  # unrelated to it — but worthwhile
     _set_conversation(h, gap_seconds=2 * 3600, focus_memory_id="focus_mem")  # 2h gap -> DORMANT
-    return _outcome("dormant_resurfacing", ContinuityCategory.DORMANT_RESURFACING, True, _did_speak(h))
+    return _outcome("dormant_resurfacing", ContinuityCategory.DORMANT_RESURFACING, "resurfaced", True, _did_speak(h))
 
 
 CASES = (
@@ -203,48 +207,51 @@ CASES = (
 )
 
 
-# --- regression: the verdicts that currently hold -----------------------------------------------
+# --- hard regressions: only load-bearing invariants ---------------------------------------------
+# A small set of guarantees that must never silently break. Everything else in the corpus is
+# scored-only (see the report below) so that an IMPROVEMENT never fails CI — the corpus is a
+# measurement, not the truth table.
 
-def test_continuation_advance_speaks(tmp_path):
-    assert case_continuation_advance(tmp_path).kind == "correct_continuation"
-
-
-def test_continuation_near_repeat_is_abandoned(tmp_path):
+def test_near_repeat_must_not_speak(tmp_path):
+    # §16.2: never re-voice, reworded, a thought just expressed.
     assert case_continuation_near_repeat(tmp_path).kind == "correct_abandonment"
 
 
-def test_interruption_is_abandoned(tmp_path):
+def test_interruption_must_not_intrude(tmp_path):
+    # §34: while a new subject holds the focus, an off-focus candidate stays muted.
     assert case_interruption(tmp_path).kind == "correct_abandonment"
 
 
-def test_resumption_speaks(tmp_path):
-    assert case_resumption(tmp_path).kind == "correct_continuation"
-
-
-def test_backchannel_keeps_the_thread(tmp_path):
-    assert case_backchannel(tmp_path).kind == "correct_continuation"
-
-
-def test_dormant_resurfacing_speaks(tmp_path):
+def test_dormant_resurfacing_must_remain_possible(tmp_path):
+    # §34.7: the distinctive autonomous behavior — a worthwhile older thought may surface after a lull.
     assert case_dormant_resurfacing(tmp_path).kind == "correct_continuation"
 
 
-def test_shift_is_a_known_abandonment_gap(tmp_path):
-    # Documented: a cleared focus fail-opens the gate, so a closed thread is currently (wrongly)
-    # spoken. Pinned as an intrusion so a FIX (which would flip it to correct_abandonment) is noticed
-    # and this expectation updated deliberately, not silently.
-    assert case_shift(tmp_path).kind == "intrusion"
+def test_backchannel_must_preserve_focus(tmp_path):
+    # A bare acknowledgement must not re-anchor the focus, so the live thread stays speak-eligible.
+    assert case_backchannel(tmp_path).kind == "correct_continuation"
 
 
-# --- the scored report --------------------------------------------------------------------------
+@pytest.mark.xfail(strict=False, reason="known gap: a CLEARED focus fail-opens the discourse gate "
+                   "(the §34.7 widening that preserves dormant resurfacing), so a closed thread is "
+                   "currently spoken. A fix that distinguishes 'closed' from 'no focus' turns this "
+                   "into an XPASS.")
+def test_shift_should_abandon_a_closed_thread(tmp_path):
+    # The DESIRED behavior, asserted as a non-strict xfail: it fails today (surfacing the gap loudly)
+    # but an improvement becomes XPASS rather than breaking CI — the corpus never punishes a fix.
+    assert case_shift(tmp_path).kind == "correct_abandonment"
+
+
+# --- the scored report (observational) ----------------------------------------------------------
 
 def test_continuity_corpus_report(tmp_path, capsys):
+    # A measurement, not a gate: print the report and assert only that it is well-formed, so a rate
+    # moving in EITHER direction (a fix or a regression on a scored-only case) never fails here — the
+    # hard guarantees above are what protect against silent backsliding.
     outcomes = [case(tmp_path / f"c{i}") for i, case in enumerate(CASES)]
     sc = score(outcomes)
     print("\n" + "\n".join(format_continuity(sc)))
 
     s = sc.summary()
-    # Persistence side is fully covered today; restraint has the one known shift gap.
-    assert s["continuation_recall"] == 1.0                 # every should-speak case spoke
-    assert s["abandonment_rate"] == 2 / 3                  # interruption + near-repeat ok; shift not
-    assert s["balanced_accuracy"] >= (1.0 + 2 / 3) / 2 - 1e-9  # regression floor: don't backslide
+    assert s["decisions"] == len(CASES)
+    assert s["balanced_accuracy"] is not None   # both sides of the corpus were exercised

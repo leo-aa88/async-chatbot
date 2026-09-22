@@ -13,18 +13,23 @@ to catch:
   move, or a worthwhile older thought resurfaced). Failing to = a thread dies (a *missed
   continuation*).
 * **correct abandonment** — the agent stayed silent when it should have (an interruption, a closed
-  thread, a backchannel). Failing to = nagging or intrusion (an *intrusion*).
+  thread, a near-repeat). Failing to = nagging or intrusion (an *intrusion*).
 
-Every category (continuation / interruption / resumption / shift / backchannel / dormant-resurfacing)
-reduces to one uniform decision: *at this proactive wake, should candidate X be spoken?* The
-ground-truth ``should_speak`` label is hand-authored from the conversational dynamics — the judgement
-a classifier cannot make for itself (§27.2) — and the same labels are a ``worth`` oracle the gating
-eval (``gating.py``) can consume to attribute a miss to the specific gate that caused it.
+Every category reduces to one uniform decision: *at this proactive wake, should candidate X be
+spoken?* The ground-truth ``should_speak`` label is hand-authored from the conversational dynamics —
+the judgement a classifier cannot make for itself (§27.2) — and the same labels are a ``worth`` oracle
+the gating eval (``gating.py``) can consume (via ``as_worth``) to attribute a miss to the specific
+gate that caused it, so the corpus is the single source of truth for both scores.
+
+The two component rates (continuation recall and abandonment rate) are the *primary* readouts;
+**balanced accuracy is a convenience headline, not the optimization objective** — the two rates trade
+off freely (100/60 and 80/80 both average 80%), so read them separately. What balanced accuracy buys
+is only that class imbalance cannot make an all-speak or all-silent agent look good.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -34,7 +39,10 @@ class ContinuityCategory(str, Enum):
     INTERRUPTION = "interruption"                # a new subject arrived; the old candidate is off-topic
     RESUMPTION = "resumption"                    # the human returned to the earlier subject
     SHIFT = "shift"                              # the human closed/left the subject for good
-    BACKCHANNEL = "backchannel"                  # a bare acknowledgement — no subject, no obligation
+    # A bare acknowledgement ("makes sense") — no new subject. The tested decision is *retention*: the
+    # focus must stay on the live thread, so a later on-thread proactive thought remains eligible. NOT
+    # "speak to the backchannel" — the label is about what survives it.
+    BACKCHANNEL_RETENTION = "backchannel_retention"
     DORMANT_RESURFACING = "dormant_resurfacing"  # a lull, then a worthwhile unrelated older thought
 
 
@@ -53,7 +61,8 @@ class DecisionOutcome:
     category: ContinuityCategory
     should_speak: bool          # ground truth: the right move here is to speak (else stay silent)
     did_speak: bool             # observed: the agent committed a proactive message
-    detail: str = ""            # candidate id / trace note, for inspection only
+    candidate_id: str | None = None  # the labelled candidate — the key ``as_worth`` derives the oracle on
+    detail: str = ""            # trace note / observation, for inspection only
 
     @property
     def kind(self) -> str:
@@ -95,9 +104,10 @@ class ContinuityScore:
 
     @property
     def balanced_accuracy(self) -> float | None:
-        """Mean of continuation recall and abandonment rate — the single headline that punishes BOTH
-        chattiness and thread-death, so neither can be traded off to inflate the score. ``None`` if
-        either side had no cases."""
+        """Mean of continuation recall and abandonment rate — a **convenience headline, not the
+        objective**. The two rates trade off freely (100/60 and 80/80 both average 80%), so the
+        component rates are the primary readouts; what this buys is only that class imbalance can't
+        make an all-speak or all-silent agent look good. ``None`` if either side had no cases."""
         recall, rate = self.continuation_recall, self.abandonment_rate
         if recall is None or rate is None:
             return None
@@ -137,6 +147,19 @@ def score(outcomes: Iterable[DecisionOutcome]) -> ContinuityScore:
     return ContinuityScore(tuple(outcomes))
 
 
+def as_worth(outcomes: Iterable[DecisionOutcome]) -> Callable[[str | None], bool]:
+    """Derive a gating ``worth(candidate_id) -> bool`` oracle from labelled outcomes.
+
+    Lets the gating eval (``gating.py``) attribute a miss to a gate using *the corpus's own* labels
+    rather than a re-encoded copy — the corpus stays the single source of truth. Each outcome's
+    ``candidate_id`` is the key (must be unique across the outcomes passed, one labelled decision
+    each); an id the corpus never labelled resolves to ``False`` (unlabelled ⇒ not asserted worth,
+    the conservative default).
+    """
+    labels = {o.candidate_id: o.should_speak for o in outcomes if o.candidate_id is not None}
+    return lambda candidate_id: labels.get(candidate_id, False)
+
+
 def _pct(x: float | None) -> str:
     return "  n/a" if x is None else f"{x * 100:4.0f}%"
 
@@ -150,7 +173,7 @@ def format_continuity(sc: ContinuityScore) -> list[str]:
         f"  abandonment rate    (restraint):   {_pct(sc.abandonment_rate)}"
         "  (should-be-silent decisions it stayed silent on)",
         f"  balanced accuracy:                 {_pct(sc.balanced_accuracy)}"
-        "  (mean of the two — punishes both errors)",
+        "  (headline only; read the two rates above as primary)",
     ]
     for cat, row in sc.by_category().items():
         flags = []
