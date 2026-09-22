@@ -134,6 +134,25 @@ def test_underflow_norm_vectors_are_unjudged_not_orphan(tmp_path):
     h.close()
 
 
+def test_overflow_opposite_vectors_are_orphan_not_bridge(tmp_path):
+    # Huge opposite vectors: a plain sum(x*x) overflows -> cosine NaN -> would silently land in the
+    # BRIDGE band and speak. The stable scaled cosine gives -1 -> correctly ORPHAN (suppressed).
+    h = _harness(tmp_path)
+    _set_focus(h, [1e308, 0.0, 0.0], gap_seconds=60)
+    _candidate_topic(h, "t_opp", [-1e308, 0.0, 0.0])
+    assert _wake_note(h) == "discourse_orphan"
+    h.close()
+
+
+def test_overflow_identical_vectors_are_continue(tmp_path):
+    # And huge identical vectors give +1 -> CONTINUE (dispatched), not a NaN/UNJUDGED accident.
+    h = _harness(tmp_path)
+    _set_focus(h, [1e308, 0.0, 0.0], gap_seconds=60)
+    _candidate_topic(h, "t_same", [1e308, 0.0, 0.0])
+    assert _wake_note(h) == "proactive_dispatch"
+    h.close()
+
+
 def test_dimension_mismatch_is_unjudged_not_orphan(tmp_path):
     # Same-model vectors of different lengths are incomparable -> UNJUDGED, not ORPHAN.
     h = _harness(tmp_path)

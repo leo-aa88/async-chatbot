@@ -20,7 +20,6 @@ from __future__ import annotations
 import math
 from enum import Enum
 
-from ..cognition import vectors
 from ..domain.enums import ConversationMode, MessageClass
 from .context import ReducerContext
 from .continuity import candidate_vector
@@ -79,17 +78,33 @@ def gate_active(ctx: ReducerContext, now) -> bool:
     return infer_mode_for(ctx, conversation, now) is ConversationMode.IDLE
 
 
-def _usable(vec: list[float]) -> bool:
-    """A vector is comparable only if it is non-empty, all-finite, and has a non-zero norm **as
-    ``vectors.cosine`` computes it** — ``sum(x*x) > 0``, not merely ``any(x != 0)``.
+def _affinity(a: list[float], b: list[float]) -> float | None:
+    """A numerically stable cosine in [-1, 1], or ``None`` when the pair is not comparable.
 
-    The two predicates differ: a tiny-magnitude vector like ``[1e-300, 0.0]`` has a non-zero
-    component but its squares underflow, so ``cosine`` returns its ``0.0`` sentinel. Matching
-    cosine's own norm here means every input for which cosine would return that sentinel (empty,
-    zero, underflowing, or — checked by the caller — mismatched length) is treated as UNJUDGED, not
-    read as low affinity and suppressed as an ORPHAN (the fail-open rule §34.5 requires).
+    ``None`` (⇒ UNJUDGED, fail open, §34.5) for a mismatched length, an empty/zero vector, a
+    non-finite input, or a non-finite result. Each vector is scaled by its max-abs component before
+    the dot/norms, so magnitudes that would overflow (`1e308`) or underflow (`1e-300`) a plain
+    ``sum(x*x)`` are handled: opposite huge vectors give −1 (ORPHAN), identical ones give +1
+    (CONTINUE) — never a silent NaN that slips into the BRIDGE band. Replaces the earlier guard,
+    whose validity predicate could disagree with the cosine it gated.
     """
-    return bool(vec) and all(math.isfinite(x) for x in vec) and sum(x * x for x in vec) > 0.0
+    if len(a) != len(b) or not a:
+        return None
+    if not all(math.isfinite(x) for x in a) or not all(math.isfinite(y) for y in b):
+        return None
+    sa = max(abs(x) for x in a)
+    sb = max(abs(y) for y in b)
+    if sa == 0.0 or sb == 0.0:  # a zero vector — no direction to compare
+        return None
+    dot = sum((x / sa) * (y / sb) for x, y in zip(a, b, strict=False))
+    na = math.sqrt(sum((x / sa) ** 2 for x in a))
+    nb = math.sqrt(sum((y / sb) ** 2 for y in b))
+    if na == 0.0 or nb == 0.0:
+        return None
+    val = dot / (na * nb)
+    if not math.isfinite(val):
+        return None
+    return max(-1.0, min(1.0, val))
 
 
 def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelation:
@@ -103,12 +118,9 @@ def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelati
     cand = candidate_vector(ctx, kind, candidate_id)
     if focus is None or cand is None or focus[0] != cand[0]:
         return DiscourseRelation.UNJUDGED
-    fvec, cvec = focus[1], cand[1]
-    # An empty/zero/non-finite/dimension-mismatched vector is not a low-affinity measurement — it is
-    # no measurement. Treat it as UNJUDGED (fail open), never as an ORPHAN (§34.5).
-    if len(fvec) != len(cvec) or not _usable(fvec) or not _usable(cvec):
+    affinity = _affinity(focus[1], cand[1])
+    if affinity is None:  # not a measurement (empty/zero/non-finite/overflow/mismatch) — fail open
         return DiscourseRelation.UNJUDGED
-    affinity = vectors.cosine(fvec, cvec)
     # Check the ORPHAN boundary (bridge) FIRST so the suppression cut is exactly discourse_bridge_
     # cosine regardless of the CONTINUE threshold — the label can't silently move the gate (§34.5).
     # (Config also enforces bridge <= continue, so this ordering and that invariant agree.)
