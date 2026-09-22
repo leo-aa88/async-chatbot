@@ -4,8 +4,14 @@ Agent messages arrive at arbitrary moments on the chat client's event loop. Synt
 slow and blocking, so the controller runs it on a background task draining an ``asyncio.Queue``:
 ``submit`` is non-blocking (the message still prints instantly) and queued utterances are spoken
 one at a time in arrival order. A disabled engine makes the whole controller a no-op, so the client
-can wire it unconditionally. A synthesis/playback failure is reported, never fatal — TTS must never
-take down the chat client.
+can wire it unconditionally.
+
+Two failure rules keep TTS from ever disrupting the chat client:
+
+* A synthesis/playback failure is reported once and then **latches** the controller off — a dead
+  audio device or a missing package must not append an error for every subsequent message.
+* If the ``on_error`` callback itself raises, that is swallowed: the speaker task must not die (a
+  dead task would leave later ``submit`` calls to queue forever and quit to re-raise on ``aclose``).
 """
 
 from __future__ import annotations
@@ -25,10 +31,11 @@ class SpeechController:
         self._on_error = on_error
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
+        self._failed = False  # latched after the first engine failure; no further speech attempts
 
     @property
     def enabled(self) -> bool:
-        return self._engine.enabled
+        return self._engine.enabled and not self._failed
 
     def start(self) -> None:
         """Spawn the background speaker (no-op when speech is disabled or already started)."""
@@ -37,14 +44,21 @@ class SpeechController:
 
     def submit(self, text: str) -> None:
         """Queue an agent message to be spoken. Non-blocking; safe to call from message handlers."""
-        if not self._engine.enabled:
+        if not self.enabled:
             return
         spoken = clean_for_speech(text)
         if spoken:
             self._queue.put_nowait(spoken)
 
     async def aclose(self) -> None:
-        """Stop the speaker and release engine resources. Any in-flight utterance is abandoned."""
+        """Stop the speaker and release engine resources. Any in-flight utterance is abandoned.
+
+        ``engine.aclose`` runs first so an engine that can interrupt playback (Kokoro calls
+        ``sd.stop()``) unblocks its worker thread; then the task is cancelled. Cancelling alone does
+        not stop a thread already inside ``to_thread``, which is why the engine, not cancellation,
+        owns interruption.
+        """
+        await self._engine.aclose()
         if self._task is not None:
             self._task.cancel()
             try:
@@ -52,13 +66,24 @@ class SpeechController:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        await self._engine.aclose()
 
     async def _run(self) -> None:
         while True:
             text = await self._queue.get()
+            if self._failed:  # latched off after an earlier failure: drop without attempting
+                continue
             try:
                 await self._engine.speak(text)
-            except Exception as exc:  # a TTS failure is surfaced, never fatal to the chat client
-                if self._on_error is not None:
-                    self._on_error(exc)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # a TTS failure is surfaced once, then latches speech off
+                self._failed = True
+                self._notify_error(exc)
+
+    def _notify_error(self, exc: BaseException) -> None:
+        if self._on_error is None:
+            return
+        try:
+            self._on_error(exc)
+        except Exception:  # a broken error handler must never take the speaker task down
+            pass

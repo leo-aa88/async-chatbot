@@ -26,7 +26,6 @@ def build_tts_engine(config: Tts) -> TtsEngine:
             voice=config.voice,
             lang_code=config.lang_code,
             speed=config.speed,
-            sample_rate=config.sample_rate,
             device=config.device,
         )
     raise ConfigError(f"unknown tts.provider {config.provider!r} (known: none, kokoro)")

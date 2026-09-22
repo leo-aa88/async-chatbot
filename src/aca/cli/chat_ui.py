@@ -100,6 +100,16 @@ class ChatUI:
         sys.stdout.write(f"{stamp}[agent] {text}\n")
         self._draw_prompt()
 
+    def print_status(self, text: str) -> None:
+        """Print an out-of-band *client* status line (not agent speech), preserving the input line.
+
+        Used for local notices like a TTS failure — rendered without the ``[agent]`` prefix so it is
+        never mistaken for something the agent said.
+        """
+        self._clear_block()
+        sys.stdout.write(f"[client] {text}\n")
+        self._draw_prompt()
+
     # --- internals -----------------------------------------------------------------------
     def _submit_line(self) -> None:
         """Finalize the current input line: echo it (stamped, if configured) and queue it."""

@@ -159,3 +159,17 @@ async def test_message_shows_timestamp_when_provided(monkeypatch):
     ui.print_message("a timed thought", at="14:30:05")
     rendered = out.getvalue()
     assert "[14:30:05] [agent] a timed thought" in rendered
+
+
+@pytest.mark.asyncio
+async def test_status_line_is_not_labeled_as_agent(monkeypatch):
+    # A client notice (e.g. a TTS failure) must not masquerade as agent speech.
+    ui = ChatUI()
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    _feed(ui, "typing")
+    ui.print_status("tts disabled: no audio device")
+    rendered = out.getvalue()
+    assert "[client] tts disabled: no audio device" in rendered
+    assert "[agent]" not in rendered
+    assert rendered.rstrip().endswith("> typing")  # in-progress input preserved

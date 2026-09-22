@@ -128,7 +128,7 @@ async def _chat(data_dir: Path) -> None:
     # a synthesis failure is shown inline, never fatal to the chat client.
     speech = SpeechController(
         build_tts_engine(config.tts),
-        on_error=lambda exc: ui.print_message(f"(tts unavailable: {exc})"),
+        on_error=lambda exc: ui.print_status(f"tts disabled: {exc}"),
     )
 
     async def on_message(frame: dict) -> None:

@@ -317,26 +317,31 @@ class Identity:
 
 @dataclass(frozen=True, slots=True)
 class Tts:
-    """Optional speech output for the chat client (DESIGN 2.2 secondary goal, 28.6).
+    """Optional speech output for the chat client (DESIGN 2.2 secondary goal; 6.1; 28.1).
 
-    Speech output is a *client-side rendering* concern, not cognition. The ``aca chat`` client
-    speaks each delivered agent message aloud, exactly as it already prints it — nothing here
-    touches the reducer or durable state (invariant 1). It's a second rendering of an utterance the
-    reducer already authorized and delivered, so it needs no injected ``Clock``/``Rng``.
+    Speech output is a *client-side rendering* concern, not cognition. DESIGN 6.1 anticipates it
+    exactly — "Future embodiment replaces or augments delivery adapters (for example, TTS/speaker
+    output) without changing cognition semantics" — and 28.1 lists TTS among the reasons the
+    reference stack is Python. The ``aca chat`` client speaks a *spoken normalization* of each
+    delivered agent message (markup stripped so Kokoro doesn't read punctuation aloud); the text is
+    still printed verbatim, and nothing here touches the reducer or durable state (invariant 1). It
+    is a second rendering of an utterance the reducer already authorized and delivered, so it needs
+    no injected ``Clock``/``Rng``.
 
     ``provider`` is ``none`` (the silent default: no audio, no extra dependencies) or ``kokoro``
-    (offline Kokoro-82M neural TTS, ``pip install 'aca[tts]'`` — runs locally, nothing leaves the
-    host). ``voice`` selects a Kokoro voice (default ``am_onyx``, an American male voice);
-    ``lang_code`` is Kokoro's pipeline language, auto-derived from the voice's first letter when
-    left blank. ``speed`` scales the speaking rate; ``sample_rate`` is Kokoro's native 24 kHz;
-    ``device`` optionally names a non-default audio output device.
+    (offline Kokoro-82M neural TTS, ``pip install 'aca[tts]'``). Kokoro runs locally; after a
+    one-time model download from Hugging Face on first use, nothing leaves the host. ``voice``
+    selects a Kokoro voice (default ``am_onyx``, an American male voice); ``lang_code`` is Kokoro's
+    pipeline language, auto-derived from the voice's first letter when left blank. ``speed`` scales
+    the speaking rate; ``device`` optionally names a non-default audio output device. (There is no
+    sample-rate knob: Kokoro's decoder output is fixed at 24 kHz, so the player clock is that
+    constant, not configuration.)
     """
 
     provider: str = "none"
     voice: str = "am_onyx"
     lang_code: str = ""
     speed: float = 1.0
-    sample_rate: int = 24_000
     device: str | None = None
 
     @staticmethod
@@ -344,15 +349,11 @@ class Tts:
         speed = float(data.get("speed", 1.0))
         if speed <= 0.0:
             raise ConfigError("tts.speed must be > 0")
-        sample_rate = int(data.get("sample_rate", 24_000))
-        if sample_rate <= 0:
-            raise ConfigError("tts.sample_rate must be > 0")
         return Tts(
             provider=str(data.get("provider", "none")).strip().lower(),
             voice=str(data.get("voice", "am_onyx")).strip(),
             lang_code=str(data.get("lang_code", "")).strip(),
             speed=speed,
-            sample_rate=sample_rate,
             device=(str(data["device"]) if data.get("device") else None),
         )
 

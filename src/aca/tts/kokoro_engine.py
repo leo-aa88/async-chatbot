@@ -1,22 +1,44 @@
 """Kokoro-82M offline neural TTS (default voice ``am_onyx``).
 
-Kokoro is a small (82M-parameter) open-weights TTS model that runs locally — no API, no per-call
-cost, nothing leaves the host. The heavy dependencies (``kokoro`` + torch for synthesis,
-``sounddevice`` + ``numpy`` for playback) are imported lazily inside the methods, so importing this
-module — and the whole ``aca`` package — costs nothing until speech is actually enabled and used,
-and ``aca chat`` still starts on a host without the ``tts`` extra installed.
+Kokoro is a small (82M-parameter) open-weights TTS model. It runs locally: after a **one-time**
+model download from Hugging Face on first use, no audio and no text leave the host. The heavy
+dependencies (``kokoro`` + torch for synthesis, ``sounddevice`` + ``numpy`` for playback) are
+imported lazily inside the methods, so importing this module — and the whole ``aca`` package —
+costs nothing until speech is enabled and used, and ``aca chat`` still starts on a host without the
+``tts`` extra installed.
 
 Synthesis and playback are blocking / CPU-bound, so the async ``speak`` offloads them to a worker
-thread. The caller (:class:`~aca.tts.controller.SpeechController`) already serializes calls, so
-utterances never overlap and the engine needs no lock of its own.
+thread. Two things that thread must *not* do are leak onto the terminal or refuse to stop:
+
+* The chat ``ChatUI`` owns the terminal exclusively (one event-loop writer, no threads). Kokoro's
+  pipeline/model constructor and the Hugging Face + torch stack otherwise ``print`` warnings and
+  draw tqdm bars straight to std streams from the worker thread, mid-prompt, corrupting the input
+  line. We pass an explicit ``repo_id`` (so Kokoro doesn't print its default-repo warning), disable
+  HF progress bars, and redirect this thread's ``stdout``/``stderr`` to ``os.devnull`` and silence
+  warnings for the whole render, so nothing reaches the tty.
+* Shutdown must interrupt in-flight audio. ``aclose`` sets a stop flag and calls ``sd.stop()``,
+  which unblocks a running ``sd.wait()`` so the worker returns promptly instead of holding
+  ``aca chat`` open (asyncio joins its executor threads at process exit) until the utterance ends.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
+import threading
+import warnings
 
 from ..errors import ConfigError
 from .base import TtsEngine
+
+# Kokoro's decoder output is fixed at 24 kHz (waveform samples, not a resampled buffer), so this is
+# the player clock — a constant, never configuration. Playing at any other rate would pitch/speed
+# shift the utterance rather than resample it.
+KOKORO_SAMPLE_RATE = 24_000
+# The published weights repo. Passing it explicitly stops Kokoro's KPipeline/KModel from printing a
+# "Defaulting repo_id ..." warning to stdout from the worker thread.
+_REPO_ID = "hexgrad/Kokoro-82M"
 
 # Kokoro's convention: a voice name's first letter is its language, the second its gender — e.g.
 # ``am_onyx`` = American male, ``bf_emma`` = British female. The pipeline is built per language, so
@@ -40,6 +62,25 @@ def _resolve_lang_code(voice: str, lang_code: str) -> str:
     return _LANG_BY_PREFIX.get(voice[:1].lower(), "a") if voice else "a"
 
 
+@contextlib.contextmanager
+def _quiet_streams():
+    """Redirect this thread's std streams to devnull and silence warnings for the whole block.
+
+    Kokoro/HF/torch emit ``print``/tqdm/``FutureWarning`` output on construction and (with a cold
+    cache) download progress. Any of it on the tty corrupts the chat client's input line, so the
+    worker thread renders under this guard. Progress bars are also disabled at the source below.
+    """
+    devnull = open(os.devnull, "w")
+    try:
+        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+                yield
+    finally:
+        devnull.close()
+
+
 class KokoroTtsEngine(TtsEngine):
     def __init__(
         self,
@@ -47,7 +88,6 @@ class KokoroTtsEngine(TtsEngine):
         voice: str,
         lang_code: str,
         speed: float,
-        sample_rate: int,
         device: str | None = None,
     ) -> None:
         if not voice:
@@ -55,16 +95,23 @@ class KokoroTtsEngine(TtsEngine):
         self._voice = voice
         self._lang_code = _resolve_lang_code(voice, lang_code)
         self._speed = speed
-        self._sample_rate = sample_rate
         self._device = device
         self._pipeline = None  # lazily built on first speak (loads the model)
+        self._stop = threading.Event()  # set by aclose() to abandon in-flight/queued synthesis
 
     async def speak(self, text: str) -> None:
         text = text.strip()
-        if text:
+        if text and not self._stop.is_set():
             await asyncio.to_thread(self._render_and_play, text)
 
     async def aclose(self) -> None:
+        # Interrupt any in-flight utterance so the worker thread returns promptly (and process exit
+        # isn't held open joining it): stop the stream, then let the render loop see the flag.
+        self._stop.set()
+        with contextlib.suppress(Exception):
+            import sounddevice as sd
+
+            sd.stop()
         self._pipeline = None
 
     def _ensure_pipeline(self):
@@ -76,7 +123,8 @@ class KokoroTtsEngine(TtsEngine):
                     "the 'kokoro' package is required for tts.provider 'kokoro': "
                     "pip install 'aca[tts]'"
                 ) from exc
-            self._pipeline = KPipeline(lang_code=self._lang_code)
+            # Explicit repo_id: suppresses Kokoro's default-repo warning print (see module docstring).
+            self._pipeline = KPipeline(lang_code=self._lang_code, repo_id=_REPO_ID)
         return self._pipeline
 
     def _render_and_play(self, text: str) -> None:
@@ -89,15 +137,18 @@ class KokoroTtsEngine(TtsEngine):
                 "pip install 'aca[tts]'"
             ) from exc
 
-        pipeline = self._ensure_pipeline()
-        for chunk in pipeline(text, voice=self._voice, speed=self._speed):
-            # Kokoro yields (graphemes, phonemes, audio) tuples on older versions and Result objects
-            # with an ``.audio`` attribute on newer ones — accept both.
-            audio = chunk[2] if isinstance(chunk, tuple) else chunk.audio
-            if audio is None:
-                continue
-            if hasattr(audio, "detach"):  # a torch tensor -> numpy on CPU
-                audio = audio.detach().cpu().numpy()
-            samples = np.asarray(audio, dtype="float32")
-            sd.play(samples, self._sample_rate, device=self._device)
-            sd.wait()
+        with _quiet_streams():
+            pipeline = self._ensure_pipeline()
+            for chunk in pipeline(text, voice=self._voice, speed=self._speed):
+                if self._stop.is_set():  # aclose() was called — abandon the rest of the utterance
+                    break
+                # Kokoro yields (graphemes, phonemes, audio) tuples on older versions and Result
+                # objects with an ``.audio`` attribute on newer ones — accept both.
+                audio = chunk[2] if isinstance(chunk, tuple) else chunk.audio
+                if audio is None:
+                    continue
+                if hasattr(audio, "detach"):  # a torch tensor -> numpy on CPU
+                    audio = audio.detach().cpu().numpy()
+                samples = np.asarray(audio, dtype="float32")
+                sd.play(samples, KOKORO_SAMPLE_RATE, device=self._device)
+                sd.wait()  # sd.stop() from aclose() unblocks this so shutdown isn't held open
