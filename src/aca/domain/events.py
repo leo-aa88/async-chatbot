@@ -43,6 +43,11 @@ class HumanMessage(Event):
     TYPE: ClassVar[str] = "HumanMessage"
     text: str = ""
     channel: str = "cli"
+    # How the human uttered this turn: ``"text"`` (typed) or ``"voice"`` (spoken, transcribed on
+    # the client before ingress). Pure metadata — to cognition a spoken turn and a typed turn are
+    # both human utterances, so no decision path branches on it (invariant 2, DESIGN 13). It rides
+    # in the durable event payload for auditability and downstream rendering only.
+    input_mode: str = "text"
 
 
 @dataclass(frozen=True, slots=True)

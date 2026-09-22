@@ -13,7 +13,7 @@ from typing import Any
 from ..errors import IpcError
 
 # Client -> service operations.
-OP_CHAT = "chat"            # {op, text, channel}
+OP_CHAT = "chat"            # {op, text, channel, event_id, input_mode?}
 OP_STATUS = "status"
 OP_MEMORIES = "memories"
 OP_TOPICS = "topics"

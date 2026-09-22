@@ -172,6 +172,7 @@ Run the daemon and talk to it (the client is not the agent — closing it never 
 aca service start           # resident daemon (single-instance flock per data dir)
 aca status                  # lifecycle / session / state snapshot
 aca chat                    # interactive chat over the socket
+aca chat --voice            # also listen on the mic (needs `pip install -e ".[voice]"`)
 aca logs                    # recent cognition traces (why it spoke or stayed silent)
 aca memories                # recent provisional memories
 aca topics                  # enriched topics
@@ -180,6 +181,10 @@ aca service stop            # graceful suspension (identity persists)
 
 The data directory defaults to `~/.aca/` (override with `--data-dir` or `ACA_DATA_DIR`). Optional
 configuration lives in `<data-dir>/config.json` (see `docs/DESIGN.md` §18 for the parameters).
+
+Voice input (`aca chat --voice`) transcribes speech on the client and injects it through the same
+ingress as typing — spoken and typed turns are indistinguishable to cognition. It is entirely
+optional and lives alongside typing; see [`docs/VOICE.md`](docs/VOICE.md).
 
 ## Testing
 

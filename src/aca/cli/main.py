@@ -1,6 +1,7 @@
 """``aca`` CLI (DESIGN 28.2).
 
-Subcommands: ``service start|stop``, ``status``, ``chat``, ``logs``, ``memories``, ``topics``.
+Subcommands: ``service start|stop``, ``status``, ``chat`` (``--voice`` adds microphone input),
+``logs``, ``memories``, ``topics``.
 The CLI is a client — closing it never stops the agent (invariant 36). The daemon runs via
 ``service start``; every other command talks to it over the Unix socket.
 """
@@ -115,9 +116,55 @@ def _cmd_simple(args: argparse.Namespace, op: str) -> int:
     return asyncio.run(run())
 
 
-async def _chat(data_dir: Path) -> None:
+def _start_voice(config, client: IpcClient, ui: ChatUI) -> tuple:
+    """Build and start a concurrent voice session feeding the same ingress as typed input.
+
+    Imported lazily and only when ``--voice`` is passed, so plain text chat never depends on the
+    optional voice extra. Transcribed turns are echoed in the shared UI and injected as
+    ``HumanMessage``s tagged ``input_mode="voice"`` — indistinguishable to cognition from typing.
+    Returns ``(session, task)`` so the caller can tear it down.
+    """
+    from ..errors import ConfigError
+    from ..voice.capture import MicrophoneSource
+    from ..voice.factory import (
+        build_segmenter,
+        build_speech_detector,
+        build_transcriber,
+        resolve_transcriber_provider,
+    )
+    from ..voice.session import VoiceSession
+
+    voice = config.voice
+    tz = config.local_timezone
+    # The offline FakeTranscriber emits placeholder text ("utterance of N samples"); wiring it to a
+    # live agent would commit fabricated turns to durable ingress on any room noise the VAD trips.
+    # It is a test double only — the live path must use a real transcriber.
+    if resolve_transcriber_provider(voice.provider) == "fake":
+        raise ConfigError(
+            "voice.provider is 'fake' (the offline test double); --voice needs a real transcriber. "
+            "Set voice.provider='faster-whisper' in config.json and `pip install -e \".[voice]\"`."
+        )
+    transcriber = build_transcriber(voice)  # loads the model; fails fast on a missing extra/model
+    detector = build_speech_detector(voice)
+    segmenter = build_segmenter(voice)
+    source = MicrophoneSource(sample_rate=voice.sample_rate, frame_seconds=voice.frame_seconds)
+
+    async def on_transcript(text: str) -> None:
+        ui.print_message(text, at=clock_time(datetime.now(UTC), tz), sender="you/voice")
+        await client.chat_send(text, input_mode="voice")
+
+    async def on_error(stage: str, exc: Exception) -> None:
+        # Surface the failure on the shared UI instead of dying silently in a background task.
+        ui.print_message(f"{stage} error: {exc}", sender="voice")
+
+    session = VoiceSession(source, detector, segmenter, transcriber, on_transcript, on_error=on_error)
+    return session, asyncio.ensure_future(session.run())
+
+
+async def _chat(data_dir: Path, *, voice: bool = False) -> None:
     client = IpcClient(_socket_path(data_dir))
-    tz = _load_config(data_dir).local_timezone
+    config = _load_config(data_dir)
+    tz = config.local_timezone
     # Stamp the human's own input line too, so a copied transcript shows who spoke when — the same
     # local HH:MM:SS used for agent messages (display-only; the deterministic core is untouched).
     ui = ChatUI(stamp=lambda: clock_time(datetime.now(UTC), tz))
@@ -126,7 +173,16 @@ async def _chat(data_dir: Path) -> None:
         ui.print_message(frame.get("text", ""), at=clock_time(frame.get("at"), tz))
 
     subscription = asyncio.ensure_future(client.subscribe(on_message))
-    print("Connected. Type a message and press enter (Ctrl-D to quit).")
+    # Voice, when enabled, runs alongside typing — both keystrokes and spoken turns feed the same
+    # ingress. Text chat works with no voice dependencies installed; --voice is a pure add-on.
+    voice_session = voice_task = None
+    if voice:
+        voice_session, voice_task = _start_voice(config, client, ui)
+
+    banner = "Connected. Type a message and press enter (Ctrl-D to quit)."
+    if voice:
+        banner += f"  [voice on: {config.voice.provider}/{config.voice.model} — just speak]"
+    print(banner)
     ui.start()
     try:
         # Keystrokes and agent-message prints are both handled on this event loop — a single
@@ -138,10 +194,14 @@ async def _chat(data_dir: Path) -> None:
     finally:
         ui.stop()
         subscription.cancel()
+        if voice_session is not None:
+            voice_session.stop()
+        if voice_task is not None:
+            voice_task.cancel()
 
 
 def _cmd_chat(args: argparse.Namespace) -> int:
-    asyncio.run(_chat(_data_dir(args)))
+    asyncio.run(_chat(_data_dir(args), voice=getattr(args, "voice", False)))
     return 0
 
 
@@ -256,7 +316,11 @@ def build_parser() -> argparse.ArgumentParser:
     service.add_argument("service_command", choices=["start", "stop"])
 
     sub.add_parser("status", help="show agent status")
-    sub.add_parser("chat", help="interactive chat")
+    chat = sub.add_parser("chat", help="interactive chat")
+    chat.add_argument(
+        "--voice", action="store_true",
+        help="also listen on the microphone and transcribe speech (needs the 'voice' extra)",
+    )
     sub.add_parser("logs", help="recent cognition traces")
     sub.add_parser("memories", help="recent provisional memories")
     sub.add_parser("topics", help="enriched topics")
