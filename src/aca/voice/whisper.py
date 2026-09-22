@@ -41,6 +41,34 @@ def _resolve_device(device: str) -> str:
         return "cpu"
 
 
+def _build_model(build, model: str, requested_device: str, compute_type: str):
+    """Construct the model, falling back ``auto``→CPU when a *present but unusable* GPU fails to load.
+
+    A GPU can be detected (``get_cuda_device_count() > 0``) yet be unable to run CUDA — an old driver
+    or a missing ``libcublas`` makes CTranslate2 raise partway through the CUDA model load. When the
+    device was auto-selected we retry on CPU rather than crash ``--voice``; an *explicit*
+    ``device="cuda"`` is left to surface the error, since the user asked for CUDA specifically.
+    Returns ``(model, resolved_device)``. ``build(model, device, compute)`` does the real load
+    (injected so the fallback is testable without the ``faster-whisper`` extra).
+    """
+    device = _resolve_device(requested_device)
+    compute = _resolve_compute_type(compute_type, device)
+    try:
+        return build(model, device, compute), device
+    except Exception as exc:
+        if requested_device != "auto" or device != "cuda":
+            raise
+        # Retry on CPU with an *auto*-resolved compute type (→ int8), NOT the original one: a pinned
+        # CUDA-only quantizer like ``int8_float16`` was legal on CUDA but ``_resolve_compute_type``
+        # would reject it on CPU, and that ConfigError would mask the real load failure. Chain the
+        # original CUDA error so the underlying cause (e.g. missing libcublas) stays visible.
+        cpu_compute = _resolve_compute_type("auto", "cpu")
+        try:
+            return build(model, "cpu", cpu_compute), "cpu"
+        except Exception as cpu_exc:
+            raise cpu_exc from exc
+
+
 def _resolve_compute_type(compute_type: str, device: str) -> str:
     """Pick a compute type the resolved device can actually run.
 
@@ -86,11 +114,12 @@ class FasterWhisperTranscriber:
 
         self._language = language or None
         self._beam_size = beam_size
-        # Resolve device + compute type (and reject a CPU/CUDA-only mismatch) before the weights
-        # download, so a misconfiguration fails fast and cleanly rather than mid-load.
-        resolved_device = _resolve_device(device)
-        resolved_compute = _resolve_compute_type(compute_type, resolved_device)
-        self._model = WhisperModel(model, device=resolved_device, compute_type=resolved_compute)
+        # Resolve device + compute type (rejecting a CPU/CUDA-only mismatch before the download), and
+        # fall back auto→CPU if a present-but-unusable GPU fails to load (old driver / missing libs).
+        self._model, _ = _build_model(
+            lambda m, d, c: WhisperModel(m, device=d, compute_type=c),
+            model, device, compute_type,
+        )
 
     async def transcribe(self, pcm: bytes, sample_rate: int) -> Transcript:
         return await asyncio.to_thread(self._transcribe_sync, pcm, sample_rate)

@@ -157,6 +157,16 @@ class KokoroTtsEngine(TtsEngine):
             # untouched and playback below runs with warnings behaving normally.
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
+                # Pre-trigger torch's one-time CUDA capability probe here, inside the filter. On a
+                # host with a present-but-unusable GPU (e.g. a driver too old for the installed
+                # torch) that probe emits a "CUDA initialization" UserWarning — once, then cached.
+                # Firing it here swallows it, so it can't later leak to the terminal from a synthesis
+                # call. Harmless when CUDA is absent or usable; Kokoro still runs on whatever device
+                # torch resolves (CPU when the probe reports CUDA unavailable).
+                with contextlib.suppress(Exception):
+                    import torch
+
+                    torch.cuda.is_available()
                 # Explicit repo_id suppresses Kokoro's default-repo warning print.
                 self._pipeline = KPipeline(lang_code=self._lang_code, repo_id=_REPO_ID)
         return self._pipeline
@@ -183,5 +193,10 @@ class KokoroTtsEngine(TtsEngine):
             if hasattr(audio, "detach"):  # a torch tensor -> numpy on CPU
                 audio = audio.detach().cpu().numpy()
             samples = np.asarray(audio, dtype="float32")
-            sd.play(samples, KOKORO_SAMPLE_RATE, device=self._device)
+            # Request the device's high-latency (larger-buffer) profile. The waveform is already
+            # fully rendered, so this is not about synthesis speed — it stops the output buffer from
+            # starving on high-latency/jittery backends (e.g. WSLg's ALSA→PulseAudio bridge), which
+            # otherwise logs "underrun occurred" and clicks. Costs only a fraction of a second of
+            # start delay, which is imperceptible for a spoken reply.
+            sd.play(samples, KOKORO_SAMPLE_RATE, device=self._device, latency="high")
             sd.wait()  # sd.stop() from aclose() unblocks this so shutdown isn't held open
