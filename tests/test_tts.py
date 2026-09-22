@@ -111,6 +111,43 @@ def test_resolve_lang_code_derives_from_voice_prefix():
     assert _resolve_lang_code("", "") == "a"  # safe fallback
 
 
+async def test_render_never_redirects_terminal_streams(monkeypatch):
+    # Regression guard: the worker thread must not reassign the process-global sys.stdout/sys.stderr
+    # that ChatUI writes from — redirecting them would swallow keystroke echo and delivered messages
+    # for the whole utterance. Inject fake libs and assert the streams are untouched during synthesis
+    # (and that repo_id is passed and Kokoro's logger disabled, the at-source suppressions).
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+    seen: dict = {}
+
+    class _FakePipeline:
+        def __init__(self, **kwargs):
+            seen["kwargs"] = kwargs
+
+        def __call__(self, text, voice, speed):
+            seen["stdout_ok"] = sys.stdout is original_stdout
+            seen["stderr_ok"] = sys.stderr is original_stderr
+            yield ("g", "p", [0.0, 0.1])
+
+    monkeypatch.setitem(sys.modules, "kokoro", types.SimpleNamespace(KPipeline=_FakePipeline))
+    monkeypatch.setitem(sys.modules, "numpy", types.SimpleNamespace(asarray=lambda a, dtype=None: a))
+    monkeypatch.setitem(
+        sys.modules, "sounddevice",
+        types.SimpleNamespace(play=lambda *a, **k: None, wait=lambda: None, stop=lambda: None),
+    )
+    monkeypatch.setitem(
+        sys.modules, "loguru",
+        types.SimpleNamespace(logger=types.SimpleNamespace(disable=lambda n: seen.__setitem__("disabled", n))),
+    )
+
+    engine = KokoroTtsEngine(voice="am_onyx", lang_code="", speed=1.0)
+    await engine.speak("hello")
+
+    assert seen["kwargs"] == {"lang_code": "a", "repo_id": "hexgrad/Kokoro-82M"}
+    assert seen["stdout_ok"] is True and seen["stderr_ok"] is True  # no global redirect held
+    assert seen["disabled"] == "kokoro"  # Kokoro's loguru records silenced at source
+    assert sys.stdout is original_stdout and sys.stderr is original_stderr  # untouched afterward
+
+
 async def test_kokoro_aclose_stops_playback(monkeypatch):
     # aclose must call sd.stop() so an in-flight sd.wait() is interrupted at shutdown. Inject a fake
     # sounddevice (the real one isn't installed) and assert stop() is invoked.
