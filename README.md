@@ -71,6 +71,7 @@ src/aca/
   workers/     base, fake_llm, fake_embedding  # side-effect-isolated; return events only
   service/     lock, timer, dispatcher, recovery, delivery, service   # the daemon
   ipc/         protocol, server, client        # unix-socket line-framed JSON
+  tts/         base, factory, kokoro_engine, controller   # optional client-side speech output
   cli/         main                            # the `aca` command
 ```
 
@@ -151,6 +152,34 @@ per-call cost and a new network failure surface. It's a fine opt-in (your data, 
 it unlocks the semantic features), but it is **not** free or private like the default. Supported:
 `openai` (`OPENAI_API_KEY`), `gemini` (`GEMINI_API_KEY`); `base_url` overridable. Left at `fake`
 unless set.
+
+### Speaking the agent's messages aloud (optional)
+
+The `aca chat` client can speak each delivered agent message using [Kokoro-82M](https://github.com/hexgrad/kokoro),
+a small open-weights neural TTS model that runs **locally**. It's off by default (the agent is
+silent). Install the extra plus two system libraries and opt in:
+
+```bash
+# system deps: PortAudio for playback, espeak-ng for Kokoro's out-of-dictionary G2P fallback
+sudo apt install libportaudio2 espeak-ng        # Debian/Ubuntu (use your platform's equivalent)
+pip install -e ".[tts]"                          # adds kokoro, sounddevice, numpy
+```
+
+```json
+"tts": { "provider": "kokoro", "voice": "am_onyx" }
+```
+
+The default voice is `am_onyx` (an American male voice); `lang_code` is derived from the voice's
+first letter. This is **client-side rendering only** — DESIGN §6.1 anticipates exactly this ("a TTS
+adapter … without changing cognition semantics"). The client still **prints every message verbatim**
+(you always read what the agent says); TTS additionally synthesizes a *spoken normalization* of that
+text — markup unwrapped so Kokoro doesn't read `*` or backticks aloud. It sits entirely outside
+cognition and the reducer and never touches durable state (invariant 1); a synthesis failure is
+shown once as a `[client]` status line and latches speech off rather than disrupting chat.
+
+Kokoro runs on-device, but the **first** use downloads the model weights from Hugging Face (~330 MB);
+after that it is fully offline and no audio or text leaves the host. See
+[`examples/config.tts.json`](examples/config.tts.json).
 
 ### Seeing autonomous (proactive) messages
 

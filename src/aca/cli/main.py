@@ -25,6 +25,7 @@ from ..ipc.client import IpcClient
 from ..ipc.server import IpcServer
 from ..service.service import AgentService
 from ..timefmt import clock_time, human_time
+from ..tts import SpeechController, build_tts_engine
 from ..workers.embedding_factory import build_embedding_worker, embedding_key_env_for
 from ..workers.llm import build_llm_worker, key_env_for
 from .chat_ui import ChatUI
@@ -168,9 +169,18 @@ async def _chat(data_dir: Path, *, voice: bool = False) -> None:
     # Stamp the human's own input line too, so a copied transcript shows who spoke when — the same
     # local HH:MM:SS used for agent messages (display-only; the deterministic core is untouched).
     ui = ChatUI(stamp=lambda: clock_time(datetime.now(UTC), tz))
+    # Optional speech output: each delivered agent message is spoken aloud as it is printed. This is
+    # purely client-side rendering — no reducer, no durable state (invariant 1). Silent by default;
+    # a synthesis failure is shown inline, never fatal to the chat client.
+    speech = SpeechController(
+        build_tts_engine(config.tts),
+        on_error=lambda exc: ui.print_status(f"tts disabled: {exc}"),
+    )
 
     async def on_message(frame: dict) -> None:
-        ui.print_message(frame.get("text", ""), at=clock_time(frame.get("at"), tz))
+        text = frame.get("text", "")
+        ui.print_message(text, at=clock_time(frame.get("at"), tz))
+        speech.submit(text)
 
     subscription = asyncio.ensure_future(client.subscribe(on_message))
     # Voice, when enabled, runs alongside typing — both keystrokes and spoken turns feed the same
@@ -184,6 +194,7 @@ async def _chat(data_dir: Path, *, voice: bool = False) -> None:
         banner += f"  [voice on: {config.voice.provider}/{config.voice.model} — just speak]"
     print(banner)
     ui.start()
+    speech.start()
     try:
         # Keystrokes and agent-message prints are both handled on this event loop — a single
         # terminal writer, so async messages can't clobber the input line (no thread, no mutex).
@@ -198,6 +209,7 @@ async def _chat(data_dir: Path, *, voice: bool = False) -> None:
             voice_session.stop()
         if voice_task is not None:
             voice_task.cancel()
+        await speech.aclose()
 
 
 def _cmd_chat(args: argparse.Namespace) -> int:

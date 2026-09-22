@@ -1,0 +1,8 @@
+{
+  "_comment": "Speak the agent's messages aloud in `aca chat` using the local Kokoro-82M model (DESIGN 6.1: a TTS adapter that does not change cognition semantics). Install the extra plus system deps first (`sudo apt install libportaudio2 espeak-ng` then `pip install 'aca[tts]'`), then copy this to <data-dir>/config.json. Client-side rendering only — the message is still printed verbatim; nothing here touches cognition or durable state. Kokoro runs on-device, but the first use downloads the weights from Hugging Face; after that nothing leaves the host. Default voice is `am_onyx` (American male); `lang_code` auto-derives from the voice's first letter. Leave `provider` at `none` to keep the agent silent.",
+  "tts": {
+    "provider": "kokoro",
+    "voice": "am_onyx",
+    "speed": 1.0
+  }
+}

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aca"
-version = "0.6.24"
+version = "0.6.27"
 description = "Asynchronous Conversational Agent — a persistent, introspective conversational agent."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -20,6 +20,9 @@ llm = ["httpx>=0.28.1"]
 voice = ["faster-whisper>=1.0.0", "sounddevice>=0.4.6", "numpy>=1.26"]
 # Neural VAD alternative to the dependency-free energy gate (voice.vad = "silero").
 voice-silero = ["silero-vad>=5.1", "torch>=2.2"]
+# Offline speech output for the chat client via Kokoro-82M (runs locally; nothing leaves the host after
+# a one-time model download). Optional and client-side only — the default build is silent.
+tts = ["kokoro>=0.9.4", "sounddevice>=0.5.1", "numpy>=1.26"]
 dev = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0", "ruff>=0.16.8", "httpx>=0.28.1"]
 
 [project.scripts]

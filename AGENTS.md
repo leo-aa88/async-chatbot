@@ -63,6 +63,7 @@ workers/    base, fake_llm, fake_embedding    # side-effect-isolated; return eve
 voice/      audio, vad, segmenter, transcriber, session  # CLIENT-SIDE speech->text perception
 service/    lock, timer, dispatcher, recovery, delivery, service  # runtime orchestration
 ipc/        protocol, server, client          # unix-socket line-framed JSON
+tts/        base, factory, kokoro_engine, controller  # optional client-side speech output (TTS)
 cli/        main                              # `aca service|status|chat [--voice]|logs|memories|topics`
 ```
 
