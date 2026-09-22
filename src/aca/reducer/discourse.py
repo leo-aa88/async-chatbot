@@ -37,10 +37,13 @@ class DiscourseRelation(str, Enum):
 # a task/imperative or a question. This is a *content-free approximation*, deliberately separate
 # from response obligation: `REPROMPT` ("You there?") requires a response but never asserts a new
 # subject, so it is excluded. Two undecidable classes remain and are accepted, documented residuals
-# (DESIGN §34.4), not solved here: a bare declarative ("The robot needs better balance" vs an ack
-# "I hear you loud and clear") and a confirmation/check-in question ("Is that clear?") — neither is
-# separable from a real subject deterministically, and both, if mishandled, over-suppress (silence)
-# rather than voice an orphan. Faithful subject detection needs an LLM-proposed relation (§31.15).
+# (DESIGN §34.4), not solved here — and they fail in BOTH directions, not only toward silence:
+#   * a bare declarative first subject is missed -> no focus -> the gate fails open and an unrelated
+#     (orphan) candidate CAN be voiced;
+#   * a declarative mid-conversation shift is missed -> stale focus retained -> over-suppresses the
+#     new-subject candidate; and a confirmation question ("Is that clear?") can become the focus ->
+#     over-suppresses for one IDLE band.
+# Faithful subject detection needs an LLM-proposed relation (§31.15), not another text heuristic.
 _SUBJECT_CLASSES = frozenset({
     MessageClass.DIRECT_TASK, MessageClass.TASK_QUESTION, MessageClass.SOCIAL_QUESTION,
 })
