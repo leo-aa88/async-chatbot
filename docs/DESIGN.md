@@ -1,6 +1,6 @@
 # DESIGN.md — Asynchronous Conversational Agent
 
-**Status:** v0.7 — discourse-continuity extension of the frozen v0.6 core  
+**Status:** v0.8 — LLM-proposed discourse relation (§35), extending v0.7 discourse continuity (§34) on the frozen v0.6 core  
 **Scope:** Software-first prototype, designed so the same cognitive architecture can later be embodied  
 **Primary goal:** Build a persistent conversational agent that emulates human-like introspection and temporal continuity through stochastic attention, memory activation, self-monitoring, inhibition, delayed response, silence, autonomous initiative, and durable identity across runtime interruptions.
 
@@ -2469,6 +2469,7 @@ These rules remain hard-coded outside the LLM:
 39. **Heavy local inference is off the reducer/event loop.** CPU-bound embedding/perception work runs in a process pool or a native runtime known not to block the Python event loop.
 40. **Hard real-time robot control is outside ACA.** Future embodiment delegates stabilization/safety loops to deterministic lower-level controllers.
 41. **Discourse-focus gating is proactive-only, expression-only, and `IDLE`-scoped (v0.7).** It may suppress outward *proactive* speech unrelated to the current conversational focus **only while conversation mode is `IDLE`** (`ACTIVE` is already fully suppressed; `DORMANT` is left open so autonomous resurfacing is preserved). It runs only on proactive cycles and is revalidated before outbox and before delivery like any proactive SPEAK (invariant 9). It never removes a thought from candidacy, never blocks reactive or mandatory responses, is computed from stored embeddings by code (no LLM authority) using its own thresholds distinct from the observational advance-rate/dominance cuts, and is inactive when mode is not `IDLE` or no focus vector exists.
+42. **The LLM-proposed discourse relation is suppress-only and policy-gated (v0.8).** It may narrow outward proactive speech (`ORPHAN`/`REPEAT` → not spoken) or move the focus to a *validated existing* subject (`REPLACE`/`CLEAR`/`KEEP`), but it can never force a speak the deterministic gates (§16.2, §34) would block, nor write unvalidated state. It rides a generative call that already happens (no new call), is reproducible from recorded results on replay, and is kept out of the observational advance-rate/dominance metrics.
 
 ## 31. Open questions
 
@@ -2536,7 +2537,7 @@ What shape should `f_observed-silence` use once there is real interaction data? 
 
 When the gate is active is **structural, not a tuning knob**: §34.7 ties it to `mode == IDLE`, so it always covers the `IDLE` orphan zone and never reaches `DORMANT`, for every accepted cadence config (the `IDLE` band is defined by the operator's existing `active_within`/`idle_within`). What remains genuinely empirical is the **affinity thresholds** separating `CONTINUE` / `BRIDGE` / `ORPHAN` (their own config keys, independent of the observational cuts — §34.5).
 
-**Faithful focus transitions are deferred here, as an LLM-proposed relation — not another text heuristic.** v0.7's focus predicate (§34.4) is a content-free structural approximation with known residuals (declarative subjects missed; confirmation questions mis-anchored) because "did this turn introduce/keep/drop the subject?" is not deterministically decidable. The intended v0.8 form is an **LLM-proposed `KEEP` / `REPLACE` / `CLEAR` relation** over the recent discourse (the last human turn against the current focus and a short window), deterministically gated per invariant 5: the model proposes whether the turn keeps the current subject, replaces it (with what), or clears it, and the reducer decides what that proposal may do. This subsumes both the focus-setting predicate and the deferred `REOPEN` behavior. It is held until the deterministic gate's failure modes are measured against real traces, so the added non-determinism buys a measured improvement rather than a guess.
+**Faithful focus transitions are an LLM-proposed relation — not another text heuristic — now specified in §35 (v0.8).** v0.7's focus predicate (§34.4) is a content-free structural approximation with known residuals (declarative subjects missed; confirmation questions mis-anchored) because "did this turn introduce/keep/drop the subject?" is not deterministically decidable. §35 realizes the **LLM-proposed `KEEP` / `REPLACE` / `CLEAR` relation** (deterministically gated per invariant 5) that subsumes the focus-setting predicate and, via the advancement relation (§35.4), the deferred `REOPEN` behavior. It was held until the deterministic gate's failure modes were measured against real traces (done 2026-09-22: the gate fires but advance-rate stays at switches), so the added non-determinism buys a measured improvement rather than a guess.
 
 ## 32. Future directions
 
@@ -2658,7 +2659,7 @@ So v0.7 sets the focus on a task/question cue and never on a declarative, delibe
 - **Declarative mid-conversation shift → over-suppression.** The shift is missed, the prior subject is retained as stale focus, and an on-topic candidate for the new subject is wrongly `ORPHAN`ed (muted).
 - **Unlisted check-in/confirmation phrasing → over-suppression.** Recognized presence/confirmation utterances ("You there?", "Is that clear?") are filtered out, but an *unlisted* variant ("was that understandable?") can still be installed as the focus, `ORPHAN`ing real candidates for one `IDLE` band.
 
-All three reset on the next turn that carries a structural subject cue. In practice the focus anchors whenever the human asks a substantive question or gives a task (the motivating trace is question-driven), so the gate delivers value there while these residuals stand. A faithful predicate needs an LLM-*proposed* relation (deterministically gated, invariant 5) and is deferred to §31.15; the deterministic v0.7 gate is intentionally an incomplete MVP. Regression cases pin both the working paths and these documented residuals (§34.10).
+All three reset on the next turn that carries a structural subject cue. In practice the focus anchors whenever the human asks a substantive question or gives a task (the motivating trace is question-driven), so the gate delivers value there while these residuals stand. A faithful predicate needs an LLM-*proposed* relation (deterministically gated, invariant 5); it is specified in **§35 (v0.8)** as a `KEEP`/`REPLACE`/`CLEAR` transition that supersedes this deterministic predicate on any human turn that makes a generative call, with this v0.7 predicate remaining the deterministic floor for turns that make none. Regression cases pin both the working paths and these documented residuals (§34.10).
 
 **Agent speech does not move the focus** in v0.7. A voiced `BRIDGE` becomes, informally, the new thing the agent just made the conversation about, but the next wake is still scored against the last human focus memory. Letting agent output advance the focus is a deliberate later refinement, not part of the MVP.
 
@@ -2769,3 +2770,72 @@ These pin the intended behavior and belong in the adversarial/counterfactual har
 9. **Threshold independence.** A candidate whose affinity falls in the observational "switch" band is **not** automatically `ORPHAN` unless `discourse_bridge_cosine` independently places it there.
 10. **Pre-outbox catch after fail-open.** Focus vector absent at wake ⇒ dispatched output-eligible; the focus embedding lands mid-flight; at `LLMResult` the candidate is now `ORPHAN` ⇒ dropped pre-outbox, not spoken (§34.6 checkpoint 2).
 11. **Backfill dependency.** Before `topic_embeddings` is populated, a topic candidate has no vector ⇒ not `ORPHAN` (§34.5 rule 2); the gate only bites once the backfill has run.
+
+---
+
+## 35. LLM-proposed discourse relation (v0.8)
+
+### 35.1 Why
+
+Two measured limits of the v0.7 deterministic gate motivate this, and both are the *same* shape — a semantic judgment code cannot make:
+
+- **Focus fidelity.** §34.4's focus predicate is a content-free structural approximation with documented residuals: a bare declarative subject is not anchored, a check-in question can be. "Did this turn introduce / keep / drop the subject?" is not deterministically decidable (§31.15).
+- **Advancement.** Live measurement (2026-09-22): the discourse gate *fires* (`discourse_orphan` suppressions in the trace) and holds proactive speech on-focus, yet advance-rate stays at all-switches — the on-focus messages don't progressively *elaborate* a thread. "Is this message a real forward move on the thread?" is likewise semantic.
+
+§34 deferred both here (§31.15) as an LLM-*proposed* relation. v0.8 realizes it.
+
+### 35.2 The model
+
+The LLM proposes a **discourse relation** — a typed label, the §22.4 pattern (model interprets; deterministic policy decides the effect) — at the two points in a cycle that already make a generative call, so **no new call is added** (invariant 3):
+
+- a **focus transition** on a human turn — `KEEP` / `REPLACE` / `CLEAR` the discourse focus (§35.3), replacing §34.4's deterministic predicate;
+- an **advancement relation** on a proactive candidate — how the drafted message relates to the current thread (§35.4), gating whether it is spoken (the advance-rate lever).
+
+The load-bearing safety property: **the relation may only *narrow* outward speech, never force it.** A claimed `ADVANCE` that is a cosine near-repeat is still suppressed by the continuity mute (§16.2); a `REPLACE` naming a non-existent subject is rejected by identifier validation (§22.1). The model can *remove* a speak or point the focus at a *validated* existing subject — it can never manufacture a speak the deterministic gates would block, nor write unvalidated state (invariant 5, invariant 42).
+
+### 35.3 Focus transition (`KEEP` / `REPLACE` / `CLEAR`)
+
+On a human turn that makes a generative call (mandatory or optional-reactive), the model additionally proposes the transition:
+
+- **`KEEP`** — the turn continues the current subject; focus unchanged (a check-in, an acknowledgement-with-a-question, an elaboration).
+- **`REPLACE(subject)`** — the turn asserts a new subject; the focus becomes the named subject — an existing `topic_id`, or this turn's provisional memory. The id is validated before adoption (§22.1); an unknown id falls back to the turn's own memory.
+- **`CLEAR`** — the turn closes/abandons the subject; focus becomes none.
+
+This subsumes §34.4's predicate *and its residuals*: a declarative subject is a `REPLACE`, a check-in is a `KEEP`, a wrap-up is a `CLEAR`. **Deterministic fallback:** a human turn routed to silence with *no* generative call (a backchannel / low-substance turn, §13.6) carries no proposal, so the v0.7 deterministic predicate (§34.4) still decides those. v0.8 is therefore a *refinement layered on* v0.7, not a removal — the deterministic path stays the floor.
+
+### 35.4 Advancement relation (the advance-rate lever)
+
+A proactive generative result already returns a typed proposal (§22). v0.8 adds a required **relation** field classifying the drafted message against the current thread:
+
+```text
+ADVANCE   same thread, a new implication / consequence / decision   (the good one)
+EVIDENCE  same thread, a new supporting fact or example
+REVISE    same thread, a correction / qualification of an earlier claim
+CLOSE     resolves or wraps the thread
+REOPEN    a deliberate return to a *parked* older thread, framed as such
+ORPHAN    unrelated to the current thread
+REPEAT    restates something already said
+```
+
+Deterministic policy gates `SPEAK`: only forward moves — `ADVANCE` / `EVIDENCE` / `REVISE` / `CLOSE` (and `REOPEN` under a higher bar, §35.7) — are speech-eligible; `ORPHAN` and `REPEAT` degrade to enrichment-only or silence, at the **same pre-outbox checkpoint** and by the same mechanism §34.6 uses for a cosine orphan/near-repeat. This is the direct advance-rate intervention: a proactive utterance must *move* the thread, not merely sit near it.
+
+### 35.5 Layering — the deterministic gates (§34) stay
+
+The cheap deterministic gates remain the **pre-filter**, so a generative call is never spent on a clear orphan/repeat: the cosine discourse gate (§34) and the continuity mute (§16.2) still run at wake to set output-eligibility. The LLM relation is the **richer, authority-checked layer** at pre-outbox (§22.2), applied *after* the message is drafted, with the deterministic cross-checks still in force. Order: cheap deterministic pre-filter → generate → LLM-relation policy gate. Nothing in §34 is removed; v0.8 adds a semantic gate on top.
+
+### 35.6 Invariants and boundaries
+
+- **One generative call (invariant 3):** both relations ride calls that already happen; none is added.
+- **LLM is not authority (invariant 5, invariant 42):** the relation is a proposal gated by deterministic policy; it can only suppress, never force (§35.2). Whitelist / identifier / clamp validation (§22.1) applies.
+- **Determinism / replay (invariant 28):** relations come from recorded worker results; replay reproduces the gating given those results.
+- **Goodhart separation:** the relation gates *speech*; the observational advance-rate / dominance metrics stay computed from vectors, never from the LLM label — otherwise the agent could move its own metric by relabeling (§17, §27).
+- **Budget (invariant 10):** no new proactive LLM calls; the relation is a field on an existing result.
+
+### 35.7 v0.8 MVP scope and deferred
+
+- **MVP:** the focus transition (§35.3) and the advancement gate (§35.4), both as fields on the existing human-turn and proactive results, gated at pre-outbox.
+- **Deferred:** `REOPEN`'s generative framing ("going back to something from earlier…") and parked-insight storage (§34.8); letting agent speech advance the focus; multi-thread state. In the MVP `REOPEN` is held to a high bar (or treated as `ORPHAN`) until parking exists.
+
+### 35.8 Evaluation
+
+Success = a measured rise in warm-zone advance-rate (fewer switches, more advances) against the v0.7 baseline (all-switches, 2026-09-22), with no regression in mandatory-answer latency or on-topic relevance. The counterfactual harness (§26, §27.2) and the advance-rate metric measure it; the LLM relation must never be wired into that metric.
