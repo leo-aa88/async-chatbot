@@ -161,17 +161,16 @@ def test_substantive_turn_sets_focus(tmp_path):
     h.close()
 
 
-def test_unlisted_acknowledgement_does_not_become_focus(tmp_path):
-    # "I see" is a STATEMENT at ingress (creates a RAW memory) but is not in the token blacklist.
-    # The affirmative predicate (short STATEMENT -> uncertain -> not focus-setting) must keep the
-    # real subject rather than installing the acknowledgement.
+def test_unlisted_acknowledgement_with_punctuation_does_not_become_focus(tmp_path):
+    # "I understand." is an ordinary acknowledgement, unlisted, with punctuation, and creates a RAW
+    # memory at ingress. It must NOT replace the real subject (positive-evidence predicate; §34.4).
     h = _harness(tmp_path)
     now = h.clock.now_utc()
     with h.stores.db.transaction():
         conv = h.stores.state.load_conversation()
         h.stores.state.save_conversation(conv.__class__(
             last_human_message_at=now - timedelta(seconds=60), focus_memory_id="subject_X"))
-    h.send_human("I see")
+    h.send_human("I understand.")
     assert h.stores.state.load_conversation().focus_memory_id == "subject_X"
     h.close()
 
@@ -267,16 +266,22 @@ def _focus_setting(text: str) -> bool:
 
 
 def test_focus_predicate_is_independent_of_the_ingress_length_class():
-    # Subjects — including a SHORT real topic shift that ingress calls STATEMENT, and a longer one
-    # ingress calls HIGH_INFORMATION.
+    # Subjects — a SHORT real topic shift ingress calls STATEMENT, and a longer HIGH_INFORMATION one.
     assert _focus_setting("Robots are next.") is True
     assert _focus_setting("the AI layer will happen later on with raspberry pi") is True
     assert _focus_setting("what about a coma?") is True
     assert _focus_setting("Deploy the agent onto physical hardware.") is True
-    # Acknowledgements — including a LONG one ingress calls HIGH_INFORMATION, which must NOT become
-    # the subject, and short ones regardless of their ingress class.
+    # Acknowledgements — including a LONG one ingress calls HIGH_INFORMATION and an UNLISTED one
+    # ("I understand"): absence of a known ack word is not evidence of a subject.
     assert _focus_setting("I see your point now.") is False
     assert _focus_setting("yeah that makes sense") is False
+    assert _focus_setting("I understand") is False
     assert _focus_setting("noted") is False
-    assert _focus_setting("alright") is False
     assert _focus_setting("ok") is False
+
+
+def test_focus_predicate_is_punctuation_insensitive():
+    # A trailing period must not flip the decision either way (both are embedding-eligible STATEMENTs).
+    assert _focus_setting("Robotics") == _focus_setting("Robotics.")
+    assert _focus_setting("I understand") == _focus_setting("I understand.")
+    assert _focus_setting("Robots are next") == _focus_setting("Robots are next.")
