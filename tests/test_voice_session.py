@@ -183,3 +183,37 @@ def test_resolve_device_passes_explicit_through():
 
     assert _resolve_device("cpu") == "cpu"
     assert _resolve_device("cuda") == "cuda"
+
+
+def test_build_model_auto_falls_back_to_cpu_when_cuda_load_fails(monkeypatch):
+    # A present-but-unusable GPU: device auto -> cuda, but the CUDA model load raises (old driver /
+    # missing libcublas). _build_model must retry on CPU rather than crash --voice.
+    from aca.voice import whisper
+
+    monkeypatch.setattr(whisper, "_resolve_device", lambda d: "cuda" if d == "auto" else d)
+    attempts = []
+
+    def build(model, device, compute):
+        attempts.append((device, compute))
+        if device == "cuda":
+            raise RuntimeError("Library libcublas.so.12 is not found or cannot be loaded")
+        return f"model@{device}/{compute}"
+
+    result, resolved = whisper._build_model(build, "small.en", "auto", "auto")
+    assert resolved == "cpu"
+    assert result == "model@cpu/int8"
+    assert [d for d, _ in attempts] == ["cuda", "cpu"]  # tried CUDA, then fell back
+
+
+def test_build_model_explicit_cuda_reraises(monkeypatch):
+    # An explicit device="cuda" is the user asking for CUDA — surface the load error, don't silently
+    # downgrade to CPU.
+    from aca.voice import whisper
+
+    monkeypatch.setattr(whisper, "_resolve_device", lambda d: d)
+
+    def build(model, device, compute):
+        raise RuntimeError("libcublas missing")
+
+    with pytest.raises(RuntimeError):
+        whisper._build_model(build, "small.en", "cuda", "int8_float16")
