@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Run the persona eval corpus (``aca.eval.persona``) against the configured real LLM.
 
-Usage: ``python scripts/persona_eval.py [--data-dir DIR] [--persona tsundere]``
+Usage: ``python scripts/persona_eval.py [--data-dir DIR] [--persona tsundere] [--dialogue]``
+
+``--dialogue`` plays ``SAMPLE_DIALOGUE`` (greeting -> small talk -> compliment -> teasing -> help ->
+leaving -> returning -> a vulnerable turn) as one carried-forward conversation and prints the transcript.
 
 Reads ``<data-dir>/config.json`` for ``llm`` (provider/model) and the provider key from the env or a
 ``.env`` next to it. Offline scoring only: nothing touches the daemon, the reducer, or durable state.
@@ -20,7 +23,7 @@ from pathlib import Path
 
 from aca.config import Config
 from aca.dotenv import load_dotenv
-from aca.eval.persona import format_report, run_corpus
+from aca.eval.persona import format_report, run_corpus, run_dialogue
 from aca.workers.llm import build_llm_worker, key_env_for
 
 
@@ -28,6 +31,7 @@ async def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data-dir", default=os.environ.get("ACA_DATA_DIR") or str(Path.home() / ".aca"))
     parser.add_argument("--persona", default="tsundere")
+    parser.add_argument("--dialogue", action="store_true", help="print a sample transcript instead of scoring")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -41,6 +45,10 @@ async def _main() -> None:
     async def decide(snapshot):
         return (await worker.run(snapshot)).result
 
+    if args.dialogue:
+        for human, reply in await run_dialogue(decide, persona=args.persona):
+            print(f"you:   {human}\nagent: {reply or '(silence)'}\n")
+        return
     outcomes = await run_corpus(decide, persona=args.persona)
     print("\n".join(format_report(outcomes)))
 

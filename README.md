@@ -185,10 +185,10 @@ after that it is fully offline and no audio or text leaves the host. See
 ### Persona (optional, experimental)
 
 `identity.persona` selects the agent's user-facing *voice*. `default` is the plain, non-sycophantic
-voice. `tsundere` is dry, sarcastic, and mildly abrasive, and it cares about you and shows it mostly
-by helping: it teases what you do, not who you are. It can nudge you to eat or sleep when the
-conversation shows you need it. It drops the edge when you're struggling, and it is never possessive
-or guilt-trippy. It isn't an anime parody:
+voice. `tsundere` is prickly, defensive, quick to tease, and easily flustered when her care is
+noticed — warmer and more attached than she admits, and unexpectedly direct when something is
+actually wrong. The prompt anchors on a well-known personality *structure* (an original character,
+not a roleplay). She's never possessive or guilt-trippy, and a real question still gets a real answer:
 
 ```json
 "identity": { "persona": "tsundere" }

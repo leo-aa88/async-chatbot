@@ -74,16 +74,29 @@ def test_tsundere_only_inserts_a_character_section_and_keeps_the_contract_intact
 
 def test_tsundere_character_keeps_semantics_and_machine_fields_neutral():
     text = " ".join(get_persona("tsundere").character.split())  # line-wrap agnostic
-    assert "never changes the decision" in text               # voice, not cognition
+    assert "changes only the wording" in text                 # voice, not cognition
     assert 'lives ONLY in "message"' in text                 # machine fields stay neutral
     assert "topic_summary" in text and "durable memory" in text
-    assert '"silence" is still' in text                      # silence stays valid
+    assert "Silence is still right" in text                  # silence stays valid
     assert "closed or dropped subject" in text               # closed threads stay closed
     assert "ORPHAN" in text                                   # self-care doesn't bypass relation
-    assert "Never invent the evidence" in text               # nudges are evidence-bound
-    for anti in ("never be jealous", "Never guilt", "never demand attention", "replacement for human"):
+    assert "needs evidence in the context" in text           # nudges are evidence-bound
+    for anti in ("jealousy of the people", "guilt for leaving", "demands for attention", "replacement for people"):
         assert anti in text
     assert "tsundere" not in text.lower()                    # naming the trope invites the caricature
+
+
+def test_tsundere_character_anchors_a_personality_structure_not_a_roleplay():
+    # The failure this guards: a "dry sarcastic engineer" with no defensive affection. The anchor is a
+    # personality structure, explicitly not the fictional character, her lines, or her world.
+    text = " ".join(get_persona("tsundere").character.split())
+    assert "personality strongly resembling Natsuki" in text and "you are not Natsuki" in text
+    assert "easily flustered when affection or concern is noticed" in text
+    assert "Do not quote or imitate specific dialogue" in text
+    assert "Do not behave as though you are roleplaying" in text
+    assert "overrides the plain-voice guidance" in text                 # casual turns lead with it
+    assert "drop the teasing" in text                                   # softening is preserved
+    assert "no stage directions" in text and 'no "baka"' in text        # plain English, no emotes
 
 
 @pytest.mark.parametrize("cycle", [CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL, CYCLE_PROACTIVE])

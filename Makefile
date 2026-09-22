@@ -111,6 +111,11 @@ tsundere-eval: ## Run the persona eval corpus against the configured real LLM
 	cd $(MAIN_CHECKOUT) && PYTHONPATH=$(CURDIR)/src $(ACA_BIN)/python $(CURDIR)/scripts/persona_eval.py \
 		--data-dir $(TSUNDERE_DIR)
 
+.PHONY: tsundere-dialogue
+tsundere-dialogue: ## Print a sample casual-to-serious transcript from the configured real LLM
+	cd $(MAIN_CHECKOUT) && PYTHONPATH=$(CURDIR)/src $(ACA_BIN)/python $(CURDIR)/scripts/persona_eval.py \
+		--data-dir $(TSUNDERE_DIR) --dialogue
+
 .PHONY: clean
 clean: ## Remove build artifacts and caches
 	rm -rf dist build *.egg-info src/*.egg-info
