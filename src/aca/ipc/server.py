@@ -159,6 +159,7 @@ class IpcServer:
         metrics["repetition_count"] = reps
         metrics["switch_count"] = sw
         metrics["advance_transitions"] = trans
+        metrics["block_reasons"] = self._service.stores.work.proactive_block_reasons()
         return metrics
 
     def _spoken_candidate_slots(self, since) -> list[tuple[str, list[float]] | None]:

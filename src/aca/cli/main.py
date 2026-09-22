@@ -259,6 +259,14 @@ def _hours(seconds: int) -> str:
     return f"{hours / 24:.0f}d" if hours >= 48 else f"{hours:.0f}h"
 
 
+def _format_block_reasons(reasons: dict) -> str:
+    """Render the proactive not-spoken decomposition as ``bucket=n`` pairs, non-zero only, in the
+    dict's pipeline order. ``(none)`` when nothing was suppressed — the whole line stays one row so
+    it reads at a glance which gate did the silencing."""
+    parts = [f"{name}={n}" for name, n in reasons.items() if n]
+    return "  ".join(parts) if parts else "(none)"
+
+
 def format_metrics(m: dict) -> list[str]:
     """Render mechanical cognition metrics from raw trace counts (pure, for reuse/testing)."""
     spoke, silent = m.get("spoke", 0), m.get("silent", 0)
@@ -268,6 +276,7 @@ def format_metrics(m: dict) -> list[str]:
         f"  |  {_pct(m.get('proactive_spoke', 0), m.get('proactive_total', 0))} all-cycle"
         "  (spoke / reached-model | spoke / all proactive cycles)",
         f"proactive blocked:     {m.get('proactive_blocked', 0)}  (budget/mode/quiet — never reached model)",
+        f"proactive not-spoken:  {_format_block_reasons(m.get('block_reasons', {}))}",
         f"proactive frequency (last {_hours(m.get('repeated_window_seconds', 0))}): "
         f"{m.get('proactive_spoke_recent', 0)} spontaneous messages  (blunt count; says nothing about value or theme)",
         f"repeated-candidate rate (last {_hours(m.get('repeated_window_seconds', 0))}): "
