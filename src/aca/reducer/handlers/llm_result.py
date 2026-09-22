@@ -35,7 +35,7 @@ from ...errors import ValidationError
 from ..apply_proposals import apply_proposals
 from ..context import ReducerContext
 from ..continuity import is_semantic_repeat
-from ..discourse import is_discourse_orphan
+from ..discourse import advancement_suppresses, is_discourse_orphan
 from ..gates import evaluate_proactive
 from ..outbound import create_outbound
 from ..revalidation import is_superseded
@@ -247,6 +247,17 @@ def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
             pre_outbox_invalidated=True, note="pre_outbox:discourse_orphan",
         )
         return HandlerOutcome(reschedule=True, note="pre_outbox_invalidated:discourse_orphan")
+    # Advancement gate (§35.4): the model classified its own message vs the current thread. Only a
+    # self-assessed ORPHAN/REPEAT mutes it — suppress-only (invariant 42a); a forward move or a
+    # missing relation leaves this decision as v0.7. It can never *force* a speak: the deterministic
+    # gates above already ran, so a lying "ADVANCE" on a near-repeat is still dropped by them.
+    if advancement_suppresses(decision.relation):
+        note = f"advancement_{decision.relation.lower()}"
+        ctx.stores.work.finalize_trace(
+            event.cycle_id, action="silence", useful_enrichment=useful,
+            pre_outbox_invalidated=True, note=f"pre_outbox:{note}",
+        )
+        return HandlerOutcome(reschedule=True, note=f"pre_outbox_invalidated:{note}")
 
     charge_proactive_message(ctx, now)
     create_outbound(

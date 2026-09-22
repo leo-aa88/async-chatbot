@@ -159,3 +159,19 @@ def is_discourse_orphan(ctx: ReducerContext, kind: str, candidate_id: str, now) 
     if not gate_active(ctx, now):
         return False
     return assess(ctx, kind, candidate_id) is DiscourseRelation.ORPHAN
+
+
+# Advancement relations that MUTE a proactive speak (§35.4). Everything else — a forward move
+# (ADVANCE/EVIDENCE/REVISE/CLOSE/REOPEN) or a missing/unrecognized relation (``None``) — leaves the
+# §34 decision untouched, so the current v0.7 worker (which emits no relation) is gated as before.
+_SUPPRESSING_RELATIONS = frozenset({"ORPHAN", "REPEAT"})
+
+
+def advancement_suppresses(relation: str | None) -> bool:
+    """Whether a proposed advancement relation mutes the proactive speak (§35.4, invariant 42a).
+
+    Suppress-only: only ``ORPHAN``/``REPEAT`` mute; forward moves and ``None`` fall open to §34.
+    This is *not* mode-scoped like the focus gate — a REPEAT/ORPHAN self-assessment holds whether
+    the conversation is `IDLE` or `DORMANT`, mirroring the semantic-repeat mute (§16.2).
+    """
+    return relation in _SUPPRESSING_RELATIONS
