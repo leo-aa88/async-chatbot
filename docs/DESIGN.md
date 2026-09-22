@@ -2468,8 +2468,8 @@ These rules remain hard-coded outside the LLM:
 38. **Outbound delivery is idempotency-aware and time-sensitive.** Delivery keys suppress supported duplicates; proactive items have TTL/coalescing and cannot dogpile on reconnect.
 39. **Heavy local inference is off the reducer/event loop.** CPU-bound embedding/perception work runs in a process pool or a native runtime known not to block the Python event loop.
 40. **Hard real-time robot control is outside ACA.** Future embodiment delegates stabilization/safety loops to deterministic lower-level controllers.
-41. **Discourse-focus gating is proactive-only, expression-only, and `IDLE`-scoped (v0.7).** It may suppress outward *proactive* speech unrelated to the current conversational focus **only while conversation mode is `IDLE`** (`ACTIVE` is already fully suppressed; `DORMANT` is left open so autonomous resurfacing is preserved). It runs only on proactive cycles and is revalidated before outbox and before delivery like any proactive SPEAK (invariant 9). It never removes a thought from candidacy, never blocks reactive or mandatory responses, is computed from stored embeddings by code (no LLM authority) using its own thresholds distinct from the observational advance-rate/dominance cuts, and is inactive when mode is not `IDLE` or no focus vector exists.
-42. **The LLM-proposed discourse relation is suppress-only and policy-gated (v0.8).** It may narrow outward proactive speech (`ORPHAN`/`REPEAT` → not spoken) or move the focus to a *validated existing* subject (`REPLACE`/`CLEAR`/`KEEP`), but it can never force a speak the deterministic gates (§16.2, §34) would block, nor write unvalidated state. It rides a generative call that already happens (no new call), is reproducible from recorded results on replay, and is kept out of the observational advance-rate/dominance metrics.
+41. **Discourse-focus gating is proactive-only, expression-only, and `IDLE`-scoped (v0.7).** It may suppress outward *proactive* speech unrelated to the current conversational focus **only while conversation mode is `IDLE`** (`ACTIVE` is already fully suppressed; `DORMANT` is left open so autonomous resurfacing is preserved). It runs only on proactive cycles and is revalidated before outbox and before delivery like any proactive SPEAK (invariant 9). It never removes a thought from candidacy, never blocks reactive or mandatory responses, and is inactive when mode is not `IDLE` or no focus vector exists. The gate **mechanism** (affinity, thresholds) is computed from stored embeddings by code with its own thresholds distinct from the observational cuts; the focus *subject* it scores against is set by the deterministic predicate (§34.4) or, on a call-making turn, by the v0.8 LLM focus transition (§35.3, invariant 42b) — the only LLM input to the focus.
+42. **The LLM-proposed discourse relation is policy-gated, split by kind (v0.8).** (a) The **advancement relation** is *suppress-only*: it may narrow proactive speech (`ORPHAN`/`REPEAT` → not spoken), a missing/unknown label fails open to the §34 decision, and it can never force a speak the deterministic gates (§16.2, §34) would block nor be wired into the observational metrics. (b) The **focus transition** is a *validated state write* that moves the focus subject — thereby changing what the next gate suppresses (`CLEAR` fail-opens) — bounded to setting the focus only to a validated existing provisional-memory id (or `KEEP`/`CLEAR`) and writing no other state. Both ride a generative call that already happens (no new call) and are reproducible from recorded results on replay.
 
 ## 31. Open questions
 
@@ -2637,7 +2637,7 @@ An optional monotonic `discourse_epoch` may accompany this field for tracing, bu
 
 ### 34.4 Focus lifecycle
 
-The focus is set by the reducer (single writer, invariant 2) inside the human-message handler, and only there. The transition turns on one question — **did this turn establish a new subject, i.e. produce a provisional memory from a focus-setting turn?** — with the pre-turn mode (evaluated before the handler updates `last_human_message_at`) deciding the fallback:
+The focus is set by the reducer (single writer, invariant 2). In v0.7 that write is in the human-message handler at reduction time; in v0.8 (§35.3) a call-making turn writes a *provisional* focus here and its generative *result* may then override it (`KEEP`/`REPLACE`/`CLEAR`). The v0.7 deterministic transition turns on one question — **did this turn establish a new subject, i.e. produce a provisional memory from a focus-setting turn?** — with the pre-turn mode (evaluated before the handler updates `last_human_message_at`) deciding the fallback:
 
 - **A focus-setting turn that produces a provisional memory** sets the focus to that memory id — a new subject, regardless of prior mode. In v0.7 a turn is *approximately* focus-setting via a **structural cue that introduces something to discuss** — a task/imperative or a question (including a short one, "what about a coma?"); shortness is not contentlessness. This is a separate axis from *response obligation*: a `REPROMPT` ("You there?") requires a reply but asserts no new subject, so it is **not** focus-setting; and a plain declarative statement is **not** focus-setting either (see the realization note below).
 - **Any turn that does not establish a new subject** — a backchannel (`ok`/`noted`/…), *or* a focus-setting turn that created no memory (a terse-but-meaningful "no" that ingress drops as `is_trivial`) — does not revive or replace the subject on its own. It defers to the pre-turn mode:
@@ -2786,22 +2786,20 @@ Two measured limits of the v0.7 deterministic gate motivate this, and both are t
 
 ### 35.2 The model
 
-The LLM proposes a **discourse relation** — a typed label, the §22.4 pattern (model interprets; deterministic policy decides the effect) — at the two points in a cycle that already make a generative call, so **no new call is added** (invariant 3):
+The LLM proposes a **discourse relation** — a typed label, the §22.4 pattern (model interprets; deterministic policy decides the effect) — at two points, each riding a generative call that already happens, so **no new call is added** (invariant 3). The two relations are **different kinds of thing**, and conflating them (as an earlier draft did) is a design error:
 
-- a **focus transition** on a human turn — `KEEP` / `REPLACE` / `CLEAR` the discourse focus (§35.3), replacing §34.4's deterministic predicate;
-- an **advancement relation** on a proactive candidate — how the drafted message relates to the current thread (§35.4), gating whether it is spoken (the advance-rate lever).
-
-The load-bearing safety property: **the relation may only *narrow* outward speech, never force it.** A claimed `ADVANCE` that is a cosine near-repeat is still suppressed by the continuity mute (§16.2); a `REPLACE` naming a non-existent subject is rejected by identifier validation (§22.1). The model can *remove* a speak or point the focus at a *validated* existing subject — it can never manufacture a speak the deterministic gates would block, nor write unvalidated state (invariant 5, invariant 42).
+- the **advancement relation** on a proactive candidate (§35.4) is an **expression gate**. It can only *suppress* a speak (`ORPHAN`/`REPEAT` → not spoken), never force one — a claimed `ADVANCE` that is a cosine near-repeat is still muted by the continuity gate (§16.2), and a *missing* label falls back to the §34 decision, never silences. Suppress-only (invariant 42a).
+- the **focus transition** on a human turn (§35.3) is a **state write**. It moves the *subject the gate scores against*, so by construction it changes *later* gating — `CLEAR` fail-opens the gate, `REPLACE` re-points it. It is therefore **not** suppress-only and must not be described as such; its safety is bounded differently (§35.6, invariant 42b): it may set the focus only to a *validated existing* subject and writes no other state, and it is the sole LLM input to the focus.
 
 ### 35.3 Focus transition (`KEEP` / `REPLACE` / `CLEAR`)
 
-On a human turn that makes a generative call (mandatory or optional-reactive), the model additionally proposes the transition:
+**Commit point — on the human-turn *result*, not at proactive pre-outbox.** When a human turn makes a generative call (all mandatory; an optional-reactive turn that actually drew a reply), the model returns the transition alongside its reply and the **`llm_result` handler for that human turn applies it**. This amends §34.4's "focus is written only in the human handler": the handler still writes a *provisional* focus via the deterministic predicate at reduction (so a wake before the result is scored against something), and the human-turn result then **overrides** it. Proactive pre-outbox (§22.2) would be the wrong place — a *silence* result never reaches it, and it is the speak revalidation, not a focus write.
 
-- **`KEEP`** — the turn continues the current subject; focus unchanged (a check-in, an acknowledgement-with-a-question, an elaboration).
-- **`REPLACE(subject)`** — the turn asserts a new subject; the focus becomes the named subject — an existing `topic_id`, or this turn's provisional memory. The id is validated before adoption (§22.1); an unknown id falls back to the turn's own memory.
-- **`CLEAR`** — the turn closes/abandons the subject; focus becomes none.
+- **`KEEP`** — focus unchanged (a check-in, an acknowledgement-with-a-question, an elaboration).
+- **`REPLACE`** — the focus becomes a **validated provisional-memory id**: this turn's memory, or an earlier human turn's memory (a deliberate return). It is **not** a `topic_id` — §34.3 fixes the focus as a *memory* because that is what the gate resolves through `embeddings_by_memory`; a `topic_id` would validate as "existing", then miss the memory lookup and silently fail-open (§34.5 rule 1). An unknown/invalid id is treated as `KEEP`.
+- **`CLEAR`** — focus becomes none; the gate then fails open until a new subject is set — a *deliberate* widening (§35.6), not a suppression.
 
-This subsumes §34.4's predicate *and its residuals*: a declarative subject is a `REPLACE`, a check-in is a `KEEP`, a wrap-up is a `CLEAR`. **Deterministic fallback:** a human turn routed to silence with *no* generative call (a backchannel / low-substance turn, §13.6) carries no proposal, so the v0.7 deterministic predicate (§34.4) still decides those. v0.8 is therefore a *refinement layered on* v0.7, not a removal — the deterministic path stays the floor.
+**What it fixes, and what it does not.** It reliably fixes the *check-in* residual (`"You there?"` is `TASK_QUESTION` → makes the mandatory call → `KEEP` runs) and improves fidelity on every call-making turn. It does **not** fix the opening-*declarative* residual in the common case: a bare declarative (`"The robot needs better balance."`, `HIGH_INFORMATION`) usually takes `_optional_path` and **silences with no call** (`silence_nothing` / `silence_low_worth` / `silence_stochastic`), so no proposal exists and the v0.7 deterministic predicate (§34.4), which still refuses to anchor a declarative, governs. Closing that residual needs a **dedicated focus-classification call** on substantive no-reply turns — a *new* generative call — which is **deferred** (§35.7). v0.8 is a refinement layered on v0.7 for call-making turns; the deterministic path stays the floor everywhere else.
 
 ### 35.4 Advancement relation (the advance-rate lever)
 
@@ -2817,7 +2815,9 @@ ORPHAN    unrelated to the current thread
 REPEAT    restates something already said
 ```
 
-Deterministic policy gates `SPEAK`: only forward moves — `ADVANCE` / `EVIDENCE` / `REVISE` / `CLOSE` (and `REOPEN` under a higher bar, §35.7) — are speech-eligible; `ORPHAN` and `REPEAT` degrade to enrichment-only or silence, at the **same pre-outbox checkpoint** and by the same mechanism §34.6 uses for a cosine orphan/near-repeat. This is the direct advance-rate intervention: a proactive utterance must *move* the thread, not merely sit near it.
+Deterministic policy gates `SPEAK` **by suppression only**: `ORPHAN` and `REPEAT` degrade to enrichment-only or silence, at the **same pre-outbox checkpoint** and by the same mechanism §34.6 uses for a cosine orphan/near-repeat; every other value (the forward moves `ADVANCE` / `EVIDENCE` / `REVISE` / `CLOSE`, and `REOPEN` under a higher bar, §35.7) leaves the §34 decision untouched. This is the direct advance-rate intervention: a proactive utterance must *move* the thread, not merely sit near it.
+
+**A missing or unknown relation fails open to the §34 decision — it is not a parse failure.** §22.3 (parse failure → no output) does **not** apply to the field's *absence*: a proactive result that omits `relation` — the current v0.7 worker, or any model that didn't emit it — is gated exactly as v0.7 (§34 cosine gate + continuity mute), never silenced for the omission. The advancement gate only *adds* suppression when the model *does* return `ORPHAN`/`REPEAT`; it is strictly suppress-only and backward-compatible.
 
 ### 35.5 Layering — the deterministic gates (§34) stay
 
@@ -2825,16 +2825,17 @@ The cheap deterministic gates remain the **pre-filter**, so a generative call is
 
 ### 35.6 Invariants and boundaries
 
-- **One generative call (invariant 3):** both relations ride calls that already happen; none is added.
-- **LLM is not authority (invariant 5, invariant 42):** the relation is a proposal gated by deterministic policy; it can only suppress, never force (§35.2). Whitelist / identifier / clamp validation (§22.1) applies.
-- **Determinism / replay (invariant 28):** relations come from recorded worker results; replay reproduces the gating given those results.
-- **Goodhart separation:** the relation gates *speech*; the observational advance-rate / dominance metrics stay computed from vectors, never from the LLM label — otherwise the agent could move its own metric by relabeling (§17, §27).
-- **Budget (invariant 10):** no new proactive LLM calls; the relation is a field on an existing result.
+The two relations have **different safety envelopes** — invariant 42 is split accordingly:
+
+- **Advancement relation — suppress-only (invariant 42a).** May only *narrow* proactive speech (`ORPHAN`/`REPEAT` → not spoken); a missing/unknown label fails open to the §34 decision (§35.4); it can never force a speak the deterministic gates (§16.2, §34) would block, and is never wired into the observational advance-rate/dominance metrics (Goodhart — else the agent moves its own metric by relabeling).
+- **Focus transition — a validated state write (invariant 42b).** It moves the focus *subject*, which by design changes what the next gate suppresses — `CLEAR` fail-opens the gate (widening), `REPLACE` re-points it. It is bounded: it may set the focus **only** to a validated existing provisional-memory id (or `KEEP`/`CLEAR`), writes no other state, and is the **sole** LLM input to the focus. **This amends invariant 41:** §34's gate still computes affinity and thresholds *by code* (no LLM authority over the mechanism), but the focus subject it scores against may now be set by this transition.
+- **One generative call (invariant 3):** both ride calls that already happen; **no call is added in v0.8**. (A future dedicated declarative focus call, §35.7, would be a new call and must be budgeted, invariant 10.)
+- **Determinism / replay (invariant 28):** relations come from recorded worker results; replay reproduces both the gating and the focus write.
 
 ### 35.7 v0.8 MVP scope and deferred
 
-- **MVP:** the focus transition (§35.3) and the advancement gate (§35.4), both as fields on the existing human-turn and proactive results, gated at pre-outbox.
-- **Deferred:** `REOPEN`'s generative framing ("going back to something from earlier…") and parked-insight storage (§34.8); letting agent speech advance the focus; multi-thread state. In the MVP `REOPEN` is held to a high bar (or treated as `ORPHAN`) until parking exists.
+- **MVP:** the focus transition applied on the **human-turn result** (§35.3, overriding the deterministic provisional focus), and the advancement gate at proactive **pre-outbox** (§35.4). A missing relation reproduces v0.7 behavior exactly.
+- **Deferred:** the **dedicated focus-classification call** that would close the no-reply *declarative* residual (a new, budgeted generative call); `REOPEN`'s generative framing ("going back to something from earlier…") and parked-insight storage (§34.8); letting agent speech advance the focus; multi-thread state. In the MVP `REOPEN` is held to a high bar (or treated as `ORPHAN`) until parking exists.
 
 ### 35.8 Evaluation
 
