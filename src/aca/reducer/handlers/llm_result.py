@@ -163,9 +163,25 @@ def _apply_focus_transition(ctx, work: WorkItem, decision: LLMDecision) -> str |
     conversation = ctx.stores.state.load_conversation()
     if _focus_write_is_stale(conversation, work):
         return "focus_stale"
-    if conversation.focus_memory_id == new_focus:
+    # Focus AND closed subject are restored from the *pre-turn* snapshot, not the live conversation:
+    # the deterministic write may have already mutated both before this result arrived (§34.11). So
+    #   KEEP     -> focus = prior_focus, closed = prior_closed   (restore the pre-turn state)
+    #   REPLACE  -> focus = X,           closed = None           (a live subject reopens the floor)
+    #   CLEAR    -> focus = None,        closed = prior_focus or prior_closed
+    # The CLEAR fallback keeps a *second* CLEAR (prior_focus already None) from erasing the identity.
+    prior_closed = source.get("prior_closed_focus_memory_id")
+    if decision.focus_transition == "CLEAR":
+        closed_focus = source.get("prior_focus_memory_id") or prior_closed
+    elif new_focus is not None:
+        closed_focus = None
+    else:  # KEEP (or a REPLACE that fell back to KEEP) with no focus to restore
+        closed_focus = prior_closed
+    if conversation.focus_memory_id == new_focus and conversation.closed_focus_memory_id == closed_focus:
         return None
-    ctx.stores.state.save_conversation(replace(conversation, focus_memory_id=new_focus))
+    ctx.stores.state.save_conversation(
+        replace(conversation, focus_memory_id=new_focus, closed_focus_memory_id=closed_focus))
+    if decision.focus_transition == "CLEAR":
+        return "focus_closed"
     return "focus_cleared" if new_focus is None else "focus_set"
 
 
@@ -198,8 +214,12 @@ def _finish_mandatory(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
 def _finish_reactive(ctx, event, work: WorkItem, decision: LLMDecision, now) -> HandlerOutcome:
     useful = apply_proposals(ctx, decision.proposals, now)
     if decision.action is not ActionKind.SPEAK or not decision.message:
-        _finalize(ctx, event.cycle_id, "silence", useful=useful)
-        return HandlerOutcome(note="reactive_silence")
+        # The focus transition belongs to the human *turn*, not the reply (§35.3): a reactive silence
+        # is still a valid outcome that can CLEAR/REPLACE the subject — "let's drop it" may warrant no
+        # verbal reply yet still close the thread. (Its own staleness guard drops a superseded write.)
+        focus_note = _apply_focus_transition(ctx, work, decision)
+        _finalize(ctx, event.cycle_id, "silence", useful=useful, note=focus_note)
+        return HandlerOutcome(note=_join_note("reactive_silence", focus_note))
 
     # An optional reply is droppable: if the conversation moved on or the candidate is gone, the
     # reply is stale (DESIGN §22.2). Optional silence is a valid terminal action here (DESIGN 15).

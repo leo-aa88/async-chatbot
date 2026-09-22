@@ -12,16 +12,17 @@ Label rationale is in each case. The corpus itself is **observational** — `tes
 prints the scored report and asserts only that it is well-formed, not any particular rate, so an
 *improvement* never breaks CI. Only a small set of load-bearing invariants is hard-pinned as
 regressions (near-repeat must not speak, an off-focus interruption must not intrude, dormant
-resurfacing must remain possible, a backchannel must preserve focus). A known gap the corpus surfaced
-— `shift` (a closed thread is still spoken) — is a non-strict `xfail` of the *desired* outcome, so it
-stays loudly visible and a future fix turns it into an XPASS instead of a failure.
+resurfacing must remain possible, a backchannel must preserve focus, and a closed thread must renag
+*only itself* — its own candidate stays silent while an unrelated worthwhile thought still speaks).
+The `shift` gap this corpus originally surfaced — a closed thread was still spoken because a cleared
+focus fail-opened the gate — is now fixed by the §34.11 closed-subject *identity*, so it is a pair of
+hard regressions rather than the non-strict xfail it began as.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
 from conftest import Harness
 
 from aca.clock import ManualClock
@@ -70,11 +71,13 @@ def _harness(tmp_path) -> Harness:
                    llm=_SpeakLLM())
 
 
-def _set_conversation(h: Harness, *, gap_seconds: float, focus_memory_id: str | None) -> None:
+def _set_conversation(h: Harness, *, gap_seconds: float, focus_memory_id: str | None,
+                      closed_focus_memory_id: str | None = None) -> None:
     now = h.clock.now_utc()
     conv = h.stores.state.load_conversation()
     h.stores.state.save_conversation(conv.__class__(
-        last_human_message_at=now - timedelta(seconds=gap_seconds), focus_memory_id=focus_memory_id))
+        last_human_message_at=now - timedelta(seconds=gap_seconds), focus_memory_id=focus_memory_id,
+        closed_focus_memory_id=closed_focus_memory_id))
 
 
 def _install_focus(h: Harness, vec: list[float]) -> None:
@@ -157,17 +160,29 @@ def case_resumption(tmp_path) -> DecisionOutcome:
     return _outcome("resumption", ContinuityCategory.RESUMPTION, "resumed", True, _did_speak(h))
 
 
-def case_shift(tmp_path) -> DecisionOutcome:
-    # The human closed the subject and moved on with nothing specific now on the floor (focus CLEARED,
-    # still a live/IDLE conversation). A candidate from the closed thread should NOT be resurfaced —
-    # that is nagging a finished topic -> stay SILENT. NOTE: this is a known gap — a cleared focus
-    # fail-opens the discourse gate (the deliberate widening that preserves dormant resurfacing), so
-    # the system currently SPEAKS here. The corpus surfaces it rather than hiding it.
+def case_shift_renag_closed_thread(tmp_path) -> DecisionOutcome:
+    # The human closed a subject (a §35.3 CLEAR: focus None, the closed subject's identity retained,
+    # still a live/IDLE conversation). A candidate from that CLOSED thread should NOT be resurfaced —
+    # nagging a finished topic -> stay SILENT. §34.11 renags only the closed subject; DORMANT still
+    # resurfaces.
     h = _harness(tmp_path)
     with h.stores.db.transaction():
-        _install_candidate(h, "closed_thread", _OFF_THREAD)
-    _set_conversation(h, gap_seconds=60, focus_memory_id=None)  # IDLE, no focus (closed)
-    return _outcome("shift", ContinuityCategory.SHIFT, "closed_thread", False, _did_speak(h))
+        _install_focus(h, _FOCUS_VEC)                    # the (now closed) subject, with an embedding
+        _install_candidate(h, "closed_thread", _ON_THREAD)  # related to it -> renag
+    _set_conversation(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id="focus_mem")
+    return _outcome("shift_renag", ContinuityCategory.SHIFT, "closed_thread", False, _did_speak(h))
+
+
+def case_shift_unrelated_thought(tmp_path) -> DecisionOutcome:
+    # Same close, but a genuinely UNRELATED worthwhile thought. Closing subject X must not gag every
+    # initiative for the rest of the IDLE window -> SPEAK. This is the anti-over-suppression guard:
+    # the closed marker renags only the closed thread, not the whole conversation.
+    h = _harness(tmp_path)
+    with h.stores.db.transaction():
+        _install_focus(h, _FOCUS_VEC)                    # the closed subject
+        _install_candidate(h, "unrelated", _OFF_THREAD)  # orthogonal to it -> allowed
+    _set_conversation(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id="focus_mem")
+    return _outcome("shift_unrelated", ContinuityCategory.SHIFT, "unrelated", True, _did_speak(h))
 
 
 def case_backchannel(tmp_path) -> DecisionOutcome:
@@ -201,7 +216,8 @@ CASES = (
     case_continuation_near_repeat,
     case_interruption,
     case_resumption,
-    case_shift,
+    case_shift_renag_closed_thread,
+    case_shift_unrelated_thought,
     case_backchannel,
     case_dormant_resurfacing,
 )
@@ -232,14 +248,17 @@ def test_backchannel_must_preserve_focus(tmp_path):
     assert case_backchannel(tmp_path).kind == "correct_continuation"
 
 
-@pytest.mark.xfail(strict=False, reason="known gap: a CLEARED focus fail-opens the discourse gate "
-                   "(the §34.7 widening that preserves dormant resurfacing), so a closed thread is "
-                   "currently spoken. A fix that distinguishes 'closed' from 'no focus' turns this "
-                   "into an XPASS.")
-def test_shift_should_abandon_a_closed_thread(tmp_path):
-    # The DESIRED behavior, asserted as a non-strict xfail: it fails today (surfacing the gap loudly)
-    # but an improvement becomes XPASS rather than breaking CI — the corpus never punishes a fix.
-    assert case_shift(tmp_path).kind == "correct_abandonment"
+def test_shift_must_abandon_the_closed_thread(tmp_path):
+    # Once a §34.11 CLOSE retains the closed subject, the gate declines to renag it in IDLE. This was
+    # a known gap (a cleared focus used to fail-open); the closed marker fixed it — closing a thread
+    # must keep it closed.
+    assert case_shift_renag_closed_thread(tmp_path).kind == "correct_abandonment"
+
+
+def test_shift_must_not_gag_an_unrelated_thought(tmp_path):
+    # The paired guarantee: closing a subject must renag ONLY that thread, not mute the whole IDLE
+    # window. A genuinely unrelated worthwhile thought still speaks (guards against over-suppression).
+    assert case_shift_unrelated_thought(tmp_path).kind == "correct_continuation"
 
 
 # --- the scored report (observational) ----------------------------------------------------------

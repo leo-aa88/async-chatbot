@@ -79,7 +79,9 @@ def _previous_context(ctx: ReducerContext) -> ClassificationContext:
     )
 
 
-def _update_conversation(ctx: ReducerContext, now: datetime, *, focus_memory_id: str | None) -> None:
+def _update_conversation(
+    ctx: ReducerContext, now: datetime, *, focus_memory_id: str | None, closed_focus_memory_id: str | None
+) -> None:
     conversation = ctx.stores.state.load_conversation()
     recent = (*conversation.recent_human_turn_timestamps, now)[-_MAX_RECENT_TURNS:]
     updated = replace(
@@ -88,9 +90,25 @@ def _update_conversation(ctx: ReducerContext, now: datetime, *, focus_memory_id:
         active_observed_silence_seconds=0.0,  # a present human resets observed silence
         recent_human_turn_timestamps=recent,
         focus_memory_id=focus_memory_id,
+        closed_focus_memory_id=closed_focus_memory_id,
     )
     updated = replace(updated, mode=infer_mode_for(ctx, updated, now))
     ctx.stores.state.save_conversation(updated)
+
+
+def _next_closed_focus(
+    current: str | None, *, focus_memory_id: str | None, pre_mode: ConversationMode
+) -> str | None:
+    """Whether the closed subject (§34.11) survives this human turn. The deterministic path never
+    *closes* one (only a §35.3 `CLEAR` does); it only lets a close expire: a turn that establishes a
+    subject reopens the floor, and a lull (`pre_mode` DORMANT) ends the just-closed window so later
+    resurfacing is unconstrained. Otherwise (a bare ack in a live conversation) the closed subject
+    persists, so an acknowledgement can't quietly reopen a thread the human resolved."""
+    if focus_memory_id is not None:
+        return None
+    if pre_mode is ConversationMode.DORMANT:
+        return None
+    return current
 
 
 def _next_focus(
@@ -159,7 +177,9 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
         memory_id=memory_id,
         pre_mode=pre_mode,
     )
-    _update_conversation(ctx, now, focus_memory_id=focus)
+    closed_focus = _next_closed_focus(
+        pre_conversation.closed_focus_memory_id, focus_memory_id=focus, pre_mode=pre_mode)
+    _update_conversation(ctx, now, focus_memory_id=focus, closed_focus_memory_id=closed_focus)
 
     if classification.possible_prior_miss:
         # Re-prompt is weak classification-quality evidence, zero adaptation weight (DESIGN 17.1).
@@ -167,7 +187,8 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
 
     if classification.response_required:
         outcome = _mandatory_path(ctx, event, cycle_id, classification.message_class, now,
-                                  memory_id=memory_id, prior_focus=pre_conversation.focus_memory_id)
+                                  memory_id=memory_id, prior_focus=pre_conversation.focus_memory_id,
+                                  prior_closed=pre_conversation.closed_focus_memory_id)
     elif classification.message_class in _LOW_SUBSTANCE_CLASSES:
         # Acknowledgements, closers, and low-information turns are persisted but earn no reactive
         # reply — silence is a valid, first-class action here (DESIGN 13.6, 15). This also stops a
@@ -177,14 +198,16 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
         )
     else:
         outcome = _optional_path(ctx, event, cycle_id, memory_id, now,
-                                 prior_focus=pre_conversation.focus_memory_id)
+                                 prior_focus=pre_conversation.focus_memory_id,
+                                 prior_closed=pre_conversation.closed_focus_memory_id)
 
     outcome.dispatch_work_ids = dispatch + outcome.dispatch_work_ids
     outcome.reschedule = True
     return outcome
 
 
-def _mandatory_path(ctx, event, cycle_id, message_class, now, *, memory_id, prior_focus) -> HandlerOutcome:
+def _mandatory_path(ctx, event, cycle_id, message_class, now, *, memory_id, prior_focus,
+                    prior_closed) -> HandlerOutcome:
     obligation = ResponseObligation(
         id=ids.new_id(ids.OBLIGATION),
         source_event_id=event.event_id,
@@ -202,10 +225,13 @@ def _mandatory_path(ctx, event, cycle_id, message_class, now, *, memory_id, prio
             "response_required": True,
             "cycle_type": CYCLE_MANDATORY,
             "channel": event.channel,
-            # Focus-transition inputs (§35.3): this turn's memory (a REPLACE target) and the
-            # pre-turn focus (what KEEP reverts to). Read back by the llm_result handler.
+            # Focus-transition inputs (§35.3/§34.11): this turn's memory (a REPLACE target) and the
+            # *pre-turn* focus and closed subject (what KEEP restores; CLEAR falls back to the closed
+            # one). Snapshotted here because the deterministic write mutates the live state before the
+            # result arrives. Read back by the llm_result handler.
             "turn_memory_id": memory_id,
             "prior_focus_memory_id": prior_focus,
+            "prior_closed_focus_memory_id": prior_closed,
         },
         kind=WorkKind.LLM_COGNITION,
         now=now,
@@ -217,7 +243,7 @@ def _mandatory_path(ctx, event, cycle_id, message_class, now, *, memory_id, prio
     return HandlerOutcome(dispatch_work_ids=[work_id], trace=trace)
 
 
-def _optional_path(ctx, event, cycle_id, memory_id, now, *, prior_focus) -> HandlerOutcome:
+def _optional_path(ctx, event, cycle_id, memory_id, now, *, prior_focus, prior_closed) -> HandlerOutcome:
     candidates = build_candidates(ctx, now)
     selection = select(
         candidates,
@@ -262,10 +288,12 @@ def _optional_path(ctx, event, cycle_id, memory_id, now, *, prior_focus) -> Hand
             "cycle_type": CYCLE_REACTIVE_OPTIONAL,
             "channel": event.channel,
             "candidate": _candidate_context(ctx, selection.candidate),
-            # Focus-transition inputs (§35.3): this turn's memory (a REPLACE target) and the
-            # pre-turn focus (what KEEP reverts to). Read back by the llm_result handler.
+            # Focus-transition inputs (§35.3/§34.11): this turn's memory (a REPLACE target) and the
+            # pre-turn focus and closed subject (what KEEP restores; CLEAR falls back to the closed
+            # one). Read back by the llm_result handler.
             "turn_memory_id": memory_id,
             "prior_focus_memory_id": prior_focus,
+            "prior_closed_focus_memory_id": prior_closed,
         },
         now=now,
     )
