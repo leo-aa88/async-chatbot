@@ -32,6 +32,9 @@ _UNRELATED_VEC = [0.0, 1.0, 0.0]   # cosine 0 -> a genuinely different thought
 def _config() -> Config:
     return Config.from_mapping({
         "rng_seed": 4,
+        # High initiative so an optional-reactive declarative reliably dispatches (for the reactive-
+        # silence case); irrelevant to the mandatory/ack/gate cases.
+        "temperament": {"initiative": 0.95, "inhibition": 0.05},
         "cognition": {"selection_temperature": 0.2, "null_candidate_score": -10.0,
                       "semantic_worthiness_floor": 0.2},
         "timing": {"proactive_cooldown": "0s"},
@@ -42,24 +45,25 @@ def _config() -> Config:
 
 
 class _FocusLLM:
-    """A reply worker with a settable focus transition, so a turn can close or re-open the subject."""
+    """A reply worker with a settable focus transition (KEEP/REPLACE/CLEAR) and speak/silence, so a
+    turn can close, re-open, or restore the subject with or without a verbal reply."""
 
-    def __init__(self, focus: str | None = None) -> None:
-        self.focus = focus  # None | "CLEAR" | "REPLACE"
+    def __init__(self, focus: str | None = None, *, speak: bool = True) -> None:
+        self.focus = focus  # None | "KEEP" | "CLEAR" | "REPLACE"
+        self.speak = speak
 
     async def run(self, snapshot) -> LLMOutput:
-        result = {"action": "speak", "message": "Noted."}
-        if self.focus == "CLEAR":
-            result["focus"] = "CLEAR"
-        elif self.focus == "REPLACE":
-            result["focus"] = "REPLACE"
-            result["focus_memory_id"] = snapshot.context.get("source", {}).get("turn_memory_id")
+        result: dict = {"action": "speak", "message": "Noted."} if self.speak else {"action": "silence"}
+        if self.focus in ("KEEP", "CLEAR", "REPLACE"):
+            result["focus"] = self.focus
+            if self.focus == "REPLACE":
+                result["focus_memory_id"] = snapshot.context.get("source", {}).get("turn_memory_id")
         return LLMOutput(result=result, tokens_in=8, tokens_out=4)
 
 
-def _harness(tmp_path, focus: str | None = None) -> Harness:
+def _harness(tmp_path, focus: str | None = None, *, speak: bool = True) -> Harness:
     return Harness(tmp_path, _config(), ManualClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC)),
-                   llm=_FocusLLM(focus))
+                   llm=_FocusLLM(focus, speak=speak))
 
 
 def _set(h: Harness, *, gap_seconds: float, focus_memory_id, closed_focus_memory_id) -> None:
@@ -178,4 +182,48 @@ def test_a_lull_ends_the_closed_window(tmp_path):
     _set(h, gap_seconds=2 * 3600, focus_memory_id=None, closed_focus_memory_id="old")  # then a lull
     h.send_human("ok")  # arrives after DORMANT -> the closed window is over
     assert _closed(h) is None
+    h.close()
+
+
+# --- lifecycle holes the review caught (must restore the PRE-turn closed state) -----------------
+
+def test_keep_after_a_provisional_focus_preserves_the_closed_subject(tmp_path):
+    # closed=A, then a check-in question the deterministic handler provisionally treats as focus-setting
+    # (focus=B, clearing closed). The model correctly returns KEEP -> restore the PRE-turn state:
+    # focus None, closed A. (Regression: KEEP read closed from the already-mutated conversation and
+    # lost A, silently re-opening the thread.)
+    h = _harness(tmp_path, focus="KEEP")
+    _set(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id="A")
+    h.send_human("Was that clear?")  # TASK_QUESTION -> mandatory, provisionally focus-setting
+    h.run_all_pending()
+    assert _focus(h) is None
+    assert _closed(h) == "A"
+    h.close()
+
+
+def test_a_second_clear_keeps_the_closed_identity(tmp_path):
+    # Already closed (focus None, closed A); another CLEAR must not erase A just because there is no
+    # current focus to close — it falls back to the prior closed subject.
+    h = _harness(tmp_path, focus="CLEAR")
+    _set(h, gap_seconds=60, focus_memory_id=None, closed_focus_memory_id="A")
+    h.send_human("Should we forget all of that?")  # TASK_QUESTION -> mandatory
+    h.run_all_pending()
+    assert _focus(h) is None
+    assert _closed(h) == "A"
+    h.close()
+
+
+def test_a_reactive_silence_can_close_the_subject(tmp_path):
+    # The focus transition belongs to the human turn, not the reply (§35.3): a reactive result that
+    # stays SILENT but returns CLEAR still closes the thread. ("Let's drop it" — nothing worth saying,
+    # yet the subject is resolved.) Regression: _finish_reactive returned on silence before applying it.
+    h = _harness(tmp_path, focus="CLEAR", speak=False)
+    with h.stores.db.transaction():
+        _install_candidate(h, "some_topic", _UNRELATED_VEC)  # gives the optional path a candidate
+    _set(h, gap_seconds=60, focus_memory_id="X", closed_focus_memory_id=None)
+    h.send_human("The gyroscope keeps drifting over time.")  # HIGH_INFORMATION -> reactive-optional
+    assert h.stores.work.recent_traces(limit=1)[0].notes == "reactive_optional"  # it dispatched
+    h.run_all_pending()
+    assert _focus(h) is None
+    assert _closed(h) == "X"   # closed = the pre-turn focus
     h.close()
