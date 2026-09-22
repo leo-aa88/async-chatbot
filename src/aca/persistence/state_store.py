@@ -132,6 +132,7 @@ class StateStore:
                     txt(ts) for ts in c.recent_human_turn_timestamps
                 ],
                 "focus_memory_id": c.focus_memory_id,
+                "subject_closed": c.subject_closed,
             }
         )
 
@@ -149,4 +150,5 @@ class StateStore:
                 dt(ts) for ts in d.get("recent_human_turn_timestamps", []) if ts
             ),
             focus_memory_id=d.get("focus_memory_id"),
+            subject_closed=d.get("subject_closed", False),  # default: pre-v0.8 states were never closed
         )

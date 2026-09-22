@@ -163,9 +163,18 @@ def _apply_focus_transition(ctx, work: WorkItem, decision: LLMDecision) -> str |
     conversation = ctx.stores.state.load_conversation()
     if _focus_write_is_stale(conversation, work):
         return "focus_stale"
-    if conversation.focus_memory_id == new_focus:
+    # A CLEAR *closes* the subject (§34.11): its absence is deliberate, so the gate won't renag it in
+    # IDLE. Any transition that establishes a subject re-opens the floor (subject_closed=False); a
+    # KEEP that leaves no focus (prior was already None) doesn't change the closed state.
+    closed = True if decision.focus_transition == "CLEAR" else (
+        False if new_focus is not None else conversation.subject_closed
+    )
+    if conversation.focus_memory_id == new_focus and conversation.subject_closed == closed:
         return None
-    ctx.stores.state.save_conversation(replace(conversation, focus_memory_id=new_focus))
+    ctx.stores.state.save_conversation(
+        replace(conversation, focus_memory_id=new_focus, subject_closed=closed))
+    if decision.focus_transition == "CLEAR":
+        return "focus_closed"
     return "focus_cleared" if new_focus is None else "focus_set"
 
 

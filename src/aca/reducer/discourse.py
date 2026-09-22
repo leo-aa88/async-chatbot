@@ -151,13 +151,24 @@ def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelati
 
 
 def is_discourse_orphan(ctx: ReducerContext, kind: str, candidate_id: str, now) -> bool:
-    """True iff the gate is active (IDLE) AND the candidate is an ORPHAN of the current focus.
+    """True iff a proactive candidate should be muted by the discourse gate (IDLE only).
 
-    Fail-open everywhere else: inactive outside `IDLE`, and UNJUDGED (missing focus/candidate
-    vector, cross-model, or gate disabled) is never an orphan (§34.5, §34.7).
+    Three cases while IDLE:
+    * a **focus is set** — the candidate is an ORPHAN of it (cosine below the bridge, §34.5).
+    * **no focus, subject just closed** — a §35.3 `CLEAR` resolved the thread; don't renag it while
+      the human is still present. This is the one case where a missing focus *suppresses* rather than
+      fails open, and it is deliberately scoped to `IDLE`: `DORMANT` leaves the gate inactive, so a
+      later lull still resurfaces (§34.7). Disambiguates `focus is None` (§34.11).
+    * **no focus, not closed** — the declarative residual, or a fresh conversation: fail open.
+
+    Fail-open everywhere else: inactive outside `IDLE`; UNJUDGED (missing/degenerate/cross-model
+    vector, or gate disabled) is never an orphan (§34.5, §34.7).
     """
     if not gate_active(ctx, now):
         return False
+    conversation = ctx.stores.state.load_conversation()
+    if conversation.focus_memory_id is None:
+        return conversation.subject_closed
     return assess(ctx, kind, candidate_id) is DiscourseRelation.ORPHAN
 
 

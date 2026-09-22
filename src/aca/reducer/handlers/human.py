@@ -79,7 +79,9 @@ def _previous_context(ctx: ReducerContext) -> ClassificationContext:
     )
 
 
-def _update_conversation(ctx: ReducerContext, now: datetime, *, focus_memory_id: str | None) -> None:
+def _update_conversation(
+    ctx: ReducerContext, now: datetime, *, focus_memory_id: str | None, subject_closed: bool
+) -> None:
     conversation = ctx.stores.state.load_conversation()
     recent = (*conversation.recent_human_turn_timestamps, now)[-_MAX_RECENT_TURNS:]
     updated = replace(
@@ -88,9 +90,23 @@ def _update_conversation(ctx: ReducerContext, now: datetime, *, focus_memory_id:
         active_observed_silence_seconds=0.0,  # a present human resets observed silence
         recent_human_turn_timestamps=recent,
         focus_memory_id=focus_memory_id,
+        subject_closed=subject_closed,
     )
     updated = replace(updated, mode=infer_mode_for(ctx, updated, now))
     ctx.stores.state.save_conversation(updated)
+
+
+def _next_subject_closed(current: bool, *, focus_memory_id: str | None, pre_mode: ConversationMode) -> bool:
+    """Whether the just-closed state (§34.11) survives this human turn. The deterministic path never
+    *closes* a subject (only a §35.3 `CLEAR` does); it only lets a close expire: a turn that
+    establishes a subject re-opens the floor, and a lull (`pre_mode` DORMANT) ends the just-closed
+    window so later resurfacing is unconstrained. Otherwise (a bare ack in a live conversation) the
+    close persists, so an acknowledgement can't quietly re-open a thread the human resolved."""
+    if focus_memory_id is not None:
+        return False
+    if pre_mode is ConversationMode.DORMANT:
+        return False
+    return current
 
 
 def _next_focus(
@@ -159,7 +175,9 @@ def handle_human_message(ctx: ReducerContext, event: HumanMessage) -> HandlerOut
         memory_id=memory_id,
         pre_mode=pre_mode,
     )
-    _update_conversation(ctx, now, focus_memory_id=focus)
+    subject_closed = _next_subject_closed(
+        pre_conversation.subject_closed, focus_memory_id=focus, pre_mode=pre_mode)
+    _update_conversation(ctx, now, focus_memory_id=focus, subject_closed=subject_closed)
 
     if classification.possible_prior_miss:
         # Re-prompt is weak classification-quality evidence, zero adaptation weight (DESIGN 17.1).

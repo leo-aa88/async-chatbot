@@ -110,3 +110,9 @@ class ConversationState:
     # focus-setting turn — the conversation's *subject*. The discourse gate scores a proactive
     # candidate against this while mode is IDLE. Set/held/cleared by the human-message handler.
     focus_memory_id: str | None = None
+    # Whether the current absence of a focus is a *deliberate close* rather than merely "no subject
+    # yet" (DESIGN §34.11, v0.8). Set by a §35.3 `CLEAR`; disambiguates the three meanings of
+    # `focus_memory_id is None` — never had one / closed on purpose / lapsed — so the gate can decline
+    # to renag a just-closed thread while the human is present (IDLE) without touching dormant
+    # resurfacing (DORMANT, gate inactive). Cleared once a new subject is set or a lull ends.
+    subject_closed: bool = False
