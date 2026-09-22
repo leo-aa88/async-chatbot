@@ -301,7 +301,7 @@ class Embedding:
 
 @dataclass(frozen=True, slots=True)
 class Voice:
-    """Client-side speech-to-text for the ``aca listen`` perception path (DESIGN 13, 28.2).
+    """Client-side speech-to-text for the ``aca chat --voice`` perception path (DESIGN 13, 28.2).
 
     Voice is a *perception adapter*, not cognition: the client captures a microphone, a lightweight
     VAD carves it into conversational turns, a Whisper model transcribes each utterance, and the

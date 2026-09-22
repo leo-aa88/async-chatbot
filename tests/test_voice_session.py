@@ -72,6 +72,62 @@ async def test_empty_transcript_is_not_injected():
     assert got == []
 
 
+async def test_transcribe_error_is_reported_and_capture_continues():
+    # A failure on one utterance must be reported and NOT kill the background capture loop.
+    class BoomOnce(FakeTranscriber):
+        def __init__(self):
+            super().__init__(["ok-second"])
+            self.calls = 0
+
+        async def transcribe(self, pcm, sample_rate):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("model boom")
+            return await super().transcribe(pcm, sample_rate)
+
+    frames = [LOUD, LOUD, SIL, SIL, LOUD, LOUD, SIL, SIL]  # two utterances
+    got: list[str] = []
+    errors: list[tuple[str, str]] = []
+
+    async def on_transcript(text: str) -> None:
+        got.append(text)
+
+    async def on_error(stage: str, exc: Exception) -> None:
+        errors.append((stage, str(exc)))
+
+    seg = Segmenter(start_frames=1, silence_frames=2, min_speech_frames=1, max_frames=100, pre_roll_frames=1)
+    session = VoiceSession(IterableSource(frames), EnergyVad(0.02), seg, BoomOnce(), on_transcript, on_error=on_error)
+    await session.run()
+    assert errors == [("transcription", "model boom")]
+    assert got == ["ok-second"]  # second utterance still transcribed -> loop stayed alive
+
+
+async def test_capture_error_is_reported():
+    class BoomSource:
+        def frames(self):
+            async def gen():
+                raise RuntimeError("device busy")
+                yield  # pragma: no cover - unreachable, marks this an async generator
+
+            return gen()
+
+        def close(self):
+            pass
+
+    errors: list[tuple[str, str]] = []
+
+    async def on_transcript(text: str) -> None:
+        pass
+
+    async def on_error(stage: str, exc: Exception) -> None:
+        errors.append((stage, str(exc)))
+
+    seg = Segmenter(start_frames=1, silence_frames=2, min_speech_frames=1, max_frames=10, pre_roll_frames=0)
+    session = VoiceSession(BoomSource(), EnergyVad(0.02), seg, FakeTranscriber(), on_transcript, on_error=on_error)
+    await session.run()  # must not raise
+    assert errors == [("capture", "device busy")]
+
+
 # --- factory --------------------------------------------------------------------------------
 def test_build_transcriber_default_is_fake():
     assert isinstance(build_transcriber(Voice()), FakeTranscriber)

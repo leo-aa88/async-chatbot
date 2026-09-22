@@ -16,10 +16,19 @@ from .transcriber import Transcriber
 from .vad import SpeechDetector
 
 OnTranscript = Callable[[str], Awaitable[None]]
+OnError = Callable[[str, Exception], Awaitable[None]]
 
 
 class VoiceSession:
-    """Drive the pipeline until the audio source is exhausted or :meth:`stop` is called."""
+    """Drive the pipeline until the audio source is exhausted or :meth:`stop` is called.
+
+    The session runs as a background task, so an unhandled exception here would be a *silent*
+    death — the prompt stays up while capture is gone. It therefore isolates the two failure
+    surfaces: a per-utterance error (transcribe or ingress) is reported via ``on_error`` and the
+    capture loop continues; a capture/device error (raised when the source opens the mic) is
+    reported and ends the session, since the stream can't continue. ``on_error`` receives a stage
+    label and the exception; when unset, errors are swallowed (test double behavior).
+    """
 
     def __init__(
         self,
@@ -30,6 +39,7 @@ class VoiceSession:
         on_transcript: OnTranscript,
         *,
         min_chars: int = 1,
+        on_error: OnError | None = None,
     ) -> None:
         self._source = source
         self._detector = detector
@@ -37,6 +47,7 @@ class VoiceSession:
         self._transcriber = transcriber
         self._on_transcript = on_transcript
         self._min_chars = min_chars
+        self._on_error = on_error
         self._running = False
 
     async def run(self) -> None:
@@ -51,6 +62,8 @@ class VoiceSession:
             tail = self._segmenter.flush()
             if tail is not None:
                 await self._emit(tail)
+        except Exception as exc:  # capture/device failure — report and end (stream can't continue)
+            await self._report("capture", exc)
         finally:
             self._running = False
 
@@ -60,7 +73,15 @@ class VoiceSession:
 
     async def _emit(self, utterance: Utterance) -> None:
         self._detector.reset()
-        transcript = await self._transcriber.transcribe(utterance.pcm(), utterance.sample_rate)
-        text = transcript.text.strip()
-        if len(text) >= self._min_chars:
-            await self._on_transcript(text)
+        # A transcribe or ingress error must not kill capture: report it and keep listening.
+        try:
+            transcript = await self._transcriber.transcribe(utterance.pcm(), utterance.sample_rate)
+            text = transcript.text.strip()
+            if len(text) >= self._min_chars:
+                await self._on_transcript(text)
+        except Exception as exc:
+            await self._report("transcription", exc)
+
+    async def _report(self, stage: str, exc: Exception) -> None:
+        if self._on_error is not None:
+            await self._on_error(stage, exc)

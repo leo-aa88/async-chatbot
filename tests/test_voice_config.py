@@ -71,15 +71,49 @@ def test_input_mode_round_trips_through_serialization():
 
 
 async def test_chat_send_forwards_input_mode():
-    client = IpcClient("/tmp/does-not-exist.sock")
-    captured: dict = {}
+    # Both a spoken and a typed turn take the same chat_send -> OP_CHAT path, each with one minted
+    # event_id per attempt (the idempotency key for a retried, un-ACKed send) and its input_mode.
+    for text, mode in (("hello", "voice"), ("typed line", "text")):
+        client = IpcClient("/tmp/does-not-exist.sock")
+        captured: dict = {}
 
-    async def fake_request_once(op: str, **payload):
-        captured.update(op=op, **payload)
-        return {"ok": True}
+        async def fake_request_once(op: str, _c=captured, **payload):
+            _c.update(op=op, **payload)
+            return {"ok": True}
 
-    client.request_once = fake_request_once  # type: ignore[method-assign]
-    await client.chat_send("hello", input_mode="voice")
-    assert captured["input_mode"] == "voice"
-    assert captured["text"] == "hello"
-    assert captured["event_id"]  # a stable id is minted for idempotent retry
+        client.request_once = fake_request_once  # type: ignore[method-assign]
+        await client.chat_send(text, input_mode=mode)
+        assert captured["op"] == "chat"
+        assert captured["input_mode"] == mode and captured["text"] == text
+        assert captured["event_id"]  # a stable id is minted for idempotent retry
+
+
+def test_input_mode_survives_event_store_roundtrip(tmp_path):
+    # The claim "voice uses the same durable ingress as typing" must hold across the real store
+    # boundary, not just an in-memory serialize/deserialize.
+    from aca.persistence.stores import Stores
+
+    stores = Stores.open(tmp_path / "agent.db")
+    try:
+        event = HumanMessage(event_id="e_voice", timestamp=T0, source="cli", text="spoken", input_mode="voice")
+        with stores.db.transaction():
+            assert stores.events.accept(event, T0) is True
+        reloaded = {e.event_id: e for e in stores.events.unreduced()}
+        got = reloaded["e_voice"]
+        assert isinstance(got, HumanMessage)
+        assert got.input_mode == "voice" and got.text == "spoken"
+    finally:
+        stores.close()
+
+
+def test_legacy_payload_without_input_mode_defaults_to_text():
+    # A row written before this change has no input_mode key; the store reloads it via deserialize
+    # (the same path used by unreduced()), which must default to "text" rather than reject the row.
+    from aca.clock import to_rfc3339
+
+    envelope = {
+        "event_id": "old_row", "type": "HumanMessage", "timestamp": to_rfc3339(T0),
+        "source": "cli", "payload": {"text": "hi", "channel": "cli"},
+    }
+    restored = deserialize(envelope)
+    assert isinstance(restored, HumanMessage) and restored.input_mode == "text"

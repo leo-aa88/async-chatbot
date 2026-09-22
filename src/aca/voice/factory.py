@@ -22,9 +22,14 @@ def _frames(seconds: float, frame_seconds: float) -> int:
     return int(round(seconds / frame_seconds)) if frame_seconds > 0 else 0
 
 
+def resolve_transcriber_provider(provider: str) -> str:
+    """Canonical provider name after aliasing (e.g. ``whisper`` -> ``faster-whisper``)."""
+    return _TRANSCRIBER_ALIASES.get(provider, provider)
+
+
 def build_transcriber(config: Voice) -> Transcriber:
     """Construct the transcriber for the configured provider."""
-    provider = _TRANSCRIBER_ALIASES.get(config.provider, config.provider)
+    provider = resolve_transcriber_provider(config.provider)
     if provider == "fake":
         return FakeTranscriber()
     if provider == "faster-whisper":

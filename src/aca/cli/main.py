@@ -124,13 +124,27 @@ def _start_voice(config, client: IpcClient, ui: ChatUI) -> tuple:
     ``HumanMessage``s tagged ``input_mode="voice"`` — indistinguishable to cognition from typing.
     Returns ``(session, task)`` so the caller can tear it down.
     """
+    from ..errors import ConfigError
     from ..voice.capture import MicrophoneSource
-    from ..voice.factory import build_segmenter, build_speech_detector, build_transcriber
+    from ..voice.factory import (
+        build_segmenter,
+        build_speech_detector,
+        build_transcriber,
+        resolve_transcriber_provider,
+    )
     from ..voice.session import VoiceSession
 
     voice = config.voice
     tz = config.local_timezone
-    transcriber = build_transcriber(voice)  # fail fast on a missing model/extra
+    # The offline FakeTranscriber emits placeholder text ("utterance of N samples"); wiring it to a
+    # live agent would commit fabricated turns to durable ingress on any room noise the VAD trips.
+    # It is a test double only — the live path must use a real transcriber.
+    if resolve_transcriber_provider(voice.provider) == "fake":
+        raise ConfigError(
+            "voice.provider is 'fake' (the offline test double); --voice needs a real transcriber. "
+            "Set voice.provider='faster-whisper' in config.json and `pip install -e \".[voice]\"`."
+        )
+    transcriber = build_transcriber(voice)  # loads the model; fails fast on a missing extra/model
     detector = build_speech_detector(voice)
     segmenter = build_segmenter(voice)
     source = MicrophoneSource(sample_rate=voice.sample_rate, frame_seconds=voice.frame_seconds)
@@ -139,7 +153,11 @@ def _start_voice(config, client: IpcClient, ui: ChatUI) -> tuple:
         ui.print_message(text, at=clock_time(datetime.now(UTC), tz), sender="you/voice")
         await client.chat_send(text, input_mode="voice")
 
-    session = VoiceSession(source, detector, segmenter, transcriber, on_transcript)
+    async def on_error(stage: str, exc: Exception) -> None:
+        # Surface the failure on the shared UI instead of dying silently in a background task.
+        ui.print_message(f"{stage} error: {exc}", sender="voice")
+
+    session = VoiceSession(source, detector, segmenter, transcriber, on_transcript, on_error=on_error)
     return session, asyncio.ensure_future(session.run())
 
 

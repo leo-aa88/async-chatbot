@@ -1,4 +1,4 @@
-"""Client-side voice perception for ``aca listen`` (DESIGN 13, 28.2).
+"""Client-side voice perception for ``aca chat --voice`` (DESIGN 13, 28.2).
 
 Speech is just another human utterance. This package captures a microphone, segments it into
 conversational turns with a lightweight VAD, transcribes each turn with Whisper, and hands the

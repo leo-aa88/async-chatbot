@@ -19,12 +19,28 @@ voice dependencies, and `--voice` adds the microphone without taking typing away
 
 ```bash
 pip install -e ".[voice]"     # faster-whisper + sounddevice + numpy
+```
+
+Then select a real transcriber in `<data-dir>/config.json` (the default provider is the offline
+`fake` test double, which `--voice` refuses — see below):
+
+```json
+{ "voice": { "provider": "faster-whisper", "model": "small.en" } }
+```
+
+```bash
 aca service start             # in one terminal
 aca chat --voice              # in another: type OR speak; Ctrl-D to quit
 ```
 
 Without the extra installed, `aca chat` still works for typing; `--voice` fails fast with a clear
 "pip install 'aca[voice]'" message rather than erroring deep in the capture loop.
+
+**Why `fake` is refused on the live path.** `provider: "fake"` is a deterministic test double that
+emits placeholder text (`utterance of N samples`), not a transcription. Wiring it to a running
+agent would commit fabricated human turns to durable ingress on any noise the VAD trips, so
+`aca chat --voice` refuses it with a hint to set `voice.provider=faster-whisper`. The fake stays a
+test-only double.
 
 ## Model choice
 

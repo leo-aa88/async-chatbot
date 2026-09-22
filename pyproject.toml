@@ -15,7 +15,7 @@ dependencies = []
 [project.optional-dependencies]
 # Real LLM providers (OpenAI / Anthropic / Grok / Gemini) need an async HTTP client.
 llm = ["httpx>=0.28.1"]
-# Client-side voice input (`aca listen`): microphone capture + Whisper transcription. Optional and
+# Client-side voice input (`aca chat --voice`): microphone capture + Whisper transcription. Optional and
 # imported lazily — the daemon core and the default `fake`/`energy` pipeline need none of these.
 voice = ["faster-whisper>=1.0.0", "sounddevice>=0.4.6", "numpy>=1.26"]
 # Neural VAD alternative to the dependency-free energy gate (voice.vad = "silero").

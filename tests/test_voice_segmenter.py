@@ -108,3 +108,44 @@ def test_pre_roll_prepended_so_onset_is_not_clipped():
     assert len(utterances) == 1
     # pre-roll (2 silent) + onset speech captured -> more frames than just the speech run
     assert len(utterances[0].frames) >= 4
+
+
+# --- Silero windowing core (pure, no torch) -----------------------------------------------
+def test_silero_windowing_accumulates_subwindow_frames():
+    from aca.voice.silero import _WindowedDetector
+
+    # A 480-sample capture frame is smaller than the 512-sample window; frames must accumulate,
+    # not be classified as permanent silence (the bug that swallowed the mic at default sizes).
+    scored: list[int] = []
+
+    def score(window: bytes) -> float:
+        scored.append(len(window) // 2)  # samples in the window
+        return 1.0  # always "speech"
+
+    det = _WindowedDetector(window_samples=512, threshold=0.5, score=score)
+    frame480 = b"\x01\x00" * 480
+    assert det.push(frame480) is False   # 480 < 512: no window yet, holds initial verdict
+    assert det.push(frame480) is True    # 960 total: one 512 window scored -> speech
+    assert scored == [512]
+    assert det.push(b"") is True          # verdict held between windows
+
+
+def test_silero_windowing_reset_clears_buffer_and_verdict():
+    from aca.voice.silero import _WindowedDetector
+
+    det = _WindowedDetector(512, 0.5, lambda w: 1.0)
+    det.push(b"\x01\x00" * 512)
+    assert det.push(b"") is True
+    det.reset()
+    assert det.push(b"") is False  # buffer and last verdict both cleared
+
+
+def test_silero_rejects_unsupported_sample_rate():
+    import pytest
+
+    from aca.errors import ConfigError
+    from aca.voice.silero import SileroVad
+
+    # Rejected at construction, before the torch import, so this holds without the extra installed.
+    with pytest.raises(ConfigError):
+        SileroVad(sample_rate=44100)
