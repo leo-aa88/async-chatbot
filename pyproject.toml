@@ -15,8 +15,13 @@ dependencies = []
 [project.optional-dependencies]
 # Real LLM providers (OpenAI / Anthropic / Grok / Gemini) need an async HTTP client.
 llm = ["httpx>=0.28.1"]
-# Offline speech output for the chat client via Kokoro-82M (runs locally; nothing leaves the host).
-# Optional and client-side only — the default build is silent and pulls none of this.
+# Client-side voice input (`aca chat --voice`): microphone capture + Whisper transcription. Optional and
+# imported lazily — the daemon core and the default `fake`/`energy` pipeline need none of these.
+voice = ["faster-whisper>=1.0.0", "sounddevice>=0.4.6", "numpy>=1.26"]
+# Neural VAD alternative to the dependency-free energy gate (voice.vad = "silero").
+voice-silero = ["silero-vad>=5.1", "torch>=2.2"]
+# Offline speech output for the chat client via Kokoro-82M (runs locally; nothing leaves the host after
+# a one-time model download). Optional and client-side only — the default build is silent.
 tts = ["kokoro>=0.9.4", "sounddevice>=0.5.1", "numpy>=1.26"]
 dev = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0", "ruff>=0.16.8", "httpx>=0.28.1"]
 

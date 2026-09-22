@@ -99,6 +99,7 @@ class IpcServer:
             source="cli",
             text=str(message.get("text", "")),
             channel=str(message.get("channel", "cli")),
+            input_mode=str(message.get("input_mode", "text")),
         )
         accepted = await self._service.ingest_human_message(event)
         await p.write_message(writer, p.ok({"accepted": accepted, "event_id": event.event_id}))

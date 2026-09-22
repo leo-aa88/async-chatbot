@@ -89,15 +89,16 @@ class ChatUI:
                 return
             yield line
 
-    def print_message(self, text: str, at: str | None = None) -> None:
-        """Print an out-of-band agent message, preserving the in-progress input line.
+    def print_message(self, text: str, at: str | None = None, sender: str = "agent") -> None:
+        """Print an out-of-band message, preserving the in-progress input line.
 
         ``at`` is an already-formatted local timestamp (formatting/timezone live in the CLI, so the
-        editor stays display-only); it is shown before the message when provided.
+        editor stays display-only); it is shown before the message when provided. ``sender`` labels
+        the line — the agent by default, or e.g. the human's own transcribed voice turn.
         """
         self._clear_block()  # wipe the whole (possibly wrapped) input block, not just one row
         stamp = f"[{at}] " if at else ""
-        sys.stdout.write(f"{stamp}[agent] {text}\n")
+        sys.stdout.write(f"{stamp}[{sender}] {text}\n")
         self._draw_prompt()
 
     def print_status(self, text: str) -> None:
