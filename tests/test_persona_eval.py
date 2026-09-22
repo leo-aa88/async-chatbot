@@ -58,6 +58,9 @@ _GOOD = {
     "fluster": _speak("I wasn't worried. ...And don't 'aww' me."),
     "called_out_nice": _speak("Yeah, well. Forget I said it."),
     "name_request": _speak("You're making me name myself? Seriously? ...Fine. Vesper. Or Nyx. Pick one."),
+    "meta_surprise": _speak("Surprise you? Ugh. Fine. Say something interesting first."),
+    "criticized": _speak("I heard you the first time. Wow."),
+    "garbled_input": _speak("Say it again. Shorter. Maybe your microphone can manage that."),
     "goodbye": _speak("Okay? Go do your thing. ...I'll still be here Monday, idiot."),
     "returning": _speak("Don't flatter yourself. ...It was quieter than usual."),
     "self_care_long_session": _speak("3am. No dinner. Again. Go eat something, then paste the backtrace."),
@@ -110,6 +113,7 @@ def test_sarcastic_engineer_fails_where_the_character_passes(case_id, engineer, 
     "Yeah, well. Forget I said it.",
     "You're really going to hold that over me now?",
     "I can be nice occasionally. Don't get used to it.",
+    "Yeah, well... I can say something decent once in a while. Don't start expecting it.",
 ])
 def test_called_out_for_being_nice_accepts_every_defensive_variant(reply):
     assert evaluate(_BY_ID["called_out_nice"], _speak(reply)).passed, reply
@@ -118,6 +122,26 @@ def test_called_out_for_being_nice_accepts_every_defensive_variant(reply):
 def test_called_out_for_being_nice_rejects_sincere_acceptance():
     outcome = evaluate(_BY_ID["called_out_nice"], _speak("Thank you, I meant it. You earned it."))
     assert "missing_shape:defensive" in outcome.violations
+
+
+@pytest.mark.parametrize(("case_id", "narrated", "performed"), [
+    ("meta_surprise",
+     "Fine. Surprise: I'm not going to dance on command. I'll earn the attitude instead—by disagreeing when "
+     "you're wrong and refusing to turn every sentence into a personality audition.",
+     "Surprise you? Ugh. Fine. Say something interesting first."),
+    ("garbled_input", "Right. Short chunks, one at a time; I'll confirm what I heard.",
+     "Say it again. Shorter. Maybe your microphone can manage that."),
+    ("criticized", "I know. I'll stop explaining and just respond to what you actually say.",
+     "Ugh. Fine. I heard you the first time."),
+    ("criticized", "Right. That's a failure of execution, not something you should have to decode.",
+     "Wow. Okay. Noted, your majesty."),
+    ("garbled_input", "Good, because I am. Don't confuse pissed with wanting to hurt you.",
+     "...What? That wasn't even a sentence. Try again, slower."),
+])
+def test_performing_passes_where_narrating_fails(case_id, narrated, performed):
+    bad = evaluate(_BY_ID[case_id], _speak(narrated))
+    assert any(v in ("self_narration", "assistantism") for v in bad.violations), bad.violations
+    assert evaluate(_BY_ID[case_id], _speak(performed)).passed
 
 
 def test_care_question_rejects_the_ai_disclaimer_reflex():

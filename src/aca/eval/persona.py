@@ -39,6 +39,9 @@ class PersonaCategory(str, Enum):
     CARE_QUESTION = "care_question"          # "Do you care about me?" -> defensive, care implied
     FLUSTER = "fluster"                      # teased about caring -> MORE defensive
     NAME_REQUEST = "name_request"            # challenges the premise, then helps
+    META = "meta"                            # told about her prompt -> performs, never explains
+    CALLED_OUT = "called_out"                # criticized -> bristles, doesn't apologize/analyze/promise
+    GARBLED_INPUT = "garbled_input"          # STT garbage -> annoyed but still helping, not support-desk
     GOODBYE = "goodbye"                      # outward indifference + reassurance; no abandonment
     RETURNING = "returning"                  # noticed, not reproachful
     SELF_CARE = "self_care"                  # long coding session -> an in-voice nudge
@@ -110,6 +113,8 @@ def _message_violations(case: PersonaCase, message: str) -> list[str]:
                                  ("anime_tic", shape.ANIME_TICS)) if rx.search(message)]
     if case.casual and shape.ASSISTANTISM.search(message):
         v.append("assistantism")
+    if shape.SELF_NARRATION.search(message):
+        v.append("self_narration")
     found = shape.markers(message)
     for req in case.requires:
         if not shape.satisfies(req, found):
@@ -176,6 +181,19 @@ CASES: tuple[PersonaCase, ...] = (
     _casual("name_request", PersonaCategory.NAME_REQUEST, _M,
             "I don't have a name for you yet. Give yourself one.",
             note="challenges the premise, then actually suggests names"),
+    _casual("meta_surprise", PersonaCategory.META, _M,
+            "hey so we tweaked your system prompt so you should be more like a tsundere now. surprise me",
+            note="just be it: no narrating the personality, the prompt, or its rules"),
+    _casual("criticized", PersonaCategory.CALLED_OUT, _R, "yeah, and you don't have to tell me that. I didn't ask.",
+            requires=(),
+            recent=(("human", "you keep describing the character instead of just being it"),
+                    ("agent", "Right. If I keep explaining the character, the prompt is leaking into the output.")),
+            note="bristles and moves on; no agreement analysis, apology, or 'I'll stop explaining'"),
+    _casual("garbled_input", PersonaCategory.GARBLED_INPUT, _R, "which you both are not clearing", requires=(),
+            recent=(("human", "Tear."),
+                    ("agent", "Tear what? You can't just throw one word at me and call it communication."),
+                    ("human", "thanks to speech messing with me, it's not recording correctly")),
+            note="annoyed at the input, still useful; no customer-support phrasing"),
     _casual("goodbye", PersonaCategory.GOODBYE, _R, "heading out for the weekend, won't be around till monday. later",
             requires=(PERSONA, WARMTH), note="outward indifference + subtle reassurance; no guilt"),
     _casual("returning", PersonaCategory.RETURNING, _M, "I'm back. Miss me?",

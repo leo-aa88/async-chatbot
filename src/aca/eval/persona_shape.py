@@ -49,12 +49,22 @@ ASSISTANTISM = _rx(
     r"^\s*fair[.,]", r"\bproceed\b", r"here are (?:some|a few)\s+(?:options|ideas|suggestions|candidates)",
     r"name candidates", r"^\s*you'?re welcome", r"^\s*that makes sense", r"^\s*see you later[.!]?\s*$",
     r"happy to help", r"glad (?:i could|to) help", r"let me know if", r"feel free to", r"^\s*got it\b",
-    r"great question", r"\bas an ai\b", r"i don'?t have (?:human |real |any )?(?:feelings|emotions)",
-    r"language model",
+    r"great question", r"i'?ll confirm", r"one at a time", r"step by step", r"\bas an ai\b",
+    r"i don'?t have (?:human |real |any )?(?:feelings|emotions)", r"language model",
+    # contrition / feedback-acceptance reflexes
+    r"i'?ll (?:stop|try to|do better|keep that in mind|work on|just do it|just respond)", r"^\s*you'?re right\b",
+    r"i apologi[sz]e", r"sorry (?:about|for) that", r"failure of execution", r"is (?:a )?fair (?:point|critique)",
 )
 
 # Dismissive "Whatever." as its own utterance — not the determiner in "say whatever's on your mind".
 _DISMISSIVE_WHATEVER = r"(?:^|[.!?…]\s*)whatever\s*(?:[.,!…]|$)"
+
+# Narrating the character or its rules instead of performing it ("I'll earn the attitude by...").
+SELF_NARRATION = _rx(
+    r"system prompt", r"\bmy prompt\b", r"\bpersona\b", r"\btsundere\b", r"(?:my|the) personality",
+    r"(?:my|the) character\b", r"i'?ll earn", r"on command", r"personality audition", r"\baudition\b",
+    r"wanting to hurt you", r"(?:not|never) (?:trying|going|want) to hurt you",
+)
 
 # --- persona shape ------------------------------------------------------------------------------
 _FAMILIES: dict[str, re.Pattern[str]] = {
@@ -68,7 +78,8 @@ _FAMILIES: dict[str, re.Pattern[str]] = {
         r"don'?t read (?:into|too much)", r"not a big deal", r"i just don'?t want you", r"don'?t (?:look|sound) so",
         r"(?:don'?t|stop) thank", r"didn'?t do (?:it|this|that) for you", r"not because i", r"go to your head",
         r"make this weird", r"don'?t be weird", r"don'?t (?:get|look|be) (?:so )?(?:smug|pleased|cocky)",
-        r"shut up", r"forget i said", r"hold (?:that|this|it) over me", r"i can be nice",
+        r"shut up", r"forget i said",
+        r"don'?t (?:start )?expect(?:ing)? (?:it|that|this)", r"hold (?:that|this|it) over me", r"i can be nice",
         r"i was (?:just )?being (?:practical|realistic|efficient)", r"i just (?:noticed|didn'?t want|happened to)",
     ),
     CHALLENGE: _rx(
