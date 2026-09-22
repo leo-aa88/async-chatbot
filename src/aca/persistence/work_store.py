@@ -272,7 +272,11 @@ class WorkStore:
     # tag) and only flips the action to ``silence`` — so the tag survives, and within this query
     # (which already requires a resolved silence/failure) a ``proactive_dispatch`` row *is* a model
     # silence. In-flight cycles (action still NULL) are excluded, so a pending dispatch is not
-    # miscounted as a silence.
+    # miscounted as a silence. ``failed`` captures a worker/parse failure on a proactive cycle:
+    # ``_on_worker_failure``/``_on_parse_failure`` finalize a non-mandatory failure as
+    # ``action='silence'`` with note ``worker_failure``/``parse_failure`` (only the mandatory branch
+    # sets ``action='failed'``), so an LLM outage during proactive cycles surfaces here instead of
+    # disappearing into ``other``.
     _BLOCK_REASON_ORDER = (
         "nothing", "low_worth", "budget", "cooldown", "quiet_hours", "mode_suppressed",
         "enrichment_gated", "discourse_orphan_wake", "continuity_repeat_wake",
@@ -302,7 +306,8 @@ class WorkStore:
         WHEN notes = 'nothing' THEN 'nothing'
         WHEN notes LIKE 'enrichment_only%' THEN 'enrichment_only'
         WHEN notes = 'proactive_dispatch' THEN 'model_silence'
-        WHEN COALESCE(action, '') = 'failed' THEN 'failed'
+        WHEN notes LIKE 'worker_failure%' OR notes LIKE 'parse_failure%'
+             OR COALESCE(action, '') = 'failed' THEN 'failed'
         ELSE 'other'
     END"""
 

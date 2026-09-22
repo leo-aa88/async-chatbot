@@ -36,6 +36,7 @@ _NOTE_TO_BUCKET = [
     ("blocked:cooldown_active", "cooldown"),
     ("pre_outbox:cooldown_active", "cooldown"),
     ("blocked:quiet_hours", "quiet_hours"),
+    ("pre_outbox:quiet_hours", "quiet_hours"),
     ("blocked:mode_suppresses_initiative", "mode_suppressed"),
     ("pre_outbox:mode_suppresses_initiative", "mode_suppressed"),
     ("blocked:capability_denied", "mode_suppressed"),
@@ -53,6 +54,10 @@ _NOTE_TO_BUCKET = [
     # dispatch tag, NOT the transient 'proactive_silence' HandlerOutcome note.
     ("proactive_dispatch", "model_silence"),
     ("enrichment_only", "enrichment_only"),
+    # A worker/parse failure on a proactive cycle is finalized as action='silence' with these notes
+    # (only the mandatory branch sets action='failed') — surfaced in `failed`, not hidden in `other`.
+    ("worker_failure", "failed"),
+    ("parse_failure", "failed"),
     ("a_brand_new_untagged_reason", "other"),
 ]
 
