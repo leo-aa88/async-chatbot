@@ -48,18 +48,37 @@ _SUBJECT_CLASSES = frozenset({
     MessageClass.DIRECT_TASK, MessageClass.TASK_QUESTION, MessageClass.SOCIAL_QUESTION,
 })
 
+# Presence pings and confirmation/check-in questions carry response obligation but assert no new
+# subject. The ingress class does not separate them: after a delivered agent turn `"You there?"` is
+# a `TASK_QUESTION`, not a `REPROMPT` (which requires prior silence). So the *utterance* is filtered
+# here (a small, conservative, subtractive set — not proof of subject). Unlisted variants remain a
+# documented over-suppression residual, deferred to the LLM-proposed relation (DESIGN §34.4, §31.15).
+_CHECKIN_PHRASES = frozenset({
+    "you there", "are you there", "you still there", "still there", "you there still",
+    "anyone there", "anybody there", "you around", "you online", "you awake", "hello", "hey", "hi",
+    "is that clear", "does that make sense", "make sense", "makes sense", "got it", "right", "ok",
+    "okay", "clear", "understood", "capisce", "yeah", "sure",
+})
+
+
+def _is_checkin(text: str) -> bool:
+    """Whether the whole utterance is a presence ping / confirmation check (no new subject)."""
+    normalized = " ".join(text.strip().lower().split()).rstrip("?!.").strip()
+    return normalized in _CHECKIN_PHRASES
+
 
 def is_focus_setting(text: str, message_class: MessageClass) -> bool:
     """Approximate whether a human turn introduces a new conversational subject (DESIGN §34.4).
 
     Focus-setting is a separate axis from response obligation: a task/question introduces something
-    to discuss, but a `REPROMPT` (obligation without a new subject) does not and is excluded. Plain
-    declaratives never set the focus (undecidable vs an acknowledgement). It is only an
-    approximation — a confirmation question ("Is that clear?") is a known residual that can still
-    become the focus, over-suppressing for one IDLE band; faithful detection is deferred to §31.15.
-    ``text`` is unused in v0.7 but kept for that future content-aware / LLM-proposed refinement.
+    to discuss, but a `REPROMPT` and a presence/confirmation check-in ("You there?", "Is that
+    clear?") carry obligation without a new subject, so they are excluded — the check-in filter runs
+    on the *utterance* because the ingress class alone can't tell `"You there?"` (a `TASK_QUESTION`
+    after a delivered turn) from a real question. Plain declaratives never set the focus (undecidable
+    vs an acknowledgement). It remains an approximation: an unlisted check-in/confirmation phrasing
+    is a documented over-suppression residual, deferred to §31.15.
     """
-    return message_class in _SUBJECT_CLASSES
+    return message_class in _SUBJECT_CLASSES and not _is_checkin(text)
 
 
 def _focus_vector(ctx: ReducerContext):

@@ -267,6 +267,22 @@ def test_noted_is_a_backchannel_not_a_subject(tmp_path):
     h.close()
 
 
+def test_checkin_question_after_agent_turn_does_not_become_focus(tmp_path):
+    # The reviewer's path: after a delivered agent turn, "You there?" is TASK_QUESTION (not REPROMPT,
+    # which needs prior silence). It is a presence check, not a subject, and must not replace focus.
+    h = _harness(tmp_path)
+    now = h.clock.now_utc()
+    with h.stores.db.transaction():
+        conv = h.stores.state.load_conversation()
+        h.stores.state.save_conversation(conv.__class__(
+            last_human_message_at=now - timedelta(seconds=60),
+            last_agent_delivered_at=now - timedelta(seconds=30),  # agent spoke since -> not REPROMPT
+            focus_memory_id="subject_X"))
+    h.send_human("You there?")
+    assert h.stores.state.load_conversation().focus_memory_id == "subject_X"
+    h.close()
+
+
 def test_declarative_first_subject_does_not_anchor_v07(tmp_path):
     # Documented v0.7 contract (§34.4): a purely declarative first subject does not anchor the gate
     # (no structural cue). With no prior focus and pre-turn DORMANT, the focus stays unset.
@@ -366,9 +382,14 @@ def test_only_structural_cues_set_a_subject():
     assert _focus_setting("Robots are next.") is False  # bare declarative shift not detected (v0.7)
     assert _focus_setting("noted") is False
     assert _focus_setting("ok") is False
-    # A re-prompt establishes response obligation, not a new subject — never focus-setting.
+    # Presence/confirmation check-ins carry obligation, not a subject — excluded on the utterance,
+    # so they are filtered even on the TASK_QUESTION path (after a delivered turn, not just REPROMPT).
+    assert is_focus_setting("You there?", MessageClass.TASK_QUESTION) is False
+    assert is_focus_setting("Still there?", MessageClass.TASK_QUESTION) is False
+    assert is_focus_setting("Is that clear?", MessageClass.TASK_QUESTION) is False
     assert is_focus_setting("You there?", MessageClass.REPROMPT) is False
-    assert is_focus_setting("Still there?", MessageClass.REPROMPT) is False
+    # A genuine question on the same class still sets a subject.
+    assert is_focus_setting("What about the robots?", MessageClass.TASK_QUESTION) is True
 
 
 def test_focus_predicate_is_punctuation_insensitive():
