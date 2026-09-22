@@ -8,10 +8,13 @@ so the segmenter itself stays a pure, unit-testable state machine.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from ..config import Voice
 from ..errors import ConfigError
 from .segmenter import Segmenter
 from .transcriber import FakeTranscriber, Transcriber
+from .turn_assembler import VoiceTurnAssembler
 from .vad import EnergyVad, SpeechDetector
 
 _TRANSCRIBER_ALIASES = {"whisper": "faster-whisper", "faster_whisper": "faster-whisper", "mock": "fake"}
@@ -52,6 +55,18 @@ def build_speech_detector(config: Voice) -> SpeechDetector:
 
         return SileroVad(sample_rate=config.sample_rate)
     raise ConfigError(f"unknown voice.vad {config.vad!r} (known: energy, silero)")
+
+
+def build_turn_assembler(
+    config: Voice, on_turn: Callable[[str], Awaitable[None]]
+) -> VoiceTurnAssembler:
+    """Construct the turn assembler from the configured floor-yield timings (DESIGN §36)."""
+    return VoiceTurnAssembler(
+        on_turn,
+        turn_gap_seconds=config.turn_gap_seconds,
+        continuation_gap_seconds=config.continuation_gap_seconds,
+        max_turn_seconds=config.max_turn_seconds,
+    )
 
 
 def build_segmenter(config: Voice) -> Segmenter:

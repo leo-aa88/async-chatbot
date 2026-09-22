@@ -1,10 +1,11 @@
-"""Turn segmentation: carve a frame stream into whole utterances (the VAD boundary logic).
+"""Acoustic segmentation: carve a frame stream into whole utterances (the VAD boundary logic).
 
-This is the load-bearing "give Wolfy conversational turns" rule. We do *not* stream partial
-transcripts as messages; we wait for a complete utterance — a run of speech bounded by silence —
-and transcribe it as one unit, then inject it as a single ``HumanMessage``. This module owns only
-the boundary decision and is a pure, deterministic state machine (frame counts in, whole
-utterances out) with no clock, no I/O, and no dependencies, so it is exhaustively unit-testable.
+This answers only *"where did continuous speech stop?"* — it produces an **acoustic utterance** (a
+run of speech bounded by silence), **not** a conversational turn. A human pausing to think does not
+yield the floor, so an utterance boundary is not a turn boundary; joining utterances into a turn and
+deciding when the human has finished is the separate job of ``turn_assembler`` (DESIGN §36). This
+module owns only the boundary decision and is a pure, deterministic state machine (frame counts in,
+whole utterances out) with no clock, no I/O, and no dependencies, so it is exhaustively unit-testable.
 
     silence   "so I was thinking..."   silence
     ────────██████████████████████████────────
@@ -27,7 +28,8 @@ from .audio import AudioFrame
 
 @dataclass(frozen=True, slots=True)
 class Utterance:
-    """A complete spoken turn: the ordered frames from onset (incl. pre-roll) through end."""
+    """One acoustic utterance: the ordered frames from onset (incl. pre-roll) through end. A run of
+    speech bounded by silence — not necessarily a whole conversational turn (see ``turn_assembler``)."""
 
     frames: tuple[AudioFrame, ...]
     sample_rate: int

@@ -128,6 +128,55 @@ async def test_capture_error_is_reported():
     assert errors == [("capture", "device busy")]
 
 
+async def test_session_with_assembler_joins_utterances_into_one_turn():
+    # End-to-end (offline): three acoustic utterances separated by SHORT silence, then a long final
+    # silence — the assembler commits ONE turn, not three. Frames are 0.01s each (N=160 @ 16 kHz).
+    from aca.voice.turn_assembler import VoiceTurnAssembler
+
+    frames = [
+        LOUD, LOUD, SIL, SIL,          # utterance 1 (closes on 2 silence frames)
+        LOUD, LOUD, SIL, SIL,          # utterance 2 (short gap between -> same turn)
+        LOUD, LOUD, SIL, SIL, SIL, SIL, SIL, SIL,  # utterance 3 + long trailing silence -> commit
+    ]
+    turns: list[str] = []
+
+    async def on_turn(text: str) -> None:
+        turns.append(text)
+
+    # turn_gap 0.05s = 5 frames of trailing silence; the ~0.02s inter-utterance gaps stay one turn.
+    assembler = VoiceTurnAssembler(
+        on_turn, turn_gap_seconds=0.05, continuation_gap_seconds=0.05, max_turn_seconds=100.0
+    )
+    seg = Segmenter(start_frames=1, silence_frames=2, min_speech_frames=1, max_frames=100, pre_roll_frames=1)
+    session = VoiceSession(
+        IterableSource(frames), EnergyVad(0.02), seg, FakeTranscriber(["one", "two", "three"]),
+        on_turn, assembler=assembler,
+    )
+    await session.run()
+    assert turns == ["one two three"]  # one committed turn, not three separate messages
+
+
+async def test_session_assembler_flushes_final_turn_at_eof():
+    frames = [LOUD, LOUD, SIL, SIL]  # a single utterance, stream ends before turn_gap elapses
+    turns: list[str] = []
+
+    async def on_turn(text: str) -> None:
+        turns.append(text)
+
+    from aca.voice.turn_assembler import VoiceTurnAssembler
+
+    assembler = VoiceTurnAssembler(
+        on_turn, turn_gap_seconds=10.0, continuation_gap_seconds=10.0, max_turn_seconds=100.0
+    )
+    seg = Segmenter(start_frames=1, silence_frames=2, min_speech_frames=1, max_frames=100, pre_roll_frames=1)
+    session = VoiceSession(
+        IterableSource(frames), EnergyVad(0.02), seg, FakeTranscriber(["only"]), on_turn,
+        assembler=assembler,
+    )
+    await session.run()
+    assert turns == ["only"]  # flush at EOF commits the in-progress turn
+
+
 # --- factory --------------------------------------------------------------------------------
 def test_build_transcriber_default_is_fake():
     assert isinstance(build_transcriber(Voice()), FakeTranscriber)
