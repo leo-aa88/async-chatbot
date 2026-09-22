@@ -56,6 +56,21 @@ def test_proactive_and_reactive_are_distinct_speech_acts():
     assert "reactive" in system and "mandatory" in system  # all three acts still described
 
 
+def test_prompt_relation_guidance_preserves_dormant_resurfacing():
+    # The advancement-relation instruction operates one layer BEFORE the reducer (the model picks
+    # `action`), so the prompt must NOT tell the model to silence an ORPHAN unconditionally — that
+    # would let a real provider self-silence a legitimate dormant resurfacing before the reducer's
+    # IDLE-scoping (DESIGN §35.4) can preserve it. Guard: ORPHAN is framed as a live-thread-only
+    # judgement, dormant resurfacing is explicitly allowed, and the false "suppressed anyway" claim
+    # (which contradicted §34.7 / the reducer) is gone.
+    system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
+    assert "live-thread" in system                      # ORPHAN scoped to a live thread
+    assert "resurfacing an older thought after a lull" in system  # DORMANT case named
+    assert "is NOT an ORPHAN" in system                 # dormant resurfacing not an orphan
+    assert "REPEAT" in system and "in any situation" in system   # REPEAT prefers silence any mode
+    assert "suppressed anyway" not in system            # the false claim must not return
+
+
 def test_prompt_carries_plain_voice_guidance():
     # Guard the anti-"4o tic" voice guidance so the agent doesn't out itself as a chat assistant.
     system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
