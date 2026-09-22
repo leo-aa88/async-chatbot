@@ -1,11 +1,13 @@
 """Unit tests for the continuity corpus scorer (DESIGN §27): pure confusion-matrix logic.
 
 No reducer — synthetic ``DecisionOutcome``s isolate the two-sided scoring (persistence recall,
-restraint rate, the balanced headline that punishes both). The corpus cases that drive a real
-scenario live in ``tests/adversarial/test_continuity_corpus.py``.
+restraint rate, and the balanced-accuracy headline). The corpus cases that drive a real scenario
+live in ``tests/adversarial/test_continuity_corpus.py``.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from aca.eval.continuity import (
     ContinuityCategory,
@@ -73,7 +75,27 @@ def test_as_worth_derives_a_gating_oracle_from_labels():
     worth = as_worth(outcomes)
     assert worth("advance") is True
     assert worth("old_thread") is False
-    assert worth("never_labelled") is False   # unlabelled -> conservative default, not asserted worth
+
+
+def test_as_worth_is_strict_on_unknown_candidates():
+    # "No label" is not "low-value": an unknown lookup must raise, not default to False, or missing
+    # corpus coverage would silently flatter the gating scores (over-speech / suppression precision).
+    worth = as_worth([DecisionOutcome("c", _CAT, should_speak=True, did_speak=True, candidate_id="x")])
+    with pytest.raises(KeyError):
+        worth("never_labelled")
+
+
+def test_as_worth_rejects_missing_and_duplicate_candidate_ids():
+    # candidate_id is required to build the oracle...
+    with pytest.raises(ValueError):
+        as_worth([DecisionOutcome("c", _CAT, should_speak=True, did_speak=True)])
+    # ...and must be unique — should_speak is candidate-in-context, so a duplicate would collapse two
+    # conflicting labels into one (last-wins) silently.
+    with pytest.raises(ValueError):
+        as_worth([
+            DecisionOutcome("a", _CAT, should_speak=True, did_speak=True, candidate_id="dup"),
+            DecisionOutcome("b", _CAT, should_speak=False, did_speak=False, candidate_id="dup"),
+        ])
 
 
 def test_format_continuity_renders_headline_and_flags():

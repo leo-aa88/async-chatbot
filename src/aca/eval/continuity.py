@@ -151,13 +151,36 @@ def as_worth(outcomes: Iterable[DecisionOutcome]) -> Callable[[str | None], bool
     """Derive a gating ``worth(candidate_id) -> bool`` oracle from labelled outcomes.
 
     Lets the gating eval (``gating.py``) attribute a miss to a gate using *the corpus's own* labels
-    rather than a re-encoded copy — the corpus stays the single source of truth. Each outcome's
-    ``candidate_id`` is the key (must be unique across the outcomes passed, one labelled decision
-    each); an id the corpus never labelled resolves to ``False`` (unlabelled ⇒ not asserted worth,
-    the conservative default).
+    rather than a re-encoded copy — the corpus stays the single source of truth. The oracle is
+    **strict**: an unknown candidate ``raise``s ``KeyError`` rather than defaulting to ``False``,
+    because "we have no ground-truth label" is not the judgement "this is low-value" — and gating
+    reads ``False`` strongly (an unlabelled utterance would be miscounted as over-speech, an
+    unlabelled suppression as correct), so a silent default would let missing coverage flatter the
+    scores. For an eval, failing loudly beats manufacturing a negative label.
+
+    Two construction invariants are enforced, not merely documented, because ``should_speak`` is a
+    candidate-*in-context* judgement (the same thought is correctly silent during an interruption and
+    correctly spoken after resumption), so a candidate id must identify exactly one labelled
+    decision: an outcome with no ``candidate_id``, or two outcomes sharing one, is a corpus-authoring
+    error (``ValueError``) rather than a silently collapsed label.
     """
-    labels = {o.candidate_id: o.should_speak for o in outcomes if o.candidate_id is not None}
-    return lambda candidate_id: labels.get(candidate_id, False)
+    labels: dict[str, bool] = {}
+    for o in outcomes:
+        if o.candidate_id is None:
+            raise ValueError(f"outcome {o.case_id!r} has no candidate_id to build a worth oracle on")
+        if o.candidate_id in labels:
+            raise ValueError(
+                f"two worth labels for candidate {o.candidate_id!r}: should_speak is a "
+                "candidate-in-context judgement, so give each labelled decision a distinct id"
+            )
+        labels[o.candidate_id] = o.should_speak
+
+    def worth(candidate_id: str | None) -> bool:
+        if candidate_id not in labels:
+            raise KeyError(f"continuity corpus has no worth label for candidate {candidate_id!r}")
+        return labels[candidate_id]
+
+    return worth
 
 
 def _pct(x: float | None) -> str:
