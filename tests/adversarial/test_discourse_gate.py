@@ -113,6 +113,25 @@ def test_dormant_resurfacing_is_not_gated(tmp_path):
     h.close()
 
 
+def test_zero_focus_vector_is_unjudged_not_orphan(tmp_path):
+    # A zero/empty embedding makes cosine return 0.0; the gate must treat that as UNJUDGED (fail
+    # open), NOT as affinity below bridge -> ORPHAN. Otherwise a malformed vector silences the agent.
+    h = _harness(tmp_path)
+    _set_focus(h, [0.0, 0.0, 0.0], gap_seconds=60)   # IDLE, degenerate focus vector
+    _candidate_topic(h, "t_off", [1.0, 0.0, 0.0])
+    assert _wake_note(h) == "proactive_dispatch"     # not suppressed on a non-measurement
+    h.close()
+
+
+def test_dimension_mismatch_is_unjudged_not_orphan(tmp_path):
+    # Same-model vectors of different lengths are incomparable -> UNJUDGED, not ORPHAN.
+    h = _harness(tmp_path)
+    _set_focus(h, [1.0, 0.0, 0.0], gap_seconds=60)
+    _candidate_topic(h, "t_off", [1.0, 0.0])         # length 2 vs focus length 3
+    assert _wake_note(h) == "proactive_dispatch"
+    h.close()
+
+
 def test_no_focus_vector_fails_open(tmp_path):
     # IDLE with a focus id whose embedding hasn't landed yet -> gate inactive, candidate speaks.
     h = _harness(tmp_path)

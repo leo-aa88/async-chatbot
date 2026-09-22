@@ -17,6 +17,7 @@ Two independent pieces:
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 
 from ..cognition import vectors
@@ -78,9 +79,20 @@ def gate_active(ctx: ReducerContext, now) -> bool:
     return infer_mode_for(ctx, conversation, now) is ConversationMode.IDLE
 
 
+def _usable(vec: list[float]) -> bool:
+    """A vector is comparable only if it is non-empty, all-finite, and has a non-zero norm.
+
+    ``vectors.cosine`` returns 0.0 for an empty/zero vector or a length mismatch — a sentinel this
+    gate must NOT read as low affinity, or an unjudgeable comparison would suppress as an ORPHAN
+    (the exact fail-open violation §34.5 forbids). Such vectors are treated as UNJUDGED instead.
+    """
+    return bool(vec) and all(math.isfinite(x) for x in vec) and any(x != 0.0 for x in vec)
+
+
 def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelation:
     """Relation of a candidate to the current focus subject by cosine band. UNJUDGED when either
-    vector is missing or from a different model (drift-safe; never an orphan, §34.5)."""
+    vector is missing, from a different model, or not usably comparable (drift-/degeneracy-safe;
+    never an orphan, §34.5)."""
     bridge = ctx.config.memory.discourse_bridge_cosine
     if bridge <= 0.0:
         return DiscourseRelation.UNJUDGED  # gate disabled
@@ -88,7 +100,12 @@ def assess(ctx: ReducerContext, kind: str, candidate_id: str) -> DiscourseRelati
     cand = candidate_vector(ctx, kind, candidate_id)
     if focus is None or cand is None or focus[0] != cand[0]:
         return DiscourseRelation.UNJUDGED
-    affinity = vectors.cosine(focus[1], cand[1])
+    fvec, cvec = focus[1], cand[1]
+    # An empty/zero/non-finite/dimension-mismatched vector is not a low-affinity measurement — it is
+    # no measurement. Treat it as UNJUDGED (fail open), never as an ORPHAN (§34.5).
+    if len(fvec) != len(cvec) or not _usable(fvec) or not _usable(cvec):
+        return DiscourseRelation.UNJUDGED
+    affinity = vectors.cosine(fvec, cvec)
     # Check the ORPHAN boundary (bridge) FIRST so the suppression cut is exactly discourse_bridge_
     # cosine regardless of the CONTINUE threshold — the label can't silently move the gate (§34.5).
     # (Config also enforces bridge <= continue, so this ordering and that invariant agree.)
