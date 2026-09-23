@@ -12,11 +12,18 @@ from datetime import datetime
 from typing import Any
 
 from .. import ids
+from ..cognition.relevance import Retrievable, select_context
 from ..cognition.snapshot import build_snapshot
+from ..domain.cycles import CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL
 from ..domain.enums import WorkKind, WorkStatus
 from ..domain.runtime import WorkItem
 from ..errors import AcaError
 from .context import ReducerContext
+
+_CONTEXT_BUDGET = 5      # topics and memories each, per snapshot (unchanged)
+_RELEVANT_SLOTS = 2      # of that budget, at most this many go to query-relevant older items
+_RETRIEVAL_POOL = 200    # bounded, recency-ordered scan the relevance ranker searches
+_REPLY_CYCLES = (CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL)
 
 
 def _agent_state_summary(ctx: ReducerContext) -> dict[str, Any]:
@@ -32,6 +39,44 @@ def _agent_state_summary(ctx: ReducerContext) -> dict[str, Any]:
     if ctx.config.identity.name:
         summary["name"] = ctx.config.identity.name  # durable self-name -> prompt (survives resets)
     return summary
+
+
+def _retrieved_context(ctx: ReducerContext, source: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """The bundle's retrieved topics and memories (DESIGN 21, 37).
+
+    Recency fills the fixed budget as before; on a reply cycle up to ``_RELEVANT_SLOTS`` of it go to
+    older items that share distinctive words with the human's turn, so a durable fact they ask about
+    is visible even when newer, unrelated items would crowd it out. Proactive cycles have no query and
+    keep the pure-recency bundle. Relevance-selected entries are marked ``"retrieved_for": "query"``.
+    """
+    query = str(source.get("text") or "") if source.get("cycle_type") in _REPLY_CYCLES else ""
+    exclude = frozenset(filter(None, [source.get("turn_memory_id")]))
+    memory = ctx.stores.memory
+    topics = memory.all_topics(limit=_RETRIEVAL_POOL)
+    memories = memory.recent_memories(limit=_RETRIEVAL_POOL)
+    topic_items = [Retrievable(t.id, t.summary, t.last_activated_at) for t in topics]
+    memory_items = [Retrievable(m.id, m.text, m.last_activated_at) for m in memories]
+    picked_topics = select_context(topic_items, topic_items, query, budget=_CONTEXT_BUDGET,
+                                   relevant_slots=_RELEVANT_SLOTS, exclude=exclude)
+    picked_memories = select_context(memory_items, memory_items, query, budget=_CONTEXT_BUDGET,
+                                     relevant_slots=_RELEVANT_SLOTS, exclude=exclude)
+    recent_topics = {t.id for t in topic_items[:_CONTEXT_BUDGET]}
+    recent_memories = {m.id for m in memory_items[:_CONTEXT_BUDGET]}
+    by_topic = {t.id: t for t in topics}
+    by_memory = {m.id: m for m in memories}
+
+    def _topic(item: Retrievable) -> dict[str, Any]:
+        t = by_topic[item.id]
+        entry = {"id": t.id, "summary": t.summary, "activation": t.activation}
+        return entry if item.id in recent_topics else {**entry, "retrieved_for": "query"}
+
+    def _memory(item: Retrievable) -> dict[str, Any]:
+        m = by_memory[item.id]
+        entry = {"id": m.id, "text": m.text, "activation": m.activation}
+        return entry if item.id in recent_memories else {**entry, "retrieved_for": "query"}
+
+    return {"retrieved_topics": [_topic(i) for i in picked_topics],
+            "retrieved_memories": [_memory(i) for i in picked_memories]}
 
 
 def create_llm_work(
@@ -60,14 +105,7 @@ def create_llm_work(
         agent_state=_agent_state_summary(ctx),
         source=source_context,
         recent_conversation=ctx.stores.outbox.recent_turns(),
-        retrieved_topics=[
-            {"id": t.id, "summary": t.summary, "activation": t.activation}
-            for t in ctx.stores.memory.all_topics(limit=5)
-        ],
-        retrieved_memories=[
-            {"id": m.id, "text": m.text, "activation": m.activation}
-            for m in ctx.stores.memory.recent_memories(limit=5)
-        ],
+        **_retrieved_context(ctx, source_context),
     )
     ctx.stores.work.insert_work(
         WorkItem(
