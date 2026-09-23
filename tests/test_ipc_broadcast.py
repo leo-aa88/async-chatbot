@@ -13,6 +13,8 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+
 from aca.clock import ManualClock
 from aca.ipc.server import IpcServer
 
@@ -34,6 +36,18 @@ class _Writer:
             hook()
 
 
+class _FailingWriter(_Writer):
+    """A subscriber whose socket fails on drain with the given error."""
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__()
+        self._error = error
+
+    async def drain(self) -> None:
+        await asyncio.sleep(0)
+        raise self._error
+
+
 async def test_subscriber_joining_mid_broadcast_does_not_abort_it(tmp_path):
     clock = ManualClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
     server = IpcServer(SimpleNamespace(clock=clock), tmp_path / "aca.sock")
@@ -50,6 +64,9 @@ async def test_subscriber_joining_mid_broadcast_does_not_abort_it(tmp_path):
 
     assert delivered is True
     assert len(first.frames) == 1 and len(second.frames) == 1
+    # Snapshot semantics: a mid-broadcast joiner doesn't get the in-flight frame. Its own
+    # subscribe-triggered pump handles delivery to it.
+    assert newcomer.frames == []
 
 
 async def test_subscriber_leaving_mid_broadcast_does_not_abort_it(tmp_path):
@@ -67,3 +84,31 @@ async def test_subscriber_leaving_mid_broadcast_does_not_abort_it(tmp_path):
     delivered = await server._broadcast("cli", "hello", "dk_1", "msg_1")
 
     assert delivered is True
+
+
+@pytest.mark.parametrize("error", [ConnectionAbortedError(), ConnectionRefusedError(), OSError(113, "No route")])
+async def test_one_subscriber_socket_error_does_not_fail_the_broadcast(tmp_path, error):
+    # Any socket error from one subscriber used to escape unless it was a reset or broken pipe. The
+    # pump then reported a transport failure although earlier subscribers had the frame, and the
+    # mandatory retry delivered it to them twice.
+    clock = ManualClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    server = IpcServer(SimpleNamespace(clock=clock), tmp_path / "aca.sock")
+    healthy, broken = _Writer(), _FailingWriter(error)
+    server._subscribers.update({healthy, broken})
+
+    delivered = await server._broadcast("cli", "hello", "dk_1", "msg_1")
+
+    assert delivered is True
+    assert len(healthy.frames) == 1
+    assert server._subscribers == {healthy}  # the dead writer is dropped
+
+
+async def test_broadcast_reports_undelivered_when_every_subscriber_fails(tmp_path):
+    clock = ManualClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    server = IpcServer(SimpleNamespace(clock=clock), tmp_path / "aca.sock")
+    server._subscribers.add(_FailingWriter(ConnectionAbortedError()))
+
+    delivered = await server._broadcast("cli", "hello", "dk_1", "msg_1")
+
+    assert delivered is False
+    assert server._subscribers == set()

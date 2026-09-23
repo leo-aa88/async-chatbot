@@ -119,7 +119,10 @@ class IpcServer:
             try:
                 await p.write_message(sub, frame)
                 delivered = True
-            except (ConnectionResetError, BrokenPipeError):
+            except OSError:
+                # Any socket error (every ConnectionError is an OSError) means this one writer is
+                # dead. Letting it escape would fail a delivery earlier subscribers already
+                # received, and the mandatory retry would send it to them twice.
                 dead.append(sub)
         for sub in dead:
             self._subscribers.discard(sub)
