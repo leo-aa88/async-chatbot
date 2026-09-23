@@ -112,7 +112,10 @@ class IpcServer:
         }
         dead: list[asyncio.StreamWriter] = []
         delivered = False
-        for sub in self._subscribers:
+        # Iterate a snapshot: each write awaits, and meanwhile another connection can subscribe or
+        # drop out (``_handle``'s finally), which would otherwise raise "Set changed size during
+        # iteration" mid-broadcast and fail a delivery some subscribers already received.
+        for sub in list(self._subscribers):
             try:
                 await p.write_message(sub, frame)
                 delivered = True
