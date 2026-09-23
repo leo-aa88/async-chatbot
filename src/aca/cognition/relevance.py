@@ -13,7 +13,8 @@ scorer keeps snapshots replay-stable. Scoring is query-coverage over distinctive
 * the query and each item are reduced to content stems (lowercase words, stopwords dropped, a light
   suffix strip so "calling"/"called"/"call" meet);
 * a stem shared by at least half of the pool (e.g. "human" in "The human ...") carries no signal and
-  is ignored — distinctiveness is judged against the pool, not a fixed list;
+  is ignored — distinctiveness is judged against the pool, not a fixed list (exactly: ``2*df < n``;
+  pools under 4 items accept any shared stem, since a ceiling is meaningless there);
 * an item's score is the number of distinctive query stems it contains (ties: more recent first, then
   id), and an item needs at least one to qualify at all.
 
@@ -71,6 +72,19 @@ class Retrievable:
     last_activated_at: datetime
 
 
+# Below this pool size a document-frequency ceiling is meaningless (one match in a 2-item pool is
+# already "half"), so any shared stem counts.
+_SMALL_POOL = 4
+
+
+def _is_distinctive(df: int, pool_size: int) -> bool:
+    """A stem carries signal iff it occurs in the pool and in *fewer than half* of it (``2*df < n``) —
+    "human" in "The human ..." distinguishes nothing. Pools under ``_SMALL_POOL`` accept any match."""
+    if df <= 0:
+        return False
+    return pool_size < _SMALL_POOL or 2 * df < pool_size
+
+
 def rank_relevant(query: str, pool: Sequence[Retrievable], *, limit: int,
                   exclude: frozenset[str] = frozenset()) -> list[Retrievable]:
     """Up to ``limit`` items of ``pool`` most relevant to ``query`` (none if nothing qualifies).
@@ -84,10 +98,8 @@ def rank_relevant(query: str, pool: Sequence[Retrievable], *, limit: int,
     if not query_stems:
         return []
     item_stems = {item.id: content_stems(item.text) for item in pool}
-    # A stem present in half the pool or more distinguishes nothing ("human", "agent", ...).
-    ceiling = max(2, len(pool) // 2)
     df = {s: sum(1 for stems in item_stems.values() if s in stems) for s in query_stems}
-    distinctive = {s for s in query_stems if 0 < df[s] < ceiling or (len(pool) < 4 and df[s] > 0)}
+    distinctive = {s for s in query_stems if _is_distinctive(df[s], len(pool))}
     if not distinctive:
         return []
     scored = [(len(distinctive & item_stems[item.id]), item) for item in pool if distinctive & item_stems[item.id]]

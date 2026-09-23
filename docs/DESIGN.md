@@ -2950,7 +2950,7 @@ On a **reply cycle** (mandatory or reactive), up to 2 of the 5 topic slots and 2
 
 ### 37.3 Scoring (deterministic, lexical)
 
-The current turn's embedding is computed asynchronously *after* the reply work item is created, so it is not available at snapshot time. Relevance is therefore a pure stdlib scorer (`cognition/relevance.py`): content stems (stopwords and conversational filler dropped, light suffix strip), distinctiveness judged against the pool (a stem in half the pool or more carries no signal), and the score is the number of distinctive query stems an item contains. Ties go to recency, then id. The pool is a bounded, recency-ordered scan (200 items).
+The current turn's embedding is computed asynchronously *after* the reply work item is created, so it is not available at snapshot time. Relevance is therefore a pure stdlib scorer (`cognition/relevance.py`): content stems (stopwords and conversational filler dropped, light suffix strip), distinctiveness judged against the pool (a stem carries signal only if it occurs in fewer than half of it, `2·df < n`; pools under 4 items accept any shared stem, since a frequency ceiling is meaningless there), and the score is the number of distinctive query stems an item contains. Ties go to recency, then id. The pool is a bounded, recency-ordered scan (200 items).
 
 ### 37.4 Known limit
 

@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from aca.cognition.relevance import Retrievable, content_stems, rank_relevant, select_context
+from aca.cognition.relevance import Retrievable, _is_distinctive, content_stems, rank_relevant, select_context
 
 _NOW = datetime(2026, 9, 23, 20, 0, tzinfo=UTC)
 
@@ -79,6 +79,27 @@ def test_relevant_slots_cap_holds_budget():
     picked = _select("nickname bug migration condescension race postgres", slots=2)
     assert len(picked) == 5
     assert sum(1 for p in picked if p.id in {"t10", "t11", "t12"}) == 2
+
+
+@pytest.mark.parametrize(("df", "n", "distinctive"), [
+    (2, 5, True),    # 40% < half -> signal (the odd-pool case the old integer ceiling wrongly rejected)
+    (3, 5, False),   # 60%
+    (2, 4, False),   # exactly half -> no signal
+    (1, 4, True),
+    (4, 9, True), (5, 9, False),
+    (1, 2, True), (2, 3, True),   # small pools: any shared stem counts
+    (0, 5, False), (0, 2, False),
+])
+def test_distinctiveness_is_exactly_fewer_than_half(df, n, distinctive):
+    assert _is_distinctive(df, n) is distinctive
+
+
+def test_odd_pool_stem_in_two_of_five_items_still_retrieves():
+    pool = [Retrievable(f"r{i}", f"recent unrelated note {i}", _NOW - timedelta(hours=i)) for i in range(3)]
+    pool += [Retrievable("o1", "the parser rewrite shipped", _NOW - timedelta(hours=10)),
+             Retrievable("o2", "parser benchmarks look good", _NOW - timedelta(hours=11))]
+    picked = select_context(pool, pool, "how is the parser doing?", budget=2, relevant_slots=1)
+    assert "o1" in [p.id for p in picked]
 
 
 def test_turn_memory_is_excluded_from_retrieval_and_scoring():
