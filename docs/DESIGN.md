@@ -2931,3 +2931,27 @@ On a shared open mic and speaker with no acoustic echo cancellation (e.g. the WS
 - **Deferred — acoustic barge-in.** Letting the human's *voice* cut off the agent requires telling the human apart from the agent's own playback in the mic, i.e. acoustic echo cancellation (§36.4 deferred). Until then the mic is muted, not listened-to-and-filtered, during playback.
 - **Residual — proactive over a partial human turn.** If a proactive agent message begins playing while a human utterance is still buffered (unlikely in half-duplex, but proactive speech is unsolicited), the gate clears that partial turn rather than committing a fragment. Dropping is the safe choice; committing a half-turn would be worse.
 - **Invariants preserved.** All of this is client-side rendering/perception: no reducer, no durable state (invariant 1), and `speaking`/`interrupt` carry no clock or RNG. A spoken turn that *does* commit is still an ordinary `HumanMessage` (invariant 2).
+
+## 37. Query-relevant retrieval in the reply bundle (v0.7)
+
+### 37.1 The failure
+
+The §21 context bundle retrieved the *most recently activated* topics and memories only. Observed live: a durable topic ("The human accepted the nickname Professor Condescension…") existed, but when the human asked "do you remember the nickname you gave me?" the five most recent topics all came from a later, unrelated conversation, so the fact was absent from the snapshot and the agent (correctly, given what it could see) said it didn't have it. **Storage succeeded; retrieval failed; generation behaved correctly on an incomplete snapshot.** The fix belongs at retrieval, not in a special memory class.
+
+### 37.2 Rule
+
+On a **reply cycle** (mandatory or reactive), up to 2 of the 5 topic slots and 2 of the 5 memory slots may go to older items that share *distinctive* words with the human's turn; recency fills the rest. Proactive cycles have no query and keep pure recency.
+
+- **Fixed budget.** Still 5 topics and 5 memories. Relevance displaces the least-recent recency entries; it never grows the bundle.
+- **Deduplicated.** An item that is both recent and relevant appears once and spends no relevance slot.
+- **No match, no change.** With nothing relevant beyond what recency already shows, the bundle is exactly the pre-§37 bundle, so a miss never fabricates context.
+- **Marked.** Relevance-selected entries carry `"retrieved_for": "query"`, so the model can tell a pulled older fact from recent context.
+- **The turn's own memory** is excluded from relevance scoring and selection (it trivially matches itself).
+
+### 37.3 Scoring (deterministic, lexical)
+
+The current turn's embedding is computed asynchronously *after* the reply work item is created, so it is not available at snapshot time. Relevance is therefore a pure stdlib scorer (`cognition/relevance.py`): content stems (stopwords and conversational filler dropped, light suffix strip), distinctiveness judged against the pool (a stem in half the pool or more carries no signal), and the score is the number of distinctive query stems an item contains. Ties go to recency, then id. The pool is a bounded, recency-ordered scan (200 items).
+
+### 37.4 Known limit
+
+This catches shared *words*, not paraphrase: "what did you call me last night?" does not reach "the nickname Professor Condescension", and it can pull a lexically similar but wrong item ("don't *call* it exclusivity") into a relevance slot. Misses are recorded as non-strict xfails in `tests/test_relevance.py`. They are evidence for a later semantic layer (for example, relevance over embeddings once the turn's embedding is available synchronously), not something to paper over with synonym lists.
