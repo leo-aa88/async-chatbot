@@ -134,8 +134,13 @@ class AgentService:
         for task in (self._loop_task, self._heartbeat_task):
             if task is not None:
                 task.cancel()
+        # Let in-flight workers finish, then reduce the results they produced. The reducer loop is
+        # already stopped, so without this a result finished during the drain would sit on a queue
+        # nobody reads: never durably accepted, the work left RUNNING, the model call repeated after
+        # the lease is reclaimed.
         if self._dispatcher is not None:
             await self._dispatcher.drain()
+        self._reduce_remaining()
 
         now = self._clock.now_utc()
         assert self._reducer is not None and self._stores is not None
@@ -198,6 +203,17 @@ class AgentService:
 
     def _enqueue(self, event: Event) -> None:
         self._queue.put_nowait(event)
+
+    def _reduce_remaining(self) -> None:
+        """Reduce everything still queued, during shutdown, without starting new side effects.
+
+        Work these reductions create stays PENDING in the database and recovery dispatches it on the
+        next start; outbound messages stay pending for the next delivery pass. Nothing here
+        dispatches, reschedules, or delivers.
+        """
+        assert self._reducer is not None
+        while not self._queue.empty():
+            self._reducer.reduce(self._queue.get_nowait())
 
     # --- wake scheduling -----------------------------------------------------------------
     def _schedule_wake(self) -> None:
