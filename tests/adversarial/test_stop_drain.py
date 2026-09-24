@@ -12,7 +12,7 @@ import asyncio
 from aca import ids
 from aca.config import Config
 from aca.domain.enums import WorkKind, WorkStatus
-from aca.domain.events import HumanMessage
+from aca.domain.events import HumanMessage, StochasticWake
 from aca.persistence.stores import Stores
 from aca.service.service import AgentService
 from aca.workers.fake_llm import FakeLLMWorker
@@ -54,3 +54,55 @@ async def test_a_result_finished_during_stop_is_durably_accepted(tmp_path):
     stores.close()
     assert results, "the in-flight model result should have been durably accepted"
     assert llm_work == [] and running == [], "the model call must not be left to be repeated"
+
+
+def _llm_work(tmp_path) -> list:
+    stores = Stores.open(tmp_path / "agent.db")
+    rows = stores.db.query_all("SELECT status FROM work_items WHERE kind=?", (WorkKind.LLM_COGNITION.value,))
+    stores.close()
+    return rows
+
+
+async def test_a_wake_queued_at_stop_is_dropped_not_replayed(tmp_path):
+    # A wake that fired just before stop() is still valid during shutdown (lifecycle is RUNNING until
+    # AgentSuspending; session and generation are current). Reducing it would run a wake cycle whose
+    # proactive work recovery dispatches after downtime, replaying a missed wake (invariant 9).
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    await service.start()
+    ctx = service.reducer.context
+    service._enqueue(StochasticWake(
+        event_id=ids.new_id(ids.EVENT), timestamp=service.clock.now_utc(), source="scheduler",
+        runtime_session_id=ctx.runtime_session_id, scheduler_generation=ctx.scheduler_generation,
+        scheduled_at_utc=""))
+    await service.stop()
+
+    stores = Stores.open(tmp_path / "agent.db")
+    wake_cycles = stores.db.query_all("SELECT 1 FROM cognition_traces WHERE trigger='StochasticWake'")
+    stores.close()
+    assert wake_cycles == [], "a wake queued at stop must not run a cognition cycle"
+    assert _llm_work(tmp_path) == [], "and must leave no proactive work for recovery to dispatch"
+
+
+async def test_a_human_message_queued_at_stop_is_replayed_on_the_next_start(tmp_path):
+    # A HumanMessage was durably accepted at ingress, so the next start replays it. Shutdown must not
+    # start a cognition cycle for it, and must not lose it either.
+    service = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    await service.start()
+    event_id = ids.new_id(ids.EVENT)
+    await service.ingest_human_message(HumanMessage(
+        event_id=event_id, timestamp=service.clock.now_utc(), source="cli", text="Explain this stack trace."))
+    await service.stop()  # the reducer loop never got to it
+
+    stores = Stores.open(tmp_path / "agent.db")
+    unreduced = [e.event_id for e in stores.events.unreduced()]
+    stores.close()
+    assert event_id in unreduced, "the message must survive shutdown unreduced"
+    assert _llm_work(tmp_path) == [], "no cognition cycle is started for it during shutdown"
+
+    restarted = AgentService(tmp_path, Config.from_mapping({"rng_seed": 7}))
+    await restarted.start()  # replays accepted-but-unreduced events
+    try:
+        assert event_id not in [e.event_id for e in restarted.stores.events.unreduced()]
+        assert _llm_work(tmp_path), "the replayed message gets its reply cycle after restart"
+    finally:
+        await restarted.stop()
