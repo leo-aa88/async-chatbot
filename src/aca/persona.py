@@ -213,11 +213,46 @@ _OPINION = re.compile(
     r"|opinion (?:of|on))\b",
     re.IGNORECASE,
 )
-# "And what about X?" is an opinion follow-up only right after an opinion question.
+# "And what about X?" is an opinion follow-up only inside an unbroken opinion thread.
 _FOLLOW_UP = re.compile(r"^\W*(?:(?:and|okay|ok|so|alright|well|uh|um|yeah|fair enough)\W+)*(?:what|how) about\b",
                         re.IGNORECASE)
 
 _FOLLOW_UP_WINDOW = 4   # human turns back that an opinion question keeps a "what about X?" in its thread
+
+# Opinion *phrasing* is not an opinion *question*: "what do you think about this PR?" asks for analysis,
+# and a "gut reaction, then stop" note would suppress exactly the reasoning wanted. A turn about an
+# engineering artifact (pointed at, proposed as a change, or quoted as code) is technical, and a
+# technical turn also breaks an opinion thread, so "what about the bug?" after a CI detour stays
+# technical even with "what do you think about Linus?" a few turns back.
+_TECH_NOUN = (r"(?:prs?|pull requests?|merge requests?|stack ?traces?|tracebacks?|errors?|exceptions?|bugs?"
+              r"|crash(?:es)?"
+              r"|segfaults?|builds?|ci|pipelines?|tests?|code|patch(?:es)?|diffs?|commits?|branch(?:es)?|functions?"
+              r"|methods?|classes|modules?|designs?|approach(?:es)?|strateg(?:y|ies)|implementations?|architecture"
+              r"|apis?|endpoints?|schemas?|quer(?:y|ies)|migrations?|configs?|config(?:uration)?|lock(?:s|ing)?"
+              r"|mutex(?:es)?|threads?|races?|deadlocks?|refactors?|logs?|outputs?|benchmarks?|algorithms?"
+              r"|librar(?:y|ies)|dependenc(?:y|ies)|dockerfiles?|scripts?|regex(?:es)?|variables?)")
+_TECHNICAL = re.compile(
+    rf"\b(?:this|that|these|those|my|our|your|the following|the)\s+(?:[\w-]+\s+){{0,2}}{_TECH_NOUN}\b"
+    r"|\b(?:add(?:ing)?|us(?:e|ing)|switch(?:ing)? to|replac(?:e|ing)|remov(?:e|ing)|refactor(?:ing)?)\b[^?.!]*"
+    r"\b(?:here|there|in (?:this|my|our|the)|to (?:this|my|our|the))\b"
+    r"|\bshould (?:i|we)\b|`|\w\(\)|::|->|==|\b[\w/.-]+\.(?:py|js|ts|go|rs|c|h|cpp|java|rb|sh|yml|yaml|json|toml)\b",
+    re.IGNORECASE,
+)
+
+
+# A factual ask inside an opinion thread ("...what's his name again?") wants the fact, not a gut take
+# (live: the name-question that followed "what do you think about Altman?").
+_FACTUAL_ASK = re.compile(
+    r"\b(?:what(?:['’]s| is| was) (?:his|her|their|the|that guy['’]s|its) name|who (?:is|was|runs|made|founded|owns)"
+    r"|when (?:did|was|is|does)|how (?:many|much|old|long)|where (?:is|does|did))\b",
+    re.IGNORECASE,
+)
+
+
+def is_technical_turn(text: str) -> bool:
+    """Whether the turn is about an engineering artifact (analysis wanted, not a gut take)."""
+    return bool(_TECHNICAL.search(text))
+
 
 OPINION_NOTE = (
     "style_note: they're asking what you think of someone or something. Give your gut reaction and one "
@@ -228,7 +263,13 @@ OPINION_NOTE = (
 
 
 def is_opinion_turn(text: str, recent_turns: Sequence[dict] = ()) -> bool:
-    """Whether this human turn asks for her opinion (directly, or as a follow-up to one)."""
+    """Whether this human turn asks for her take on someone or something (directly, or as a follow-up).
+
+    A technical turn never is, even phrased as an opinion ("what do you think about this PR?"), and
+    neither is a factual ask ("...what's his name again?"): both want substance, not a gut take.
+    """
+    if is_technical_turn(text) or _FACTUAL_ASK.search(text):
+        return False
     if _OPINION.search(text):
         return True
     if not _FOLLOW_UP.search(text):
@@ -236,9 +277,15 @@ def is_opinion_turn(text: str, recent_turns: Sequence[dict] = ()) -> bool:
     earlier = [str(t.get("text") or "") for t in recent_turns if t.get("role") == "human"]
     if earlier and earlier[-1].strip() == text.strip():
         earlier = earlier[:-1]  # the current turn is already the last one in recent_conversation
-    # A few turns back, not just one: live, "take on Linus?" -> "what about Altman?" -> "I suspect he's a
-    # sociopath" -> "and what about Dario?" is one opinion thread across four human turns.
-    return any(_OPINION.search(t) for t in earlier[-_FOLLOW_UP_WINDOW:])
+    # Walk back through the thread: an opinion question within the window keeps "what about X?" in
+    # opinion mode (live: take on Linus -> Altman -> "I suspect he's a sociopath" -> "what about
+    # Dario?"), but a technical turn in between ends that thread.
+    for turn in reversed(earlier[-_FOLLOW_UP_WINDOW:]):
+        if is_technical_turn(turn):
+            return False
+        if _OPINION.search(turn):
+            return True
+    return False
 
 
 def opinion_note(text: str, recent_turns: Sequence[dict] = ()) -> str | None:

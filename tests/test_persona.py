@@ -247,3 +247,54 @@ def test_notes_combine():
 def test_banter_rule_is_in_the_character():
     text = " ".join(get_persona("tsundere").character.split())
     assert "Obvious banter isn't a request" in text and "not a disclaimer about what you can't literally do" in text
+
+
+
+# --- opinion phrasing is not an opinion question -------------------------------------------------
+@pytest.mark.parametrize("text", [
+    "What do you think about adding a mutex here?",
+    "What do you make of this stack trace?",
+    "Any thoughts on this PR?",
+    "Any thoughts on this locking strategy?",
+    "What's your take on my migration plan for the users table?",
+    "what do you think of `asyncio.gather` for this?",
+    "How do you feel about using Redis here instead of Postgres?",
+    "Should we switch to uv? What do you think?",
+])
+def test_technical_turns_phrased_as_opinions_get_no_gut_take_note(text):
+    from aca.persona import is_opinion_turn
+    assert not is_opinion_turn(text)
+    assert "style_note" not in build_prompt(_turn(text))[1]
+
+
+@pytest.mark.parametrize("text", [
+    "What do you think about Linus Torvalds?", "What's your take on Rust?", "Any thoughts on Kubernetes?",
+    "What do you think about the AI safety crowd?", "What do you think about the Linux kernel community?",
+])
+def test_general_opinions_still_get_the_note(text):
+    from aca.persona import is_opinion_turn
+    assert is_opinion_turn(text)
+
+
+def test_a_technical_detour_breaks_the_opinion_thread():
+    from aca.persona import is_opinion_turn
+    turns = [{"role": "human", "text": "What do you think about Linus?"}, {"role": "agent", "text": "x"},
+             {"role": "human", "text": "My build is failing now."}, {"role": "agent", "text": "x"},
+             {"role": "human", "text": "Here is the traceback."}, {"role": "agent", "text": "x"},
+             {"role": "human", "text": "What about the bug?"}]
+    assert not is_opinion_turn("What about the bug?", turns)
+    # ...and a non-technical "what about X?" after the same detour doesn't inherit opinion mode either.
+    turns[-1] = {"role": "human", "text": "And what about Dario?"}
+    assert not is_opinion_turn("And what about Dario?", turns)
+
+
+
+@pytest.mark.parametrize("text", [
+    "And what about that guy from Claude? I meant anthropic AI. What's his name again?",   # live
+    "Who runs Anthropic?", "When did Linus write Git?", "How old is Sam Altman?",
+])
+def test_factual_asks_inside_an_opinion_thread_get_no_gut_take_note(text):
+    from aca.persona import is_opinion_turn
+    thread = [{"role": "human", "text": "So what do you think about Sam Altman?"}, {"role": "agent", "text": "x"},
+              {"role": "human", "text": text}]
+    assert not is_opinion_turn(text, thread)
