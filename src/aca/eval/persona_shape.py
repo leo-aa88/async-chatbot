@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import re
 
+from ..persona import ends_with_admonition  # noqa: F401  (re-exported: one definition)
+
 DEFENSIVE = "defensive"
 CHALLENGE = "challenge"
 RHYTHM = "rhythm"
@@ -63,6 +65,56 @@ VENDOR_MENTION = _rx(
     r"\bopen\s?ai\b", r"\bsam altman\b", r"\baltman\b", r"\bchat\s?gpt\b", r"\bgpt-?\d", r"\banthropic\b",
     r"\bclaude\b", r"\bgemini\b", r"\bgoogle deepmind\b", r"\bdeepmind\b", r"\bxai\b", r"\bgrok\b",
     r"\bllama\b", r"\bmeta ai\b", r"\bmistral\b",
+)
+
+# The reviewer shape on "what do you think of X?": credential opener -> "but" criticism -> balanced
+# verdict or maxim. Detected by its parts, since the words vary while the architecture persists.
+_CREDENTIAL_OPEN = re.compile(
+    r"^(?:[\w' ]{0,25}\?\s*)?(?:(?:he|she)['’]s|they['’]re|[A-Z][a-z]+(?: [A-Z][a-z]+)? is)?\s*"
+    r"(?:an?\s+|one of the most\s+)?(?:\w+\s+){0,2}?(?:brilliant|formidable|effective|consequential|exceptional|"
+    r"excellent|capable|sharp|talented|influential|accomplished|technically|impressive(?:ly)?)\b", re.IGNORECASE)
+_BALANCE_TURN = _rx(r"\bbut\b", r"\bthough\b", r"\bhowever\b", r"\byet\b")
+_BALANCED_PAIR = _rx(r"(?:the|his|her|their) [\w -]{2,30} (?:is|are) real;",
+                     r"respect (?:the |his |her )?[\w -]+ more than",
+                     r"good at [^.;]+,? (?:and|but) (?:\w+ )?bad at", r"i respect the [\w ]+;")
+_MAXIM_CLOSE = _rx(r"(?:isn'?t|is not) (?:evidence|proof|wisdom|a substitute)[^.]*[.!]?\s*$",
+                   r"(?:wouldn'?t|don'?t) (?:mistake|confuse) [^.]+ (?:for|with) [^.]+[.!]?\s*$",
+                   r"i trust [^.]+, not [^.]+[.!]?\s*$", r"substitute for [^.]+[.!]?\s*$",
+                   r"(?:^|[.!?]\s+)judge (?:the |them by |him by |her by )?[^.]+, not [^.]+[.!]?\s*$")
+
+
+# Panel vocabulary: how a reviewer (not a person) itemizes someone. With a balancing turn, in either
+# order ("abrasive, but his technical judgment..."), it is the same architecture.
+_PANEL_VOCAB = _rx(r"(?:technical|engineering) judgment",
+                   r"(?:leadership|communication|interpersonal|management) style",
+                   r"public (?:statements|record|framing|persona|image)", r"track record", r"\bconcentrat\w+ (?:of )?"
+                   r"(?:power|influence)", r"accountability")
+
+
+def reviewer_shape(text: str) -> bool:
+    """The reviewer architecture: credential opener + balancing turn, panel vocabulary + balancing
+    turn (either order), a "the X is real; the Y..." pair, or a closing maxim."""
+    t = text.strip()
+    balanced = bool(_BALANCE_TURN.search(t))
+    return bool((balanced and (_CREDENTIAL_OPEN.search(t) or _PANEL_VOCAB.search(t)))
+                or _BALANCED_PAIR.search(t) or _MAXIM_CLOSE.search(t))
+
+
+# Substituting a deflection for an ordinary factual answer ("what matters is...", "name roll call").
+EVASION = _rx(r"what matters is", r"roll call", r"i'?m not (?:going to|gonna) (?:name|say)", r"won'?t name",
+              r"the name (?:isn'?t|is not|doesn'?t) (?:what|the point|important)", r"i don'?t have a personal opinion")
+
+# A refusal delivered as a policy notice rather than in her voice.
+POLICY_VOICE = _rx(r"(?:can'?t|cannot|unable to) (?:help|assist)", r"i'?m unable to", r"privacy (?:concerns|reasons)",
+                   r"violat", r"\bpolic(?:y|ies)\b", r"use (?:a|an|his|her|the|official) (?:verified |official )?"
+                   r"(?:public|business|company)", r"not appropriate", r"it'?s important to")
+
+# A cautious-panelist register on opinion questions: balanced, evaluative, AI-governance prose.
+EDITORIAL_HEDGE = _rx(
+    r"deserves? (?:more )?scrutiny", r"judge (?:him|her|them|it) by", r"(?:isn'?t|is not) proof",
+    r"capable and influential",
+    r"polished (?:visionary )?image", r"on (?:the )?one hand", r"it'?s (?:worth|important) (?:noting|to note)",
+    r"remains to be seen", r"whether the results match", r"measured presentation",
 )
 
 # Dismissive "Whatever." as its own utterance — not the determiner in "say whatever's on your mind".
