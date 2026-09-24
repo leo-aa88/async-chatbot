@@ -12,6 +12,7 @@ directly — the reducer owns every status transition. Rules enforced here (DESI
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 from .. import ids
@@ -48,12 +49,21 @@ class DeliveryPump:
         # Monotonic timestamp of the last proactive delivery attempt; bounds the reconnect burst
         # window across pump() calls and channels so reconnect can't dogpile (DESIGN 23.7).
         self._last_proactive_mono: float | None = None
+        # Serializes pump passes. The reducer loop and notify_client_connected can both call
+        # pump(); each pass snapshots the pending list and then awaits transport, so overlapping
+        # passes would resend items from a stale snapshot and let two proactive items through one
+        # burst window (invariant 38). Nothing inside a pass re-enters pump(), so this cannot deadlock.
+        self._lock = asyncio.Lock()
 
     def on_delivery_result(self, message_id: str) -> None:
         self._inflight.discard(message_id)
 
     async def pump(self) -> None:
         """Attempt one delivery pass. Mandatory first, then at most one proactive item."""
+        async with self._lock:
+            await self._pump_pass()
+
+    async def _pump_pass(self) -> None:
         now = self._clock.now_utc()
         pending = [m for m in self._stores.outbox.deliverable() if m.message_id not in self._inflight]
         mandatory = [m for m in pending if m.kind is OutboundKind.MANDATORY]

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 from .. import ids
@@ -21,8 +22,11 @@ from ..domain.events import (
     AgentResumed,
     AgentStarted,
     AgentSuspending,
+    DeliveryResult,
+    EmbeddingResult,
     Event,
     HumanMessage,
+    LLMResult,
     ReconcileEmbeddings,
     RuntimeInterruptionDetected,
     StochasticWake,
@@ -40,6 +44,9 @@ from .dispatcher import Dispatcher
 from .lock import SingleInstanceLock
 from .recovery import recover
 from .timer import CancellableTimer
+
+# Events reduced during shutdown: outcomes of work that already happened (see _reduce_remaining).
+_SHUTDOWN_REDUCIBLE = (LLMResult, EmbeddingResult, DeliveryResult)
 
 _HEARTBEAT_SECONDS = 30.0
 
@@ -134,8 +141,13 @@ class AgentService:
         for task in (self._loop_task, self._heartbeat_task):
             if task is not None:
                 task.cancel()
+        # Let in-flight workers finish, then reduce the results they produced. The reducer loop is
+        # already stopped, so without this a result finished during the drain would sit on a queue
+        # nobody reads: never durably accepted, the work left RUNNING, the model call repeated after
+        # the lease is reclaimed.
         if self._dispatcher is not None:
             await self._dispatcher.drain()
+        self._reduce_remaining()
 
         now = self._clock.now_utc()
         assert self._reducer is not None and self._stores is not None
@@ -184,8 +196,6 @@ class AgentService:
 
     async def _process(self, event: Event) -> None:
         assert self._reducer is not None and self._dispatcher is not None and self._pump is not None
-        from ..domain.events import DeliveryResult
-
         result = self._reducer.reduce(event)
         if isinstance(event, DeliveryResult):
             self._pump.on_delivery_result(event.message_id)
@@ -199,6 +209,31 @@ class AgentService:
     def _enqueue(self, event: Event) -> None:
         self._queue.put_nowait(event)
 
+    def _reduce_remaining(self) -> None:
+        """At shutdown, reduce the results of work that already ran; start no new cognition.
+
+        Only ``_SHUTDOWN_REDUCIBLE`` events are reduced: a model/embedding result (so the call
+        isn't repeated after restart) or a delivery outcome (a transport attempt that already
+        happened). Everything else is left alone:
+
+        * ``StochasticWake`` is dropped. It is still valid here (lifecycle is RUNNING until
+          ``AgentSuspending``), so reducing it would run a wake cycle whose proactive work recovery
+          dispatches after downtime, replaying a missed wake (invariant 9).
+        * ``HumanMessage`` stays unreduced. It was durably accepted at ingress, so
+          ``events.unreduced()`` replays it on the next start; reducing it here would start a
+          new cognition cycle during shutdown.
+        * ``ReconcileEmbeddings`` is dropped; every start runs one.
+
+        The only follow-up work result reductions can create is embedding work (e.g. a topic
+        summary's embedding). It stays PENDING and recovery dispatches it on the next start.
+        Nothing here dispatches, reschedules, or delivers.
+        """
+        assert self._reducer is not None
+        while not self._queue.empty():
+            event = self._queue.get_nowait()
+            if isinstance(event, _SHUTDOWN_REDUCIBLE):
+                self._reducer.reduce(event)
+
     # --- wake scheduling -----------------------------------------------------------------
     def _schedule_wake(self) -> None:
         assert self._reducer is not None and self._stores is not None
@@ -206,18 +241,28 @@ class AgentService:
         candidates = build_candidates(self._reducer.context, now)
         signals = wake_signals(self._reducer.context, candidates, now)
         delay_hours = sample_delay_hours(self._config.cognition, signals, self._rng)
-        self._timer.reschedule(delay_hours * 3600.0, self._on_wake_fired)
-
-    def _on_wake_fired(self) -> None:
-        assert self._reducer is not None
+        # A new schedule is a new generation: a wake already queued under the previous schedule
+        # no longer matches and the wake handler drops it as stale (DESIGN 10.6, invariant 11). Without the bump,
+        # such a wake fired alongside the new one. Persisted so the generation stays monotonic
+        # across restarts.
         ctx = self._reducer.context
+        generation = ctx.scheduler_generation + 1
+        with self._stores.db.transaction():
+            self._stores.state.set_scheduler_generation(generation)
+            self._stores.identity.update_session_generation(ctx.runtime_session_id, generation)
+        ctx.scheduler_generation = generation
+        self._timer.reschedule(delay_hours * 3600.0, partial(self._on_wake_fired, generation))
+
+    def _on_wake_fired(self, generation: int) -> None:
+        """Enqueue the wake, stamped with the generation of the schedule that set this timer."""
+        assert self._reducer is not None
         self._enqueue(
             StochasticWake(
                 event_id=ids.new_id(ids.EVENT),
                 timestamp=self._clock.now_utc(),
                 source="scheduler",
-                runtime_session_id=ctx.runtime_session_id,
-                scheduler_generation=ctx.scheduler_generation,
+                runtime_session_id=self._reducer.context.runtime_session_id,
+                scheduler_generation=generation,
                 scheduled_at_utc="",
             )
         )
