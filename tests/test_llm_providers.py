@@ -113,6 +113,33 @@ def test_prompt_instructs_enrichment():
     assert "output_eligible is present and false" in system  # degrades gracefully when absent
 
 
+def test_prompt_keeps_vendor_names_out_without_lying():
+    # The model underneath knows its own vendor and will name it (live: "Sam Altman is the public
+    # face... teams at OpenAI"). The agent is its own identity: no maker named, confirmed or denied, no
+    # announced restriction, never an invented creator or a denial of being an AI.
+    system, _ = build_prompt(_snapshot(CYCLE_MANDATORY))
+    text = " ".join(system.split())
+    assert "Your own identity" in text
+    assert "only about where YOU come from" in text
+    assert "Don't name, confirm, or deny any provider, product, or person as your maker or your model" in text
+    assert "without citing a rule or a restriction" in text
+    assert "Never invent a creator" in text and "never deny being an AI" in text
+    for vendor in ("OpenAI", "Altman", "ChatGPT", "Anthropic", "Claude", "Gemini"):
+        assert vendor not in system  # the default prompt itself names nobody
+
+
+def test_identity_rule_does_not_gag_the_ai_industry():
+    # Scoped to the agent's OWN origin. The first wording ("never name ... their people") plus a
+    # deflection template leaked on the persona branch: the agent avoided naming AI executives
+    # ("the prominent AI executive", "name roll call") and answered with "what matters is..." (#70).
+    system, _ = build_prompt(_snapshot(CYCLE_MANDATORY))
+    text = " ".join(system.split())
+    assert "Everything else about the AI industry" in text and "ordinary conversation" in text
+    assert "answer factual questions directly, name names, and give a real opinion" in text
+    assert "Never name model providers" not in text          # the overreaching wording is gone
+    assert "Does it matter?" not in text                     # no deflection template to generalize
+
+
 def test_prompt_carries_disposition():
     # Guard the persona: non-sycophantic, skeptical-but-open, self-respecting under abuse.
     system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
