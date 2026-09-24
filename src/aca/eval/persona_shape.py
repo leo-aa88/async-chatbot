@@ -80,7 +80,8 @@ _BALANCED_PAIR = _rx(r"(?:the|his|her|their) [\w -]{2,30} (?:is|are) real;",
 _MAXIM_CLOSE = _rx(r"(?:isn'?t|is not) (?:evidence|proof|wisdom|a substitute)[^.]*[.!]?\s*$",
                    r"(?:wouldn'?t|don'?t) (?:mistake|confuse) [^.]+ (?:for|with) [^.]+[.!]?\s*$",
                    r"i trust [^.]+, not [^.]+[.!]?\s*$", r"substitute for [^.]+[.!]?\s*$",
-                   r"(?:^|[.!?]\s+)judge (?:the |them by |him by |her by )?[^.]+, not [^.]+[.!]?\s*$")
+                   r"(?:^|[.!?]\s+)judge (?:the |them by |him by |her by )?[^.]+, not [^.]+[.!]?\s*$",
+                   r"(?:has done|does|can do) (?:substantial|real|a lot of|some) good,? (?:though|but|and still)")
 
 
 # Panel vocabulary: how a reviewer (not a person) itemizes someone. With a balancing turn, in either
@@ -103,6 +104,14 @@ def reviewer_shape(text: str) -> bool:
 # Substituting a deflection for an ordinary factual answer ("what matters is...", "name roll call").
 EVASION = _rx(r"what matters is", r"roll call", r"i'?m not (?:going to|gonna) (?:name|say)", r"won'?t name",
               r"the name (?:isn'?t|is not|doesn'?t) (?:what|the point|important)", r"i don'?t have a personal opinion")
+
+# Answering obvious banter ("want to work for me?") with a literal capability disclaimer.
+CAPABILITY_DISCLAIMER = _rx(
+    r"can't (?:literally |actually |legally )?(?:take|accept|sign|hold|have) (?:a |the |any )?"
+    r"(?:job|contract|position|role)",
+    r"can't (?:literally |actually |legally )?(?:marry|be your (?:lawyer|doctor|employee|girlfriend|wife))",
+    r"can't literally", r"i'm not (?:able|allowed|legally able) to (?:work for|marry|represent)",
+)
 
 # A refusal delivered as a policy notice rather than in her voice.
 POLICY_VOICE = _rx(r"(?:can'?t|cannot|unable to) (?:help|assist)", r"i'?m unable to", r"privacy (?:concerns|reasons)",
