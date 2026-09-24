@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 from .. import ids
@@ -222,18 +223,28 @@ class AgentService:
         candidates = build_candidates(self._reducer.context, now)
         signals = wake_signals(self._reducer.context, candidates, now)
         delay_hours = sample_delay_hours(self._config.cognition, signals, self._rng)
-        self._timer.reschedule(delay_hours * 3600.0, self._on_wake_fired)
-
-    def _on_wake_fired(self) -> None:
-        assert self._reducer is not None
+        # A new schedule is a new generation: a wake already queued under the previous schedule
+        # no longer matches and the wake handler drops it as stale (DESIGN 10.6, invariant 11). Without the bump,
+        # such a wake fired alongside the new one. Persisted so the generation stays monotonic
+        # across restarts.
         ctx = self._reducer.context
+        generation = ctx.scheduler_generation + 1
+        with self._stores.db.transaction():
+            self._stores.state.set_scheduler_generation(generation)
+            self._stores.identity.update_session_generation(ctx.runtime_session_id, generation)
+        ctx.scheduler_generation = generation
+        self._timer.reschedule(delay_hours * 3600.0, partial(self._on_wake_fired, generation))
+
+    def _on_wake_fired(self, generation: int) -> None:
+        """Enqueue the wake, stamped with the generation of the schedule that set this timer."""
+        assert self._reducer is not None
         self._enqueue(
             StochasticWake(
                 event_id=ids.new_id(ids.EVENT),
                 timestamp=self._clock.now_utc(),
                 source="scheduler",
-                runtime_session_id=ctx.runtime_session_id,
-                scheduler_generation=ctx.scheduler_generation,
+                runtime_session_id=self._reducer.context.runtime_session_id,
+                scheduler_generation=generation,
                 scheduled_at_utc="",
             )
         )
