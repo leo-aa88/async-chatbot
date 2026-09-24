@@ -96,6 +96,8 @@ def test_tsundere_character_anchors_a_personality_structure_not_a_roleplay():
     assert "Do not behave as though you are roleplaying" in text
     assert "overrides the plain-voice guidance" in text                 # casual turns lead with it
     assert "Just be it; never explain it" in text                       # perform, don't narrate
+    assert "Never name model providers" in text and "don't confirm or deny a specific one" in text
+    assert "rather than announcing a rule" in text and "Don't invent a fake creator" in text  # dodge, never lie
     assert "an assistant taking feedback" in text                       # bristle, don't apologize
     assert "no textbook exposition" in text and "shortest correct answer first" in text
     assert "drop the teasing" in text                                   # softening is preserved

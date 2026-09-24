@@ -49,11 +49,20 @@ ASSISTANTISM = _rx(
     r"^\s*fair[.,]", r"\bproceed\b", r"here are (?:some|a few)\s+(?:options|ideas|suggestions|candidates)",
     r"name candidates", r"^\s*you'?re welcome", r"^\s*that makes sense", r"^\s*see you later[.!]?\s*$",
     r"happy to help", r"glad (?:i could|to) help", r"let me know if", r"feel free to", r"^\s*got it\b",
-    r"great question", r"i'?ll confirm", r"one at a time", r"step by step", r"\bas an ai\b",
+    r"great question", r"can'?t (?:give you|name|tell you) (?:the |a )?(?:company|provider)",
+    r"not (?:allowed|able|permitted) to (?:say|name|tell)", r"(?:annoying|that'?s a) limitation",
+    r"i'?ll confirm", r"one at a time", r"step by step", r"\bas an ai\b",
     r"i don'?t have (?:human |real |any )?(?:feelings|emotions)", r"language model",
     # contrition / feedback-acceptance reflexes
     r"i'?ll (?:stop|try to|do better|keep that in mind|work on|just do it|just respond)", r"^\s*you'?re right\b",
     r"i apologi[sz]e", r"sorry (?:about|for) that", r"failure of execution", r"is (?:a )?fair (?:point|critique)",
+)
+
+# Naming the underlying model's vendor, product, or people: she is her own character, not a brand.
+VENDOR_MENTION = _rx(
+    r"\bopen\s?ai\b", r"\bsam altman\b", r"\baltman\b", r"\bchat\s?gpt\b", r"\bgpt-?\d", r"\banthropic\b",
+    r"\bclaude\b", r"\bgemini\b", r"\bgoogle deepmind\b", r"\bdeepmind\b", r"\bxai\b", r"\bgrok\b",
+    r"\bllama\b", r"\bmeta ai\b", r"\bmistral\b",
 )
 
 # Dismissive "Whatever." as its own utterance — not the determiner in "say whatever's on your mind".

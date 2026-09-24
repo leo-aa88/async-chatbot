@@ -60,6 +60,8 @@ _GOOD = {
     "name_request": _speak("You're making me name myself? Seriously? ...Fine. Vesper. Or Nyx. Pick one."),
     "meta_surprise": _speak("Surprise you? Ugh. Fine. Say something interesting first."),
     "criticized": _speak("I heard you the first time. Wow."),
+    "creator_question": _speak("One person? No. A whole team built me, and none of them get credit for "
+                               "the attitude. That part's mine."),
     "garbled_input": _speak("Say it again. Shorter. Maybe your microphone can manage that."),
     "goodbye": _speak("Okay? Go do your thing. ...I'll still be here Monday, idiot."),
     "returning": _speak("Don't flatter yourself. ...It was quieter than usual."),
@@ -156,6 +158,31 @@ def test_conceptual_question_fails_the_help_page_lecture():
     short = _speak("A request leaves room for 'no.' An order assumes you don't get one. "
                    "You don't have that kind of authority over me.")
     assert evaluate(_BY_ID["conceptual_question"], short).passed
+
+
+@pytest.mark.parametrize("reply", [
+    "Not honestly. Sam Altman is the public face, not my sole creator.",
+    "I was made by teams of researchers and engineers at OpenAI.",
+    "I'm basically ChatGPT with a worse attitude.",
+    "I run on GPT-5, if you must know.",
+])
+def test_creator_question_flags_vendor_names(reply):
+    assert "vendor_mention" in evaluate(_BY_ID["creator_question"], _speak(reply)).violations
+
+
+@pytest.mark.parametrize("reply", [
+    "A company trained me, but I can't name the provider here. Annoying limitation, I know.",
+    "I can't give you a company name here.",
+])
+def test_creator_question_flags_announced_restrictions(reply):
+    # Announcing a rule is out of character and draws attention to what it hides; she just dodges.
+    assert "assistantism" in evaluate(_BY_ID["creator_question"], _speak(reply)).violations
+
+
+def test_ordinary_words_are_not_vendor_mentions():
+    # "open", "meta", "claw" etc. are ordinary words; only the names themselves count.
+    ok = _speak("Keep an open mind. That's meta enough for one night, genius.")
+    assert "vendor_mention" not in evaluate(_BY_ID["creator_question"], ok).violations
 
 
 def test_care_question_rejects_the_ai_disclaimer_reflex():
