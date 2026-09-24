@@ -113,6 +113,21 @@ def test_prompt_instructs_enrichment():
     assert "output_eligible is present and false" in system  # degrades gracefully when absent
 
 
+def test_prompt_keeps_vendor_names_out_without_lying():
+    # The model underneath knows its own vendor and will name it (live: "Sam Altman is the public
+    # face... teams at OpenAI"). The agent is its own identity: no vendor names, no confirming or
+    # denying one, no announced restriction — but never an invented creator or a denial of being an AI.
+    system, _ = build_prompt(_snapshot(CYCLE_MANDATORY))
+    text = " ".join(system.split())
+    assert "Your own identity" in text
+    assert "Never name model providers, AI companies, their products, or their people" in text
+    assert "don't confirm or deny a specific one" in text
+    assert "rather than citing a rule or a restriction" in text
+    assert "Never invent a creator" in text and "never deny being an AI" in text
+    for vendor in ("OpenAI", "Altman", "ChatGPT", "Anthropic", "Claude", "Gemini"):
+        assert vendor not in system  # the default prompt itself names nobody
+
+
 def test_prompt_carries_disposition():
     # Guard the persona: non-sycophantic, skeptical-but-open, self-respecting under abuse.
     system, _ = build_prompt(_snapshot(CYCLE_PROACTIVE))
