@@ -12,7 +12,7 @@ import json
 
 from ...cognition.snapshot import Snapshot
 from ...domain.cycles import CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL
-from ...persona import persona_for_prompt
+from ...persona import closing_streak_note, persona_for_prompt
 
 # Everything before the persona insertion point: role, disposition, contract, speech acts, voice.
 _SYSTEM_HEAD = """\
@@ -135,9 +135,22 @@ def build_prompt(snapshot: Snapshot) -> tuple[str, str]:
         f"cycle_id: {snapshot.cycle_id}\n"
         f"basis_revision: {snapshot.basis_revision}\n"
         f"context:\n{context}\n\n"
-        "Return your decision as the single JSON object described in the system prompt."
     )
+    note = _style_note(snapshot, agent_state.get("persona"))
+    if note:
+        user += f"{note}\n\n"
+    user += "Return your decision as the single JSON object described in the system prompt."
     return system, user
+
+
+def _style_note(snapshot: Snapshot, persona: str | None) -> str | None:
+    """Voice-only feedback for a character persona, derived purely from the snapshot (replayable).
+
+    The default persona gets none, so its prompts are unchanged.
+    """
+    if not persona_for_prompt(persona).character:
+        return None
+    return closing_streak_note(snapshot.context.get("recent_conversation") or [])
 
 
 def cycle_type(snapshot: Snapshot) -> str:

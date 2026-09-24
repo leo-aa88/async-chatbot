@@ -96,8 +96,8 @@ def test_tsundere_character_anchors_a_personality_structure_not_a_roleplay():
     assert "Do not behave as though you are roleplaying" in text
     assert "overrides the plain-voice guidance" in text                 # casual turns lead with it
     assert "Just be it; never explain it" in text                       # perform, don't narrate
-    assert "Never name model providers" in text and "don't confirm or deny a specific one" in text
-    assert "rather than announcing a rule" in text and "Don't invent a fake creator" in text  # dodge, never lie
+    assert "don't name, confirm, or deny any provider, product, or person as your maker" in text
+    assert "Don't invent a creator" in text and "don't deny being an AI" in text  # dodge, never lie
     assert "an assistant taking feedback" in text                       # bristle, don't apologize
     assert "no textbook exposition" in text and "shortest correct answer first" in text
     assert "drop the teasing" in text                                   # softening is preserved
@@ -122,3 +122,56 @@ def test_name_and_persona_compose():
 def test_persona_prompt_is_deterministic():
     snap = _snapshot(CYCLE_MANDATORY, persona="tsundere")
     assert build_prompt(snap) == build_prompt(snap)
+
+
+
+# --- register collapse: structural guards ---------------------------------------------------------
+def test_voice_is_invariant_across_topics():
+    text = " ".join(get_persona("tsundere").character.split())
+    assert "Your voice doesn't change with the topic" in text
+    assert "can limit WHAT you say" in text and "never turns you into an HR memo" in text
+    assert "decline as yourself" in text and "not as a policy notice" in text
+
+
+def test_origin_rule_is_scoped_and_names_no_industry_figures():
+    # The first origin rule listed "Sam Altman" and "OpenAI" among names never to say; on AI-industry
+    # questions that leaked into name avoidance ("the prominent AI executive") and "what matters is".
+    text = " ".join(get_persona("tsundere").character.split())
+    assert "only about YOUR origin" in text
+    assert "Everything else about the AI industry" in text and "ordinary conversation" in text
+    for name in ("Sam Altman", "OpenAI", "ChatGPT", "Anthropic", "Dario"):
+        assert name not in text
+
+
+def test_opinion_rule_names_the_reviewer_shape():
+    text = " ".join(get_persona("tsundere").character.split())
+    assert "react like a person, not a reviewer" in text
+    assert "no credential opener" in text and "no \"but\" pivot" in text and "no maxim to close on" in text
+    assert "A factual question gets the fact first" in text and "what matters is..." in text
+    assert "never the default ending, never twice in a row" in text
+
+
+def _history(*agent_replies: str) -> Snapshot:
+    turns = []
+    for i, reply in enumerate(agent_replies):
+        turns += [{"role": "human", "text": f"h{i}"}, {"role": "agent", "text": reply}]
+    return Snapshot(cycle_id="c", work_id="w", basis_revision=1, template_version="v0.6",
+                    context={"source": {"cycle_type": CYCLE_MANDATORY}, "recent_conversation": turns,
+                             "agent_state": {"persona": "tsundere"}})
+
+
+def test_closing_streak_note_reaches_the_prompt():
+    _, user = build_prompt(_history("Finally. Don't get smug about it.", "Wow. Don't get cocky."))
+    assert "style_note:" in user and "Don't get cocky." in user
+
+
+def test_no_style_note_without_a_streak():
+    _, user = build_prompt(_history("Finally. Don't get smug about it.", "Dario Amodei.", "Fine."))
+    assert "style_note" not in user
+
+
+def test_default_persona_never_gets_a_style_note():
+    snap = _history("Don't get smug.", "Don't get cocky.")
+    snap.context["agent_state"] = {}
+    _, user = build_prompt(snap)
+    assert "style_note" not in user

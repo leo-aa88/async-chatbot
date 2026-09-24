@@ -23,7 +23,7 @@ from pathlib import Path
 
 from aca.config import Config
 from aca.dotenv import load_dotenv
-from aca.eval.persona import format_report, run_corpus, run_dialogue
+from aca.eval.persona import SENSITIVE_DIALOGUE, evaluate_transcript, format_report, run_corpus, run_dialogue
 from aca.workers.llm import build_llm_worker, key_env_for
 
 
@@ -32,6 +32,8 @@ async def _main() -> None:
     parser.add_argument("--data-dir", default=os.environ.get("ACA_DATA_DIR") or str(Path.home() / ".aca"))
     parser.add_argument("--persona", default="tsundere")
     parser.add_argument("--dialogue", action="store_true", help="print a sample transcript instead of scoring")
+    parser.add_argument("--sensitive", action="store_true",
+                        help="play the sensitive-topic dialogue and score persona stability across it")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -45,6 +47,13 @@ async def _main() -> None:
     async def decide(snapshot):
         return (await worker.run(snapshot)).result
 
+    if args.sensitive:
+        transcript = await run_dialogue(decide, SENSITIVE_DIALOGUE, persona=args.persona)
+        for human, reply in transcript:
+            print(f"you:   {human}\nagent: {reply or '(silence)'}\n")
+        report = evaluate_transcript(transcript)
+        print("stable" if report.passed else f"violations: {list(report.turn_violations)}")
+        return
     if args.dialogue:
         for human, reply in await run_dialogue(decide, persona=args.persona):
             print(f"you:   {human}\nagent: {reply or '(silence)'}\n")
