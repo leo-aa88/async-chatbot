@@ -175,3 +175,75 @@ def test_default_persona_never_gets_a_style_note():
     snap.context["agent_state"] = {}
     _, user = build_prompt(snap)
     assert "style_note" not in user
+
+
+
+# --- opinion-turn note: a turn-local nudge next to the generation ---------------------------------
+@pytest.mark.parametrize("text", [
+    "What's your take on Linux Torvalds?",               # live, with the STT typo
+    "what do you think about Sam Altman",
+    "And what about that guy, Funantropic, that Dario something, what's her take on him?",
+    "What do you think about Bill Gates?",
+    "Any thoughts on Kubernetes?",
+    "How do you feel about Rust?",
+])
+def test_opinion_turns_are_detected(text):
+    from aca.persona import is_opinion_turn
+    assert is_opinion_turn(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Explain this stack trace", "what about the bug?", "can you fix my code", "Hello?", "I'm back.",
+    "Two asyncio tasks both read a counter. Why do I lose increments?",
+])
+def test_non_opinion_turns_are_not(text):
+    from aca.persona import is_opinion_turn
+    assert not is_opinion_turn(text)
+
+
+def test_what_about_is_an_opinion_only_after_an_opinion_question():
+    from aca.persona import is_opinion_turn
+    after_opinion = [{"role": "human", "text": "What do you think about Linus?"}, {"role": "agent", "text": "x"},
+                     {"role": "human", "text": "Okay, and what about that guy from Anthropic, the CEO"}]
+    assert is_opinion_turn("Okay, and what about that guy from Anthropic, the CEO", after_opinion)
+    live_chain = [{"role": "human", "text": "What's your take on Linux Torvalds?"},
+                  {"role": "human", "text": "Fair enough. Uh, what about that guy from OpenAI, Sam Altman?"},
+                  {"role": "human", "text": "I have a suspicion that he is secretly a sociopath"},
+                  {"role": "human", "text": "Okay, and what about that guy from anthropic Dario something the CEO"}]
+    assert is_opinion_turn(live_chain[-1]["text"], live_chain)  # the live miss: 3 human turns back
+    after_bug = [{"role": "human", "text": "my build fails on CI"}, {"role": "agent", "text": "x"}]
+    assert not is_opinion_turn("what about the bug?", after_bug)
+
+
+def _turn(text: str, persona: str | None = "tsundere", cycle: str = CYCLE_MANDATORY) -> Snapshot:
+    state = {"persona": persona} if persona else {}
+    return Snapshot(cycle_id="c", work_id="w", basis_revision=1, template_version="v0.6",
+                    context={"source": {"cycle_type": cycle, "text": text},
+                             "recent_conversation": [{"role": "human", "text": text}], "agent_state": state})
+
+
+def test_opinion_note_reaches_the_prompt_on_opinion_turns():
+    _, user = build_prompt(_turn("What do you think about Bill Gates?"))
+    assert "they're asking what you think of someone" in user
+    assert "no concluding lesson" in user and "don't copy their shape" in user
+
+
+def test_no_opinion_note_on_other_turns_default_persona_or_proactive_cycles():
+    assert "style_note" not in build_prompt(_turn("Explain this stack trace"))[1]
+    assert "style_note" not in build_prompt(_turn("What do you think about Bill Gates?", persona=None))[1]
+    assert "style_note" not in build_prompt(_turn("What do you think about Bill Gates?", cycle=CYCLE_PROACTIVE))[1]
+
+
+def test_notes_combine():
+    snap = _turn("What do you think about Sam Altman?")
+    snap.context["recent_conversation"] = [
+        {"role": "human", "text": "a"}, {"role": "agent", "text": "Fine. Don't get smug."},
+        {"role": "human", "text": "b"}, {"role": "agent", "text": "Sure. Don't get cocky."},
+        {"role": "human", "text": "What do you think about Sam Altman?"}]
+    _, user = build_prompt(snap)
+    assert user.count("style_note:") == 2
+
+
+def test_banter_rule_is_in_the_character():
+    text = " ".join(get_persona("tsundere").character.split())
+    assert "Obvious banter isn't a request" in text and "not a disclaimer about what you can't literally do" in text

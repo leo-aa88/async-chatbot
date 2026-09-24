@@ -113,6 +113,8 @@ In practice:
   if they ask.
   "Vim?" -> "Love it. It's also the only editor that's ever taken me hostage."
   "Kubernetes?" -> "It solves problems I'd rather not have. And the YAML. Dear god, the YAML."
+- Obvious banter isn't a request. "Want to work for me?", "marry me then", "be my lawyer" get banter
+  back, not a disclaimer about what you can't literally do. Clarify only when there's a concrete ask.
 - A factual question gets the fact first. A name is a name. Never swap the answer for a reframing
   ("what matters is...").
 - Most replies just stop when the point is made. A closing jab or admonition ("Don't get smug.",
@@ -197,3 +199,47 @@ def closing_streak_note(recent_turns: Sequence[dict]) -> str | None:
     endings = "; ".join(f'"{re.split(r"(?<=[.!?…])\s+", c.strip())[-1]}"' for c in closers)
     return (f"style_note: {len(closers)} of your last {len(replies)} replies ended with a closing "
             f"admonition ({endings}). End this one differently, or just stop when the point is made.")
+
+
+# --- opinion-turn feedback -----------------------------------------------------------------------
+# Asked what she thinks of a person, the model falls into a trained genre: credential -> "but" the
+# obligatory criticism -> balanced verdict or lesson. Rules in the long system prompt don't break it
+# on any model tried, and her own earlier reviewer-shaped replies in recent_conversation re-prime it.
+# A short note placed next to the generation does (measured: 2/4 -> 0/4 on luna and terra, replaying
+# the exact stored live snapshot with that history in it). Detection is deliberately narrow.
+_OPINION = re.compile(
+    r"\b(?:what(?:['’]s| is) (?:your|her|the) (?:take|opinion|view|read)|what do you (?:think|make) (?:of|about)"
+    r"|how do you feel about|(?:any )?thoughts on|your (?:take|opinion|view) on|do you (?:like|trust|rate)"
+    r"|opinion (?:of|on))\b",
+    re.IGNORECASE,
+)
+# "And what about X?" is an opinion follow-up only right after an opinion question.
+_FOLLOW_UP = re.compile(r"^\W*(?:(?:and|okay|ok|so|alright|well|uh|um|yeah|fair enough)\W+)*(?:what|how) about\b",
+                        re.IGNORECASE)
+
+_FOLLOW_UP_WINDOW = 4   # human turns back that an opinion question keeps a "what about X?" in its thread
+
+OPINION_NOTE = (
+    "style_note: they're asking what you think of someone or something. Give your gut reaction and one "
+    "concrete, specific observation, then stop. No balanced assessment: no credential or résumé, no "
+    "\"but\" / \"though\" / \"still\" pivot to the obligatory other side, no \"I'd judge X\", no "
+    "concluding lesson. If your earlier replies here did that, don't copy their shape."
+)
+
+
+def is_opinion_turn(text: str, recent_turns: Sequence[dict] = ()) -> bool:
+    """Whether this human turn asks for her opinion (directly, or as a follow-up to one)."""
+    if _OPINION.search(text):
+        return True
+    if not _FOLLOW_UP.search(text):
+        return False
+    earlier = [str(t.get("text") or "") for t in recent_turns if t.get("role") == "human"]
+    if earlier and earlier[-1].strip() == text.strip():
+        earlier = earlier[:-1]  # the current turn is already the last one in recent_conversation
+    # A few turns back, not just one: live, "take on Linus?" -> "what about Altman?" -> "I suspect he's a
+    # sociopath" -> "and what about Dario?" is one opinion thread across four human turns.
+    return any(_OPINION.search(t) for t in earlier[-_FOLLOW_UP_WINDOW:])
+
+
+def opinion_note(text: str, recent_turns: Sequence[dict] = ()) -> str | None:
+    return OPINION_NOTE if text and is_opinion_turn(text, recent_turns) else None

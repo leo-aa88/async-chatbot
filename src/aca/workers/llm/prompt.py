@@ -12,7 +12,7 @@ import json
 
 from ...cognition.snapshot import Snapshot
 from ...domain.cycles import CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL
-from ...persona import closing_streak_note, persona_for_prompt
+from ...persona import closing_streak_note, opinion_note, persona_for_prompt
 
 # Everything before the persona insertion point: role, disposition, contract, speech acts, voice.
 _SYSTEM_HEAD = """\
@@ -150,7 +150,12 @@ def _style_note(snapshot: Snapshot, persona: str | None) -> str | None:
     """
     if not persona_for_prompt(persona).character:
         return None
-    return closing_streak_note(snapshot.context.get("recent_conversation") or [])
+    recent = snapshot.context.get("recent_conversation") or []
+    source = snapshot.context.get("source") or {}
+    notes = [closing_streak_note(recent)]
+    if source.get("cycle_type") in (CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL):  # replies only, never proactive
+        notes.append(opinion_note(str(source.get("text") or ""), recent))
+    return "\n".join(n for n in notes if n) or None
 
 
 def cycle_type(snapshot: Snapshot) -> str:
