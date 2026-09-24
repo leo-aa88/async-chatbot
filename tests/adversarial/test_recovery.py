@@ -71,6 +71,29 @@ def test_expired_running_lease_is_reclaimed(tmp_path):
     s.close()
 
 
+def test_unexpired_running_lease_is_reclaimed_after_restart(tmp_path):
+    # Work leased shortly before a crash or stop still has a valid lease at restart. Recovery used to
+    # reclaim only expired leases, so this work stayed RUNNING forever and its obligation never
+    # resolved. At recovery no live worker exists, so every RUNNING item is orphaned.
+    clock = ManualClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    s = Stores.open(tmp_path / "agent.db")
+    recover(s, clock, _config())
+    with s.db.transaction():
+        s.work.insert_work(WorkItem(
+            work_id="work_fresh", kind=WorkKind.LLM_COGNITION, cycle_id="c", basis_revision=0,
+            source_event_id="e", status=WorkStatus.PENDING, created_at=clock.now_utc(),
+        ))
+        s.work.lease("work_fresh", clock.now_utc() + timedelta(seconds=120))  # crash right after leasing
+
+    clock.advance(5)  # restart 5 s later, lease still valid
+    plan = recover(s, clock, _config())
+
+    assert "work_fresh" in plan.dispatch_work_ids
+    assert s.work.get_work("work_fresh").status is WorkStatus.PENDING
+    assert s.work.running() == []
+    s.close()
+
+
 def test_stale_proactive_item_expires_on_recovery(tmp_path):
     clock = ManualClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
     s = Stores.open(tmp_path / "agent.db")

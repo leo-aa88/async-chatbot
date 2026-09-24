@@ -99,11 +99,10 @@ class WorkStore:
                 ids.add(topic_id)
         return ids
 
-    def expired_running(self, now: datetime) -> list[WorkItem]:
+    def running(self) -> list[WorkItem]:
+        """Every RUNNING (leased) work item, whatever its lease expiry."""
         rows = self._db.query_all(
-            "SELECT * FROM work_items WHERE status=? AND lease_until IS NOT NULL "
-            "AND lease_until < ?",
-            (WorkStatus.RUNNING.value, txt(now)),
+            "SELECT * FROM work_items WHERE status=?", (WorkStatus.RUNNING.value,)
         )
         return [self._to_work(r) for r in rows]
 
