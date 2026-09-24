@@ -124,8 +124,14 @@ def _entering_recovery(identity: AgentIdentity, session_id: str, now: datetime) 
 
 
 def _reclaim_leases(stores: Stores, now: datetime) -> None:
-    """Requeue work whose RUNNING lease expired during downtime (DESIGN 23.5)."""
-    for work in stores.work.expired_running(now):
+    """Requeue every RUNNING work item: at recovery, no live worker holds any lease (DESIGN 23.5).
+
+    Recovery runs before the dispatcher exists, and the single-instance lock guarantees one process
+    per data dir. So any work still RUNNING was leased by a previous, now-dead run and is orphaned,
+    whether or not its lease has expired yet. Reclaiming only *expired* leases stranded work leased
+    shortly before a crash or stop: RUNNING forever, its obligation never resolved.
+    """
+    for work in stores.work.running():
         stores.work.requeue(work.work_id, error="lease_reclaimed_on_recovery")
 
 
