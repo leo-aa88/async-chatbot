@@ -131,14 +131,15 @@ class OutboxStore:
             (text, channel, message_id, txt(at)),
         )
 
-    def recent_turns(self, limit: int = 10) -> list[dict]:
+    def recent_turns(self, limit: int = 10, *, with_event_ids: bool = False) -> list[dict]:
         rows = self._db.query_all(
-            "SELECT role, text, channel, created_at FROM conversation_turns "
+            "SELECT role, text, channel, created_at, event_id FROM conversation_turns "
             "ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
         turns = [
-            {"role": r["role"], "text": r["text"], "channel": r["channel"], "at": r["created_at"]}
+            {"role": r["role"], "text": r["text"], "channel": r["channel"], "at": r["created_at"],
+             **({"event_id": r["event_id"]} if with_event_ids and r["event_id"] else {})}
             for r in rows
         ]
         turns.reverse()  # chronological order for prompt/display
