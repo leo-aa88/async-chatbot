@@ -19,6 +19,7 @@ Revalidation is scoped correctly by cycle type (DESIGN §29.4 step 5, §31.10):
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 
 from ...domain.enums import (
@@ -45,6 +46,8 @@ from .base import (
     CYCLE_REACTIVE_OPTIONAL,
     HandlerOutcome,
 )
+
+_log = logging.getLogger(__name__)
 
 # Sentinel a dispatcher writes into an LLMResult when the worker itself failed terminally
 # (provider error / timeout) after exhausting retries, so a mandatory obligation is surfaced as
@@ -110,6 +113,7 @@ def _on_worker_failure(ctx, event, work: WorkItem, cycle_type, error, now) -> Ha
             ctx.stores.work.update_obligation(
                 replace(obligation, status=ObligationStatus.FAILED, last_error=f"worker_error:{error}")
             )
+        _log_failed_reply(event, f"worker_error:{error}")
         _finalize(ctx, event.cycle_id, "failed", note="worker_failure")
         return HandlerOutcome(note=f"mandatory_worker_failure:{error}")
     _finalize(ctx, event.cycle_id, "silence", note="worker_failure")
@@ -124,6 +128,7 @@ def _on_parse_failure(ctx, event, cycle_type, error, now) -> HandlerOutcome:
             ctx.stores.work.update_obligation(
                 replace(obligation, status=ObligationStatus.FAILED, last_error=error)
             )
+        _log_failed_reply(event, str(error))
         _finalize(ctx, event.cycle_id, "failed", note="parse_failure")
         return HandlerOutcome(note=f"mandatory_parse_failure:{error}")
     # Proactive/reactive parse failure: no output, no regeneration (DESIGN 22.3).
@@ -194,6 +199,7 @@ def _finish_mandatory(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
             ctx.stores.work.update_obligation(
                 replace(obligation, status=ObligationStatus.FAILED, last_error="non_speak_for_mandatory")
             )
+        _log_failed_reply(event, "non_speak_for_mandatory")
         _finalize(ctx, event.cycle_id, "failed", useful=useful, note="non_speak_for_mandatory")
         return HandlerOutcome(note="mandatory_non_speak_failure")
 
@@ -338,3 +344,8 @@ def _finish_proactive(ctx, event, work: WorkItem, decision: LLMDecision, now) ->
         pre_outbox_invalidated=False, note=None,
     )
     return HandlerOutcome(deliver=True, reschedule=True, note="proactive_speak")
+
+
+def _log_failed_reply(event, reason: str) -> None:
+    """A reply the human was owed failed (invariant 25): said in the logs, by id and reason code."""
+    _log.warning("reply failed (cycle=%s work=%s): %s", event.cycle_id, event.work_id, reason[:200])

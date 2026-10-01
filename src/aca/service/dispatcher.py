@@ -10,6 +10,7 @@ and completion are bookkeeping performed on the reducer coroutine, keeping write
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import timedelta
 
@@ -23,6 +24,7 @@ from ..persistence.stores import Stores
 from ..reducer.handlers.llm_result import WORKER_ERROR_KEY
 from ..workers.base import EmbeddingWorker, LLMWorker
 
+_log = logging.getLogger(__name__)
 _LEASE_SECONDS = 120
 # Bounded in-process retries for a live worker error before the work fails terminally and the
 # obligation is surfaced (invariant 25). Kept small so a stuck task surfaces promptly.
@@ -58,6 +60,7 @@ class Dispatcher:
         task = asyncio.ensure_future(self._run(work))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(lambda t, w=work: _report_crash(t, w))
 
     async def _run(self, work: WorkItem) -> None:
         # dispatch() already leased this work once (attempt_count == 1).
@@ -66,6 +69,8 @@ class Dispatcher:
             try:
                 event = await self._execute(work)
             except Exception as exc:
+                _log.warning("%s attempt %d/%d failed (work=%s): %s", work.kind.value, attempt, _MAX_ATTEMPTS,
+                             work.work_id, _brief(exc))
                 if attempt >= _MAX_ATTEMPTS:
                     # Exhausted: fail terminally and surface it, never requeue forever (inv 25).
                     self._fail_terminal(work, exc)
@@ -84,6 +89,7 @@ class Dispatcher:
         return self._stores.work.get_work(work.work_id)
 
     def _fail_terminal(self, work: WorkItem, exc: Exception) -> None:
+        _log.error("%s failed for good (work=%s): %s", work.kind.value, work.work_id, _brief(exc))
         with self._stores.db.transaction():
             self._stores.work.fail_terminal(work.work_id, repr(exc))
         if work.kind is WorkKind.EMBEDDING:
@@ -155,3 +161,18 @@ class Dispatcher:
 def _embed_sync(worker: EmbeddingWorker, text: str):
     """Run an async embedding worker to completion inside an executor thread."""
     return asyncio.run(worker.embed(text))
+
+
+def _brief(exc: BaseException) -> str:
+    """An error for the logs: its type and the start of its message. Work items carry ids, not message
+    text, into exceptions; provider error bodies are cut short."""
+    text = " ".join(str(exc).split())
+    return f"{type(exc).__name__}: {text[:200]}" if text else type(exc).__name__
+
+
+def _report_crash(task: asyncio.Task, work: WorkItem) -> None:
+    """A worker task that raised outside its own handling (in the bookkeeping around an attempt): said
+    once, with the work it was running. Otherwise the exception would surface only at shutdown, if then."""
+    if task.cancelled() or task.exception() is None:
+        return
+    _log.error("dispatching %s %s crashed", work.kind.value, work.work_id, exc_info=task.exception())
