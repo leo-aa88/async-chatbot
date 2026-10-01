@@ -189,6 +189,18 @@ class WorkStore:
             (action, int(useful_enrichment), int(pre_outbox_invalidated), note, cycle_id),
         )
 
+    def trace_outcomes(self, source_event_ids: list[str]) -> dict[str, tuple[str | None, str | None, bool]]:
+        """``(action, notes, pre_outbox_invalidated)`` of each event's latest cycle trace, by event id."""
+        if not source_event_ids:
+            return {}
+        marks = ",".join("?" * len(source_event_ids))
+        rows = self._db.query_all(
+            f"SELECT source_event_id, action, notes, pre_outbox_invalidated FROM cognition_traces "
+            f"WHERE source_event_id IN ({marks}) ORDER BY created_at",
+            tuple(source_event_ids),
+        )
+        return {r["source_event_id"]: (r["action"], r["notes"], bool(r["pre_outbox_invalidated"])) for r in rows}
+
     def recent_traces(self, limit: int = 20) -> list[CognitionTrace]:
         rows = self._db.query_all(
             "SELECT * FROM cognition_traces ORDER BY created_at DESC LIMIT ?", (limit,)

@@ -19,6 +19,7 @@ from ..domain.enums import WorkKind, WorkStatus
 from ..domain.runtime import WorkItem
 from ..errors import AcaError
 from .context import ReducerContext
+from .conversation_notes import human_local_time, recent_conversation
 
 _CONTEXT_BUDGET = 5      # topics and memories each, per snapshot (unchanged)
 _RELEVANT_SLOTS = 2      # of that budget, at most this many go to query-relevant older items
@@ -35,6 +36,7 @@ def _agent_state_summary(ctx: ReducerContext) -> dict[str, Any]:
         "persistence": model.persistence,
         "mode": conversation.mode.value,
         "dominant_topic": model.dominant_topic,
+        "human_local_time": human_local_time(ctx.clock.now_local()),
     }
     if ctx.config.identity.name:
         summary["name"] = ctx.config.identity.name  # durable self-name -> prompt (survives resets)
@@ -104,7 +106,7 @@ def create_llm_work(
         basis_revision=basis_revision,
         agent_state=_agent_state_summary(ctx),
         source=source_context,
-        recent_conversation=ctx.stores.outbox.recent_turns(),
+        recent_conversation=recent_conversation(ctx),
         **_retrieved_context(ctx, source_context),
     )
     ctx.stores.work.insert_work(
