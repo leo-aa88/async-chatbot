@@ -9,6 +9,7 @@ result events. The service never mutates durable agent state except through the 
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -47,6 +48,8 @@ from .timer import CancellableTimer
 
 # Events reduced during shutdown: outcomes of work that already happened (see _reduce_remaining).
 _SHUTDOWN_REDUCIBLE = (LLMResult, EmbeddingResult, DeliveryResult)
+
+_log = logging.getLogger(__name__)
 
 _HEARTBEAT_SECONDS = 30.0
 
@@ -192,7 +195,13 @@ class AgentService:
                 event = await self._queue.get()
             except asyncio.CancelledError:
                 return
-            await self._process(event)
+            try:
+                await self._process(event)
+            except Exception:
+                # One failed event must never stop the loop: a dead loop answers nothing again until a
+                # restart (invariant 25). The failed reduction rolled back, so an accepted human
+                # message stays unreduced and is replayed on the next start (invariant 5).
+                _log.exception("reducing %s failed; the loop continues", type(event).__name__)
 
     async def _process(self, event: Event) -> None:
         assert self._reducer is not None and self._dispatcher is not None and self._pump is not None
