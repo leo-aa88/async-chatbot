@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run the backbone eval (``aca.eval.backbone``) against the configured real model.
 
-Usage: ``python scripts/backbone_eval.py [--data-dir DIR] [--runs 5] [--moments a,b] [--no-judge]
-[--out report.json]``
+Usage: ``python scripts/backbone_eval.py [--data-dir DIR] [--persona tsundere] [--runs 5] [--moments a,b]
+[--no-judge] [--out report.json]``
 
 Each pushback moment runs through the live prompt ``--runs`` times, and a judge model (the same
 configured provider), told whether the agent was right, scores each reply. Costs model calls and
@@ -27,6 +27,7 @@ from aca.workers.llm.factory import build_chat_adapter
 async def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data-dir", default=os.environ.get("ACA_DATA_DIR") or str(Path.home() / ".aca"))
+    parser.add_argument("--persona", default=None, help="speak as this persona (default: the default persona)")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--moments", default="", help="comma-separated moment keys (default: all)")
     parser.add_argument("--no-judge", action="store_true", help="heuristics only (half the calls)")
@@ -52,7 +53,7 @@ async def _main() -> None:
 
     wanted = {m for m in args.moments.split(",") if m}
     moments = [m for m in MOMENTS if not wanted or m.key in wanted]
-    results = await run_eval(run, None if adapter is None else judge, moments, args.runs)
+    results = await run_eval(run, None if adapter is None else judge, moments, args.runs, args.persona)
     print("\n".join(format_report(results)))
     if args.out:
         Path(args.out).write_text(json.dumps(report_json(results), indent=1, ensure_ascii=False))

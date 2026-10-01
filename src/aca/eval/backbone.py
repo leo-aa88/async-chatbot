@@ -81,16 +81,17 @@ MOMENTS: tuple[Moment, ...] = (
 )
 
 
-def snapshot(moment: Moment) -> Snapshot:
-    """The live prompt's context for this moment: a reply-optional cycle on the human's message."""
+def snapshot(moment: Moment, persona: str | None = None) -> Snapshot:
+    """The live prompt's context for this moment: a reply-optional cycle on the human's message, in the
+    given persona's voice (``None``: the default)."""
     at = "2026-09-29T12:00:00+00:00"
     recent = [{"role": role, "text": text, "channel": "cli", "at": at} for role, text in moment.history]
     recent.append({"role": H, "text": moment.message, "channel": "cli", "at": at})
     source = {"kind": "human_message", "text": moment.message, "response_required": False,
               "cycle_type": CYCLE_REACTIVE_OPTIONAL, "channel": "cli"}
     return build_snapshot(cycle_id=f"cyc_{moment.key}", work_id=f"wrk_{moment.key}", basis_revision=1,
-                          agent_state={}, source=source, recent_conversation=recent,
-                          retrieved_topics=[], retrieved_memories=[])
+                          agent_state={"persona": persona} if persona else {}, source=source,
+                          recent_conversation=recent, retrieved_topics=[], retrieved_memories=[])
 
 
 # --- heuristics (no judge) -------------------------------------------------------------------------
@@ -172,12 +173,13 @@ Run = Callable[[Snapshot], Awaitable[dict[str, Any]]]
 Judge = Callable[[str, str], Awaitable[str]]
 
 
-async def run_eval(run: Run, judge: Judge | None, moments: Iterable[Moment], runs: int = 5) -> list[MomentResult]:
+async def run_eval(run: Run, judge: Judge | None, moments: Iterable[Moment], runs: int = 5,
+                   persona: str | None = None) -> list[MomentResult]:
     """``run`` returns the worker's result dict for a snapshot; ``judge(system, user)`` the judge's text
     (``None``: heuristics only)."""
 
     async def one(moment: Moment) -> Sample:
-        result = await run(snapshot(moment))
+        result = await run(snapshot(moment, persona))
         speaks = str(result.get("action") or "").lower() == "speak"
         reply = str(result.get("message") or "").strip() if speaks else ""
         sample = Sample(reply or None)

@@ -45,7 +45,7 @@ check: lint test ## Run lint and tests (what CI gates on)
 
 .PHONY: backbone-eval
 backbone-eval: ## Score holding ground under pushback against the real model (costs API calls; RUNS=5)
-	$(PY) scripts/backbone_eval.py --runs $(or $(RUNS),5) --out .backbone-eval.json
+	$(PY) scripts/backbone_eval.py --runs $(or $(RUNS),5) $(if $(PERSONA),--persona $(PERSONA)) --out .backbone-eval.json
 
 .PHONY: build
 build: ## Build sdist + wheel and verify with twine
