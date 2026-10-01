@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import signal
 import sys
@@ -48,6 +49,7 @@ def _load_config(data_dir: Path) -> Config:
 
 # --- service start -------------------------------------------------------------------------
 async def _run_service(data_dir: Path) -> None:
+    _configure_logging()
     config = _load_config(data_dir)
     # Load only the configured providers' keys from .env (data dir first, then cwd); the shell
     # environment wins, and no unrelated secrets from a cwd .env are absorbed into the daemon.
@@ -92,6 +94,17 @@ async def _run_service(data_dir: Path) -> None:
     await server.close()
     await service.stop(ExitKind.CLEAN_SUSPEND)
     print("aca service stopped", flush=True)
+
+
+def _configure_logging() -> None:
+    """The service's own log lines (failed attempts, failed replies, a stopped loop), with time, level,
+    and source. They carry ids, codes, and error types, never message text."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger = logging.getLogger("aca")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 
 def _cmd_service(args: argparse.Namespace) -> int:

@@ -58,7 +58,14 @@ def build_llm_worker(config: LLM) -> LLMWorker:
     provider = _ALIASES.get(config.provider, config.provider)
     if provider == "fake":
         return FakeLLMWorker()
+    return ProviderLLMWorker(build_chat_adapter(config))
 
+
+def build_chat_adapter(config: LLM) -> ChatAdapter:
+    """The configured provider's raw chat adapter (a real provider only), e.g. for an offline judge."""
+    provider = _ALIASES.get(config.provider, config.provider)
+    if provider == "fake":
+        raise ConfigError("llm.provider 'fake' has no chat adapter: configure a real provider")
     spec = _PROVIDERS.get(provider)
     if spec is None:
         known = ", ".join(["fake", *sorted(_PROVIDERS)])
@@ -74,8 +81,7 @@ def build_llm_worker(config: LLM) -> LLMWorker:
         raise ConfigError("the 'httpx' package is required for real LLM providers: pip install 'aca[llm]'")
 
     base_url = config.base_url or spec.base_url
-    adapter = _build_adapter(spec.style, base_url, api_key, config)
-    return ProviderLLMWorker(adapter)
+    return _build_adapter(spec.style, base_url, api_key, config)
 
 
 def _build_adapter(style: str, base_url: str, api_key: str, config: LLM) -> ChatAdapter:

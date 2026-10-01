@@ -167,7 +167,7 @@ def test_closing_streak_note_reaches_the_prompt():
 
 def test_no_style_note_without_a_streak():
     _, user = build_prompt(_history("Finally. Don't get smug about it.", "Dario Amodei.", "Fine."))
-    assert "style_note" not in user
+    assert "closing admonition" not in user  # (the smug itself is the pet-warning note's)
 
 
 def test_default_persona_never_gets_a_style_note():
@@ -241,7 +241,8 @@ def test_notes_combine():
         {"role": "human", "text": "b"}, {"role": "agent", "text": "Sure. Don't get cocky."},
         {"role": "human", "text": "What do you think about Sam Altman?"}]
     _, user = build_prompt(snap)
-    assert user.count("style_note:") == 2
+    assert user.count("style_note:") == 3  # the closing streak, the pet warnings, the opinion turn
+    assert "closing admonition" in user and "Give that family a rest" in user
 
 
 def test_banter_rule_is_in_the_character():

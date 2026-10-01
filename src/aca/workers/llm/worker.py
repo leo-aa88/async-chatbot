@@ -15,8 +15,10 @@ from typing import Any
 
 from ...cognition.snapshot import Snapshot
 from ...errors import WorkerError
+from ...persona import persona_for_prompt
 from ..base import LLMOutput
 from .adapters import ChatAdapter
+from .dashes import without_dashes
 from .prompt import build_prompt, wants_speech
 
 
@@ -34,6 +36,10 @@ class ProviderLLMWorker:
             # worker malfunction so the reducer surfaces it (obligation FAILED / proactive silence).
             raise WorkerError("provider response truncated at max_tokens")
         decision = _coerce(result.text, wants_speech(snapshot))
+        persona = (snapshot.context.get("agent_state") or {}).get("persona")
+        if persona_for_prompt(persona).character and isinstance(decision.get("message"), str):
+            # A character persona never writes an em dash (dashes.py); the default persona is untouched.
+            decision["message"] = without_dashes(decision["message"])
         return LLMOutput(result=decision, tokens_in=result.tokens_in, tokens_out=result.tokens_out)
 
 
