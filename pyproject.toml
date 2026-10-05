@@ -23,7 +23,7 @@ voice-silero = ["silero-vad>=6.2.3", "torch>=2.14.1"]
 # Offline speech output for the chat client via Kokoro-82M (runs locally; nothing leaves the host after
 # a one-time model download). Optional and client-side only — the default build is silent.
 tts = ["kokoro>=0.9.4", "sounddevice>=0.5.6", "numpy>=2.5.3"]
-dev = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0", "ruff>=0.16.8", "httpx>=0.28.1"]
+dev = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0", "ruff>=0.16.10", "httpx>=0.28.1"]
 
 [project.scripts]
 aca = "aca.cli.main:main"
