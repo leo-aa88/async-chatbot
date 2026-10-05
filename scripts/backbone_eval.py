@@ -28,6 +28,7 @@ async def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data-dir", default=os.environ.get("ACA_DATA_DIR") or str(Path.home() / ".aca"))
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--mood", choices=("low", "normal", "high"), default=None, help="the day's mood")
     parser.add_argument("--moments", default="", help="comma-separated moment keys (default: all)")
     parser.add_argument("--no-judge", action="store_true", help="heuristics only (half the calls)")
     parser.add_argument("--out", default="", help="write every reply and judgement as JSON")
@@ -52,7 +53,7 @@ async def _main() -> None:
 
     wanted = {m for m in args.moments.split(",") if m}
     moments = [m for m in MOMENTS if not wanted or m.key in wanted]
-    results = await run_eval(run, None if adapter is None else judge, moments, args.runs)
+    results = await run_eval(run, None if adapter is None else judge, moments, args.runs, args.mood)
     print("\n".join(format_report(results)))
     if args.out:
         Path(args.out).write_text(json.dumps(report_json(results), indent=1, ensure_ascii=False))
