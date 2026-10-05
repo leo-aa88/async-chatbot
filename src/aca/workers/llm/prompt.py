@@ -12,6 +12,7 @@ import json
 
 from ...cognition.snapshot import Snapshot
 from ...domain.cycles import CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL
+from ...domain.mood import mood_note
 
 _SYSTEM = """\
 You are the cognition core of an asynchronous, introspective conversational agent (ACA).
@@ -154,11 +155,13 @@ def build_prompt(snapshot: Snapshot) -> tuple[str, str]:
         # Durable self-name, prepended so the agent knows who it is on every cycle (DESIGN 5).
         system = f"Your name is {name}.\n\n{_SYSTEM}"
     context = json.dumps(snapshot.context, sort_keys=True, indent=2, default=str)
+    note = mood_note((snapshot.context.get("agent_state") or {}).get("mood"))
     user = (
         f"cycle_id: {snapshot.cycle_id}\n"
         f"basis_revision: {snapshot.basis_revision}\n"
         f"context:\n{context}\n\n"
-        "Return your decision as the single JSON object described in the system prompt."
+        + (f"{note}\n\n" if note else "")
+        + "Return your decision as the single JSON object described in the system prompt."
     )
     return system, user
 

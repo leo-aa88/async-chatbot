@@ -16,6 +16,7 @@ from ..cognition.relevance import Retrievable, select_context
 from ..cognition.snapshot import build_snapshot
 from ..domain.cycles import CYCLE_MANDATORY, CYCLE_REACTIVE_OPTIONAL
 from ..domain.enums import WorkKind, WorkStatus
+from ..domain.mood import daily_mood
 from ..domain.runtime import WorkItem
 from ..errors import AcaError
 from .context import ReducerContext
@@ -40,6 +41,9 @@ def _agent_state_summary(ctx: ReducerContext) -> dict[str, Any]:
     }
     if ctx.config.identity.name:
         summary["name"] = ctx.config.identity.name  # durable self-name -> prompt (survives resets)
+    if ctx.config.temperament.daily_mood:
+        # Today's mood shapes wording only; the prompt says so, and no gate or decision code reads it.
+        summary["mood"] = daily_mood(ctx.agent_id, ctx.clock.now_local().date())
     return summary
 
 
