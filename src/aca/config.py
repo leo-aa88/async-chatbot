@@ -34,6 +34,7 @@ class Temperament:
     initiative: float = 0.50
     inhibition: float = 0.50
     persistence: float = 0.50
+    daily_mood: bool = True  # a low / normal / high energy day that shapes wording only (domain/mood.py)
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> Temperament:
@@ -41,6 +42,7 @@ class Temperament:
             initiative=_fraction("temperament.initiative", data.get("initiative", 0.50)),
             inhibition=_fraction("temperament.inhibition", data.get("inhibition", 0.50)),
             persistence=_fraction("temperament.persistence", data.get("persistence", 0.50)),
+            daily_mood=bool(data.get("daily_mood", True)),
         )
 
 

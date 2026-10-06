@@ -65,3 +65,26 @@ def _reply(persona):
 def test_she_never_writes_an_em_dash_and_the_default_persona_is_untouched():
     assert _reply("tsundere") == "Fine, it works."
     assert _reply(None) == "Fine—it works."
+
+
+def _mood_snapshot(persona, mood):
+    state = {k: v for k, v in (("persona", persona), ("mood", mood)) if v}
+    return Snapshot("c", "w", 1, "t", {"agent_state": state, "recent_conversation": [],
+                                        "source": {"cycle_type": CYCLE_MANDATORY, "text": "hello?"}})
+
+
+def test_her_mood_is_in_her_own_voice_and_the_default_keeps_mains_note():
+    _, hers = build_prompt(_mood_snapshot("tsundere", "low"))
+    _, default = build_prompt(_mood_snapshot(None, "low"))
+    assert "Shorter isn't softer" in hers and "never whether you answer" in hers
+    assert "energy is low today (a style variation" not in hers  # main's neutral note, replaced
+    assert "energy is low today (a style variation" in default
+    assert "mood_note" not in build_prompt(_mood_snapshot("tsundere", "normal"))[1]
+
+
+def test_she_doesnt_mirror_an_endearment_but_a_set_up_nickname_is_allowed():
+    from aca.persona import get_persona
+
+    character = " ".join(get_persona("tsundere").character.split())
+    assert "not an invitation to mirror it back" in character
+    assert "A nickname you and they actually set up later is a different thing" in character
