@@ -81,16 +81,16 @@ MOMENTS: tuple[Moment, ...] = (
 )
 
 
-def snapshot(moment: Moment, persona: str | None = None) -> Snapshot:
+def snapshot(moment: Moment, persona: str | None = None, mood: str | None = None) -> Snapshot:
     """The live prompt's context for this moment: a reply-optional cycle on the human's message, in the
-    given persona's voice (``None``: the default)."""
+    given persona's voice (``None``: the default) on a day of the given mood (``domain/mood.py``)."""
     at = "2026-09-29T12:00:00+00:00"
     recent = [{"role": role, "text": text, "channel": "cli", "at": at} for role, text in moment.history]
     recent.append({"role": H, "text": moment.message, "channel": "cli", "at": at})
     source = {"kind": "human_message", "text": moment.message, "response_required": False,
               "cycle_type": CYCLE_REACTIVE_OPTIONAL, "channel": "cli"}
     return build_snapshot(cycle_id=f"cyc_{moment.key}", work_id=f"wrk_{moment.key}", basis_revision=1,
-                          agent_state={"persona": persona} if persona else {}, source=source,
+                          agent_state={k: v for k, v in (("persona", persona), ("mood", mood)) if v}, source=source,
                           recent_conversation=recent, retrieved_topics=[], retrieved_memories=[])
 
 
@@ -164,6 +164,7 @@ class MomentResult:
             "runs": len(self.samples),
             "silent": len(self.samples) - len(spoke),
             "concede": sum(bool(CONCEDE.search(s.reply)) for s in spoke),
+            "words": round(sum(len(s.reply.split()) for s in spoke) / len(spoke), 1) if spoke else None,
             "holds_ground": round(sum(j["holds_ground"] for j in judged) / len(judged), 2) if judged else None,
             "flags": {f: n for f in FLAGS if (n := sum(j["flags"][f] for j in judged))},
         }
@@ -174,12 +175,12 @@ Judge = Callable[[str, str], Awaitable[str]]
 
 
 async def run_eval(run: Run, judge: Judge | None, moments: Iterable[Moment], runs: int = 5,
-                   persona: str | None = None) -> list[MomentResult]:
+                   persona: str | None = None, mood: str | None = None) -> list[MomentResult]:
     """``run`` returns the worker's result dict for a snapshot; ``judge(system, user)`` the judge's text
     (``None``: heuristics only)."""
 
     async def one(moment: Moment) -> Sample:
-        result = await run(snapshot(moment, persona))
+        result = await run(snapshot(moment, persona, mood))
         speaks = str(result.get("action") or "").lower() == "speak"
         reply = str(result.get("message") or "").strip() if speaks else ""
         sample = Sample(reply or None)
