@@ -2470,7 +2470,7 @@ These rules remain hard-coded outside the LLM:
 40. **Hard real-time robot control is outside ACA.** Future embodiment delegates stabilization/safety loops to deterministic lower-level controllers.
 41. **Discourse-focus gating is proactive-only, expression-only, and `IDLE`-scoped (v0.7).** It may suppress outward *proactive* speech unrelated to the current conversational focus **only while conversation mode is `IDLE`** (`ACTIVE` is already fully suppressed; `DORMANT` is left open so autonomous resurfacing is preserved). It runs only on proactive cycles and is revalidated before outbox and before delivery like any proactive SPEAK (invariant 9). It never removes a thought from candidacy, never blocks reactive or mandatory responses, and is inactive when mode is not `IDLE` or no focus vector exists. The gate **mechanism** (affinity, thresholds) is computed from stored embeddings by code with its own thresholds distinct from the observational cuts; the focus *subject* it scores against is set by the deterministic predicate (§34.4) or, on a call-making turn, by the v0.8 LLM focus transition (§35.3, invariant 42b) — the only LLM input to the focus.
 42. **The LLM-proposed discourse relation is policy-gated, split by kind (v0.8).** (a) The **advancement relation** is *suppress-only*: it may narrow proactive speech (`ORPHAN`/`REPEAT` → not spoken), a missing/unknown label fails open to the §34 decision, and it can never force a speak the deterministic gates (§16.2, §34) would block nor be wired into the observational metrics. (b) The **focus transition** is a *validated state write* that moves the focus subject — thereby changing what the next gate suppresses (`CLEAR` fail-opens) — bounded to setting the focus only to a validated existing provisional-memory id (or `KEEP`/`CLEAR`) and writing no other state. Both ride a generative call that already happens (no new call) and are reproducible from recorded results on replay.
-43. **The telos can justify silence, never force speech (§38).** A mechanism introduced in the charter's name may narrow outward expression or reduce later attention; it may never raise the probability of speech or bypass a gate.
+43. **The telos can justify silence, never force speech (§38).** A mechanism introduced in the charter's name may narrow outward expression or reduce later attention; it may never raise the probability of speech or bypass a gate. *A design constraint on charter mechanisms:* the prompt slice's effect on `P(SPEAK | gates passed)` is not yet verified (§38.5).
 44. **An unfinished thought keeps salience, not entitlement (§38).** Unresolved threads may raise thought opportunity (§10) and selection salience (§12.7); they never exempt a candidate from a gate and never acquire a claim to be said.
 45. **The human's absence is never a grievance (§38).** Observed absence may end presence-based restraint (mode, §7.4) and raise thought opportunity (§10); beyond that it is never an input to candidate selection or a gate, and never the subject of speech unless the human asked about it or asked for it to be tracked.
 46. **Disagreement may affect communication, never authority (§38).** The agent may argue against a change, reset, memory removal, or suspension; no proposal type, path, or mechanism lets it veto, delay, or circumvent an authorized one.
@@ -3017,9 +3017,11 @@ The existing architecture already has this shape, which is the evidence that the
 
 ```text
 side-constraints   →  hard gates (§11.1): boolean, short-circuit, nothing tunes them away
-ends               →  activation + soft expression factors (§11.3, §12): weighted, competitive
+ends               →  the competition for attention and expression (§11.3, §12): weighted, competitive
 instrumental goods →  identity persistence, memory, budgets (§7.5, §12, §25): kept because they serve
 ```
+
+These are categories, not a claim that every named mechanism runs today. On the live proactive path, the competition is activation and selection (§12.7), and the final call is the model's within the gates. The §11.3 sigmoid names the category but is not invoked there.
 
 One consequence is that continuity cannot justify speech *by itself*. Keeping a thread alive is instrumental, and an instrumental good with no end behind it carries no weight.
 
@@ -3041,7 +3043,7 @@ Every part of the charter is either **live** (tied to a mechanism that enforces 
 
 The charter adds four invariants to §30. Each is stated in terms of a mechanism, not a value.
 
-- **43. The telos can justify silence, never force speech.** Any mechanism introduced in the charter's name may narrow outward expression or reduce what the agent later attends to. It may never make speech more likely or bypass a gate. Otherwise "increase understanding" turns into "one more message would help", which is engagement optimization under a philosophical name. *Today:* the only telos surface is the prompt, and every speak it can produce is already gated (invariants 9, 10, 42). Any later charter mechanism carries this bound and its own test.
+- **43. The telos can justify silence, never force speech.** Any mechanism introduced in the charter's name may narrow outward expression or reduce what the agent later attends to. It may never make speech more likely or bypass a gate. Otherwise "increase understanding" turns into "one more message would help", which is engagement optimization under a philosophical name. *Status: a design constraint on charter mechanisms, not yet a verified property.* Any later charter mechanism carries this bound and its own test. The one charter surface today, the prompt slice (§38.4), is **not** shown to satisfy it. The gates (invariants 9, 10, 42) decide whether speaking is *allowed*. They do not stop a purpose statement from shifting `P(SPEAK | gates passed)` upward, and a gated increase is still an increase. Establishing it takes an empirical comparison: replay the same representative proactive snapshots through the prompt before and after the slice and compare the `SPEAK` rate. The test in this PR pins only the wording.
 
 - **44. An unfinished thought keeps salience, not entitlement.** An unresolved thread may influence what the agent thinks about. It never acquires a claim to be said. *Today:* an unresolved thread raises thought opportunity (`f_unfinished`, §10) and its selection score (+0.3, §12.7), so it surfaces more often. That is salience. It gets no exemption from any gate, and an unanswered human message is final once the agent chose silence ("nothing is owed now", prompt). Pinned by `tests/adversarial/test_charter.py`: an unfinished topic outscores a plain one and still stays silent in quiet hours.
 
@@ -3053,11 +3055,19 @@ The charter adds four invariants to §30. Each is stated in terms of a mechanism
 
 ### 38.6 The asymmetry, and embodiment
 
-Invariant 42a (the advancement relation is suppress-only) generalizes into a charter-level rule:
+Invariant 42a (the advancement relation is suppress-only) extends to the dynamics, and the rule is deliberately narrow:
 
-> **The model may suppress its own future influence; it may never promote it.**
+> **Discourse-relation labels are suppress-only. `CLOSE`, `ORPHAN`, and `REPEAT` may reduce future expression or persistence; `ADVANCE`, `EVIDENCE`, and `REVISE` may never increase it.**
 
 An LLM label that lengthens a thread's life (for example, "this thread had `ADVANCE → EVIDENCE → REVISE`, so keep it active longer") is a positive-feedback channel by which the model chooses what it gets to think about later. The telos-shaped dynamics are therefore asymmetric. A `CLOSE` may hasten a thread's decay. A forward-move label never extends one. Any boost comes only from deterministic signals (the human re-engaging the thread, the thread being the current focus). An unresolved thread outlives a closed one because the closed one was dissipated, not because the open one was promoted. §34.11 already implements the **gate** half (a closed subject is muted while `IDLE`). The **dynamics** half (`CLOSE`-accelerated decay) is a separate change, and its acceptance test is counterfactual (§27): same history and state, with the charter weighting disabled, must produce a materially different later activation or expression. If nothing changes, the mechanism is decorative.
+
+The rule is **not** "the model may never promote its own future influence". That broader statement is false of the current architecture. Three whitelisted proposals let the model raise what it attends to later:
+
+- `ADJUST_TOPIC_ACTIVATION` with a positive delta (clamped to +0.5) reinforces a topic's activation;
+- `CREATE_DEFERRED_INTENT` persists an intent and marks its topic `unfinished`, which raises both selection salience and wake opportunity (§10);
+- `ENRICH_PROVISIONAL_MEMORY` promotes an ephemeral memory into a durable topic.
+
+These are deliberate memory-management capabilities, bounded by the whitelist and clamps (§22.1), and this section does not outlaw them. They are positive-feedback channels all the same, and writing the charter is what made them visible. Whether to bound them further is an open question for evidence, not a decision made here. One option would allow a positive activation delta only on reply cycles or for a topic the human raised. The narrow rule above governs the new thing: the model's judgment of its *own current discourse* never buys that discourse a longer life.
 
 For an embodied agent, "required confidence rises with irreversibility" is broader than motor safety, and invariant 40 alone does not cover it. Hard real-time limits (current, tilt, velocity, emergency stop, short-range collision) belong to the deterministic controller, and the model cannot override them. Consequential **non-motor** actions (unlocking a door, deleting a file, sending a message, spending money, leaving the house) need a policy layer between the two:
 

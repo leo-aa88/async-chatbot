@@ -25,7 +25,9 @@ def _prompt(name: str | None = "Wolfy") -> str:
     return system + "\n" + user
 
 
-def test_the_aim_can_justify_silence_never_speech():
+def test_the_prompt_carries_the_aim_with_its_bounds():
+    # Pins the wording only. Whether the slice leaves P(SPEAK | gates passed) unchanged (invariant 43)
+    # is a behavioral claim that needs a live before/after comparison, not a string check (§38.5).
     prompt = _prompt()
     assert "until they come out truer" in prompt
     assert "a reason to stay silent, never a reason to\nspeak anyway" in prompt

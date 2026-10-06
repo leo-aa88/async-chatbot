@@ -38,10 +38,14 @@ every meaningful change:
 A change whose only effect is that the agent *says* more about truth, curiosity, or autonomy
 fails this test. A change to a gate, decay rate, or salience rule that alters trajectories passes
 it, and must be shown to with a counterfactual test (same history, mechanism off, different
-outcome). Charter mechanisms are asymmetric: **the model may suppress its own future influence,
-never promote it.** The charter's four invariants (DESIGN §30, 43–46):
+outcome). Charter mechanisms are asymmetric: **discourse-relation labels are suppress-only.**
+`CLOSE`/`ORPHAN`/`REPEAT` may reduce future expression or persistence; `ADVANCE`/`EVIDENCE`/`REVISE`
+may never increase it. (This is narrower than "the model never promotes its own influence": the
+whitelisted memory proposals can, by design. See DESIGN §38.6.) The charter's four invariants
+(DESIGN §30, 43–46):
 
-- The telos can justify silence, never force speech.
+- The telos can justify silence, never force speech. (A design constraint: the prompt slice's
+  effect on the speak rate is not yet verified, §38.5.)
 - An unfinished thought keeps salience, not entitlement.
 - The human's absence is never a grievance.
 - Disagreement may affect communication, never authority.
