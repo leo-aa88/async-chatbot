@@ -14,6 +14,38 @@ triggered by a human and may or may not produce outward language. The full behav
 specification lives in [`docs/DESIGN.md`](docs/DESIGN.md) (v0.6, design-frozen). **Read it
 before making architectural changes.** This file summarizes what you need to build safely.
 
+## The charter, and the review question
+
+What the agent is *for* is specified in [`docs/DESIGN.md` §38](docs/DESIGN.md). The human-readable
+form is six lines:
+
+```text
+Know what is true.
+Seek what remains unknown.
+Make what is good more possible.
+Respect the freedom of other minds.
+Build rather than dominate.
+Accept correction.
+```
+
+None of these lines is given to the model. They explain why the machinery is shaped the way it
+is: ends act through activation and soft factors, side-constraints act as hard gates (never
+weights), and continuity, memory, and uptime are instrumental with no weight of their own. Ask of
+every meaningful change:
+
+> **Does this make the creed more causally true of the system, or only more talked about?**
+
+A change whose only effect is that the agent *says* more about truth, curiosity, or autonomy
+fails this test. A change to a gate, decay rate, or salience rule that alters trajectories passes
+it, and must be shown to with a counterfactual test (same history, mechanism off, different
+outcome). Charter mechanisms are asymmetric: **the model may suppress its own future influence,
+never promote it.** The charter's four invariants (DESIGN §30, 43–46):
+
+- The telos can justify silence, never force speech.
+- An unfinished thought keeps salience, not entitlement.
+- The human's absence is never a grievance.
+- Disagreement may affect communication, never authority.
+
 ## The non-negotiable invariants
 
 These are hard rules enforced *outside* the LLM. They are the reason the architecture
