@@ -268,6 +268,10 @@ class LLM:
     default; ``openai``/``grok``/``gemini`` share the OpenAI-style chat API; ``anthropic`` uses
     the Messages API). Credentials come from the environment (``api_key_env``); ``base_url`` may
     be overridden if an endpoint moves. The model is never hard-coded — set it here.
+
+    The output cap may be written ``max_tokens`` or ``max_completion_tokens`` (the name GPT-5+ and
+    o-series models use); both set the same limit, and the adapter picks the wire parameter the model
+    accepts. Giving both with different values is an error rather than a silent pick.
     """
 
     provider: str = "fake"
@@ -279,9 +283,12 @@ class LLM:
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> LLM:
-        max_tokens = int(data.get("max_tokens", 1024))
+        given = {k: int(data[k]) for k in ("max_tokens", "max_completion_tokens") if k in data}
+        if len(set(given.values())) > 1:
+            raise ConfigError("llm.max_tokens and llm.max_completion_tokens disagree; set one")
+        key, max_tokens = next(iter(given.items()), ("max_tokens", 1024))
         if max_tokens <= 0:
-            raise ConfigError("llm.max_tokens must be > 0")
+            raise ConfigError(f"llm.{key} must be > 0")
         return LLM(
             provider=str(data.get("provider", "fake")).strip().lower(),
             model=str(data.get("model", "")),

@@ -84,7 +84,7 @@ monika-init: ## Create the Monika data dir + config (never overwrites; links the
 	@test -f $(MONIKA_DIR)/config.json || { printf '%s\n' \
 		'{' \
 		'  "identity": { "name": "Monika", "persona": "monika" },' \
-		'  "llm": { "provider": "openai", "model": "$(MONIKA_MODEL)", "max_tokens": 512 },' \
+		'  "llm": { "provider": "openai", "model": "$(MONIKA_MODEL)", "max_completion_tokens": 512 },' \
 		'  "tts": { "provider": "kokoro" }' \
 		'}' > $(MONIKA_DIR)/config.json && echo "wrote $(MONIKA_DIR)/config.json"; }
 	@if [ ! -e $(MONIKA_DIR)/.env ] && [ -f $(MAIN_CHECKOUT)/.env ]; then \

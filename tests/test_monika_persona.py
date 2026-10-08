@@ -61,3 +61,14 @@ def test_monika_speaks_with_af_heart_unless_a_voice_is_pinned():
     pinned = {"identity": {"persona": "monika"}, "tts": {"voice": "af_bella"}}
     assert Config.from_mapping(pinned).tts.voice == "af_bella"
     assert Config.from_mapping({}).tts.voice == "am_onyx"
+
+
+def test_max_completion_tokens_sets_the_output_cap():
+    assert Config.from_mapping({"llm": {"max_completion_tokens": 512}}).llm.max_tokens == 512
+    assert Config.from_mapping({"llm": {"max_tokens": 256}}).llm.max_tokens == 256
+    assert Config.from_mapping({"llm": {"max_tokens": 300, "max_completion_tokens": 300}}).llm.max_tokens == 300
+    assert Config.from_mapping({}).llm.max_tokens == 1024
+    with pytest.raises(ConfigError, match="disagree"):
+        Config.from_mapping({"llm": {"max_tokens": 256, "max_completion_tokens": 512}})
+    with pytest.raises(ConfigError, match="max_completion_tokens must be > 0"):
+        Config.from_mapping({"llm": {"max_completion_tokens": 0}})
