@@ -10,7 +10,8 @@
     "max_completion_tokens": 512
   },
   "voice": {
-    "provider": "faster-whisper"
+    "provider": "faster-whisper",
+    "device": "cpu"
   },
   "tts": {
     "provider": "kokoro"
