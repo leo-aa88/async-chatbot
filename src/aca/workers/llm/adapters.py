@@ -19,12 +19,19 @@ from ...errors import WorkerError
 # GPT-5 family and o-series reasoning models reject the legacy ``max_tokens`` field on
 # /chat/completions and require ``max_completion_tokens``; older chat models (gpt-4*, gpt-3.5) and
 # the OpenAI-compatible third parties (Grok, Gemini) still take ``max_tokens``.
-_MAX_COMPLETION_TOKENS_MODELS = re.compile(r"^(?:gpt-5|o[0-9])", re.IGNORECASE)
-
+_GPT_MODEL = re.compile(r"^gpt-(\d+)", re.IGNORECASE)
+_O_SERIES_MODEL = re.compile(r"^o[0-9]", re.IGNORECASE)
 
 def _token_limit_param(model: str) -> str:
-    return "max_completion_tokens" if _MAX_COMPLETION_TOKENS_MODELS.match(model) else "max_tokens"
+    gpt_match = _GPT_MODEL.match(model)
 
+    if gpt_match and int(gpt_match.group(1)) >= 5:
+        return "max_completion_tokens"
+
+    if _O_SERIES_MODEL.match(model):
+        return "max_completion_tokens"
+
+    return "max_tokens"
 
 @dataclass(frozen=True, slots=True)
 class ChatResult:

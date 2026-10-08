@@ -108,7 +108,7 @@ pip install -e ".[llm]"      # adds httpx
 ```
 
 ```json
-"llm": { "provider": "openai", "model": "gpt-4o-mini", "max_tokens": 512 }
+"llm": { "provider": "openai", "model": "gpt-6-luna", "max_completion_tokens": 512 }
 ```
 
 Supported providers and the env var each reads for its key:
