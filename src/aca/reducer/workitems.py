@@ -19,6 +19,7 @@ from ..domain.enums import WorkKind, WorkStatus
 from ..domain.mood import daily_mood
 from ..domain.runtime import WorkItem
 from ..errors import AcaError
+from ..persona import DEFAULT_PERSONA
 from .context import ReducerContext
 from .conversation_notes import human_local_time, recent_conversation
 
@@ -41,6 +42,10 @@ def _agent_state_summary(ctx: ReducerContext) -> dict[str, Any]:
     }
     if ctx.config.identity.name:
         summary["name"] = ctx.config.identity.name  # durable self-name -> prompt (survives resets)
+    if ctx.config.identity.persona != DEFAULT_PERSONA:
+        # Voice selection -> prompt (wording only; no gate reads it). Omitted for the default persona
+        # so default snapshots, and their prompt hashes, are unchanged.
+        summary["persona"] = ctx.config.identity.persona
     if ctx.config.temperament.daily_mood:
         # Today's mood shapes wording only; the prompt says so, and no gate or decision code reads it.
         summary["mood"] = daily_mood(ctx.agent_id, ctx.clock.now_local().date())

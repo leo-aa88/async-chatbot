@@ -13,7 +13,7 @@ PIP := $(BIN)/pip
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-14s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 $(VENV): ## Create the virtualenv
 	$(PYTHON) -m venv $(VENV)
@@ -68,6 +68,57 @@ demo: install ## Throwaway agent tuned to message you on its own; drops into cha
 .PHONY: status
 status: ## Show agent status
 	$(BIN)/aca status
+
+# --- experimental Monika persona, on its own fresh data dir (DB/lock/socket/config) -------------
+# Runs this checkout's code (PYTHONPATH=src) so it also works from a git worktree without its own
+# venv: falls back to the main checkout's .venv. Your default ~/.aca agent is never touched.
+MONIKA_DIR ?= $(HOME)/.aca-monika
+MONIKA_MODEL ?= gpt-6-luna
+MAIN_CHECKOUT := $(shell dirname "$$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")
+ACA_BIN := $(if $(wildcard $(CURDIR)/$(BIN)/aca),$(CURDIR)/$(BIN),$(MAIN_CHECKOUT)/$(VENV)/bin)
+MONIKA_ACA := ACA_DATA_DIR=$(MONIKA_DIR) PYTHONPATH=$(CURDIR)/src $(ACA_BIN)/aca
+
+.PHONY: monika-init
+monika-init: ## Create the Monika data dir + config (never overwrites; links the repo .env)
+	@mkdir -p $(MONIKA_DIR)
+	@test -f $(MONIKA_DIR)/config.json || { printf '%s\n' \
+		'{' \
+		'  "identity": { "name": "Monika", "persona": "monika" },' \
+		'  "llm": { "provider": "openai", "model": "$(MONIKA_MODEL)", "max_tokens": 512 },' \
+		'  "tts": { "provider": "kokoro" }' \
+		'}' > $(MONIKA_DIR)/config.json && echo "wrote $(MONIKA_DIR)/config.json"; }
+	@if [ ! -e $(MONIKA_DIR)/.env ] && [ -f $(MAIN_CHECKOUT)/.env ]; then \
+		ln -s $(MAIN_CHECKOUT)/.env $(MONIKA_DIR)/.env && echo "linked $(MONIKA_DIR)/.env -> $(MAIN_CHECKOUT)/.env"; fi
+
+.PHONY: monika-run
+monika-run: monika-init ## Start the Monika agent service (foreground)
+	$(MONIKA_ACA) service start
+
+.PHONY: monika-chat
+monika-chat: ## Chat with Monika
+	$(MONIKA_ACA) chat
+
+.PHONY: monika-voice
+monika-voice: ## Chat with Monika by voice (needs the voice extra)
+	$(MONIKA_ACA) chat --voice
+
+.PHONY: monika-status
+monika-status: ## Show the Monika agent's status
+	$(MONIKA_ACA) status
+
+.PHONY: monika-reset
+monika-reset: ## Wipe the Monika agent's DB (keeps config); stop its service first
+	rm -f $(MONIKA_DIR)/agent.db $(MONIKA_DIR)/agent.db-wal $(MONIKA_DIR)/agent.db-shm
+
+.PHONY: monika-eval
+monika-eval: ## Score knowledge boundary, character, and length against the real LLM (costs API calls)
+	cd $(MAIN_CHECKOUT) && PYTHONPATH=$(CURDIR)/src $(ACA_BIN)/python $(CURDIR)/scripts/monika_eval.py \
+		--data-dir $(MONIKA_DIR)
+
+.PHONY: monika-dialogue
+monika-dialogue: ## Print a sample Monika transcript from the real LLM (costs API calls)
+	cd $(MAIN_CHECKOUT) && PYTHONPATH=$(CURDIR)/src $(ACA_BIN)/python $(CURDIR)/scripts/monika_eval.py \
+		--data-dir $(MONIKA_DIR) --dialogue
 
 .PHONY: clean
 clean: ## Remove build artifacts and caches

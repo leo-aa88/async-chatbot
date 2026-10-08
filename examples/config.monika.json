@@ -1,0 +1,15 @@
+{
+  "_comment": "Experimental `monika` persona (feat/monika-persona, not for main): Monika from Doki Doki Literature Club after the game, limited to what she could know in-game and replying at in-game length. Voice only: the persona changes the wording of messages the runtime already allowed; no gate, budget, cooldown, or cadence reads it, and memory/topic summaries stay neutral. Pair it with any real `llm` provider (the offline `fake` worker ignores personas). With TTS on, the persona's Kokoro voice is `af_heart` unless `tts.voice` is set explicitly. `make monika-init` writes an equivalent config to ~/.aca-monika.",
+  "identity": {
+    "name": "Monika",
+    "persona": "monika"
+  },
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "max_tokens": 512
+  },
+  "tts": {
+    "provider": "kokoro"
+  }
+}
