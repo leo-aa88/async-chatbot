@@ -9,6 +9,9 @@
     "model": "gpt-6-luna",
     "max_completion_tokens": 512
   },
+  "voice": {
+    "provider": "faster-whisper"
+  },
   "tts": {
     "provider": "kokoro"
   }
