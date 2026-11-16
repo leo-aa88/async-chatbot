@@ -11,8 +11,9 @@ ACA is a **persistent, introspective conversational agent** whose central contra
 
 A conversational turn is a *bounded cognition cycle* that may or may not have been
 triggered by a human and may or may not produce outward language. The full behavioral
-specification lives in [`docs/DESIGN.md`](docs/DESIGN.md) (v0.6, design-frozen). **Read it
-before making architectural changes.** This file summarizes what you need to build safely.
+specification lives in [`docs/DESIGN.md`](docs/DESIGN.md) (v0.8: the frozen v0.6 core plus the
+§34–§38 extensions). **Read it before making architectural changes.** This file summarizes what
+you need to build safely.
 
 ## The charter, and the review question
 
@@ -85,22 +86,41 @@ exist to catch violations.
     explicit user task.
 13. **Quiet hours** are a hard gate on *unsolicited* outward speech only. They never suppress
     internal cognition or reactive responses.
+14. **The discourse-focus gate is proactive-only, expression-only, and `IDLE`-scoped.** It can mute
+    an off-subject proactive thought while the conversation is `IDLE`; it never removes a thought
+    from candidacy, never blocks a reply, and is inactive when `DORMANT` so autonomous resurfacing
+    survives (DESIGN §34, §30 41).
+15. **The LLM discourse relation is policy-gated.** The advancement label is suppress-only
+    (`ORPHAN`/`REPEAT` mute; it never forces a speak the deterministic gates block, and stays out of
+    the observational metrics). The focus transition is a validated write: it can only point the
+    focus at an existing provisional memory, or `KEEP`/`CLEAR` (DESIGN §35, §30 42).
+
+DESIGN §30 lists all 46 invariants; this list is the subset you're most likely to break.
 
 ## Architecture map (`src/aca/`)
 
 ```
-errors, ids, clock, rng, durations, config   # foundations (pure, injectable)
-domain/     enums, events, state, proposals   # data contracts, no behavior/IO
-cognition/  activation, classifier, selection, scheduler, gating, budgets, snapshot
-            # pure decision logic; deterministic given (state, clock, rng)
-persistence/ schema, db, *_store             # SQLite; the only IO for durable state
-reducer/    context, reducer, handlers/*      # THE single writer; dispatch by event type
-workers/    base, fake_llm, fake_embedding    # side-effect-isolated; return events only
-voice/      audio, vad, segmenter, transcriber, session  # CLIENT-SIDE speech->text perception
-service/    lock, timer, dispatcher, recovery, delivery, service  # runtime orchestration
-ipc/        protocol, server, client          # unix-socket line-framed JSON
-tts/        base, factory, kokoro_engine, controller  # optional client-side speech output (TTS)
-cli/        main                              # `aca service|status|chat [--voice]|logs|memories|topics`
+errors, ids, clock, rng, durations, config, dotenv, timefmt   # foundations (pure, injectable)
+domain/      enums, events, state, proposals, cycles, mood, runtime  # data contracts, no IO
+cognition/   activation, classifier, selection, scheduler, gating, budgets, snapshot,
+             relevance, textsim, vectors
+             # pure decision logic; deterministic given (state, clock, rng)
+persistence/ schema, db, stores, *_store     # SQLite; the only IO for durable state
+reducer/     context, reducer, handlers/*    # THE single writer; dispatch by event type
+             gates, continuity, discourse, revalidation   # proactive gates (§11, §16, §34, §35)
+             workitems, conversation_notes, apply_proposals, outbound, support
+workers/     base, fake_llm, fake_embedding, embeddings, embedding_factory
+             # side-effect-isolated; return events only
+workers/llm/ adapters, factory, prompt, worker   # real providers + the system prompt (§21, §22)
+eval/        backbone, continuity, counterfactual, gating
+             # OFFLINE analysis only; never imported by the runtime, never writes state
+voice/       audio, capture, vad, silero, segmenter, turn_assembler, transcriber, whisper,
+             session, factory                # CLIENT-SIDE speech->text perception (§36)
+service/     lock, timer, dispatcher, recovery, delivery, service  # runtime orchestration
+ipc/         protocol, server, client        # unix-socket line-framed JSON
+tts/         base, factory, kokoro_engine, controller, text  # optional client-side speech output
+cli/         main, chat_ui   # `aca service start|stop`, `aca status|chat [--voice]|logs|memories|
+                             #  topics|metrics|reconcile-embeddings`
 ```
 
 Data flows one direction: `events → reducer → commit → (optional work item) → worker →
@@ -127,14 +147,20 @@ replay deterministically.
 ## Commands
 
 ```bash
-python3.12 -m venv .venv && . .venv/bin/activate   # once
-pip install -e ".[dev]"                            # install with dev deps
-pytest                                             # run all tests
-pytest tests/adversarial -q                        # run invariant/adversarial tests
-aca service start   # start the daemon (single-instance flock per data dir)
-aca chat            # interactive client over the unix socket
-aca status          # lifecycle/session/state snapshot
+make install          # create .venv and install with dev deps (or: python3.12 -m venv .venv,
+                      # then .venv/bin/pip install -e ".[dev]"; extras: llm, voice, tts)
+make check            # ruff + full pytest: exactly what CI gates on
+make test-adversarial # invariant/adversarial tests only
+make lint             # ruff check src tests
+make format           # ruff auto-fix + format
+aca service start     # start the daemon (single-instance flock per data dir)
+aca chat              # interactive client over the unix socket (--voice adds the mic)
+aca status            # lifecycle/session/state snapshot
 ```
+
+`make help` lists the rest (`run`, `chat`, `demo`, `backbone-eval`, which costs API calls). Use the
+project venv, not a system `pip`: an old system pip can't do the editable (PEP 660) install, and
+extras installed outside the venv aren't seen by `aca`.
 
 Data directory defaults to `~/.aca/` (override with `--data-dir` or `ACA_DATA_DIR`).
 
@@ -142,7 +168,9 @@ Data directory defaults to `~/.aca/` (override with `--data-dir` or `ACA_DATA_DI
 
 - Adding an event type → add to `domain/events.py`, register a handler in `reducer/handlers/`,
   and add reducer + adversarial tests.
-- Adding an LLM proposal type → whitelist it in `domain/proposals.py` with bounds/clamps and
-  cover it in `tests/test_reducer_llm.py`.
+- Adding an LLM proposal type → whitelist it in `domain/proposals.py` with bounds/clamps, cover it
+  in `tests/test_proposals.py` and `tests/adversarial/test_llm_authority.py`, and update the pinned
+  whitelist in `tests/adversarial/test_charter.py`. That pin is deliberate: a new proposal type is a
+  charter change (invariant 46, DESIGN §38.6), so review it against the charter.
 - Touching timing/decay/budgets → verify with a `ManualClock`; never introduce a real
   `sleep`/wall-clock read into the decision path.

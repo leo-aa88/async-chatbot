@@ -2,7 +2,8 @@
 
 The canonical engineering guide for this repository is **[AGENTS.md](AGENTS.md)**. Read it
 first — it covers the architecture, the non-negotiable invariants, and the coding standards.
-The behavioral specification is [`docs/DESIGN.md`](docs/DESIGN.md) (v0.6, design-frozen).
+The behavioral specification is [`docs/DESIGN.md`](docs/DESIGN.md) (v0.8: the frozen v0.6 core
+plus the §34–§38 extensions).
 
 ## Claude-specific notes
 
@@ -17,16 +18,17 @@ The behavioral specification is [`docs/DESIGN.md`](docs/DESIGN.md) (v0.6, design
   `ids.new_id()` reads the wall clock and `os.urandom` to mint opaque durable keys. IDs are
   never inputs to a cognition decision, so this does not affect replay of behavior; tests that
   assert on durable identity inject their own IDs. Do not add any other direct clock/RNG reads.
-- **Every invariant in AGENTS.md has a test.** When you touch cognition, persistence, the
-  reducer, delivery, or lifecycle/recovery, run `pytest` and, when relevant, extend
-  `tests/adversarial/`.
+- **Every enforced invariant in AGENTS.md has a test.** The one declared exception is charter
+  invariant 43, a design constraint whose prompt effect still needs a live eval (DESIGN §38.5);
+  don't claim it as enforced. When you touch cognition, persistence, the reducer, delivery, or
+  lifecycle/recovery, run `make check` and, when relevant, extend `tests/adversarial/`.
 - When in doubt about intended behavior, `docs/DESIGN.md` is authoritative; quote the section
   number in your reasoning rather than guessing.
 
 ## Quick commands
 
 ```bash
-pip install -e ".[dev]"
-pytest
-pytest tests/adversarial -q
+make install           # .venv + dev deps
+make check             # ruff + pytest (what CI gates on)
+make test-adversarial  # invariant tests only
 ```
